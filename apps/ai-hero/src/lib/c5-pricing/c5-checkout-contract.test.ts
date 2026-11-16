@@ -208,6 +208,60 @@ async function checkoutFrom(url: string, checkoutAdapter = adapter, country = 'U
 const C5_CHECKOUT = `https://app.test/api/coursebuilder/checkout/stripe?productId=${C5_PRODUCT_ID}&quantity=1&cancelUrl=https%3A%2F%2Fapp.test%2Fc5`
 
 describe('a Crash Course owner with an upgrade row toward C5', () => {
+	it('refuses a direct team card checkout carrying the invoice-only post-close reason', async () => {
+		const team: BuyerRead = {
+			...owner,
+			facts: {
+				...owner.facts,
+				quantity: 5,
+				facts: { ...owner.facts.facts, order: known('team' as const) },
+			},
+		}
+		const authoritativePrice = createC5AuthoritativePrice({
+			policy: async () => ({
+				ok: true as const,
+				value: {
+					version: SYNTHETIC_POLICY_VERSION,
+					policy: syntheticPolicy({
+						teamOrdersAfterClose: {
+							value: true,
+							source: 'synthetic:team-after-close',
+						},
+					}),
+				},
+			}),
+			quotes: async () => ({ ok: true as const, value: [] }),
+			buyer: async () => team,
+			trustedCountry: async () => 'US',
+			pppPercent: () => 0,
+			price,
+			engineVersion: '0.2.4',
+			now: () => new Date('2031-01-01T00:00:00Z'),
+			disabled: () => false,
+		})
+		const request = {
+			productId: C5_PRODUCT_ID,
+			priceId: PRICE_ID,
+			quantity: 5,
+			userId: USER_ID,
+			country: 'US',
+			pppAccepted: false,
+		}
+		const display = await authoritativePrice({ ...request, purpose: 'display' })
+		expect(display).toMatchObject({ kind: 'priced', amountCents: 450_000 })
+		expect(display!.reasons).toContain('team-after-close')
+		await expect(
+			authoritativePrice({ ...request, purpose: 'checkout' }),
+		).resolves.toMatchObject({ kind: 'closed', reasons: ['team-after-close'] })
+		const { result, payload, paymentsAdapter } = await checkoutFrom(
+			`${C5_CHECKOUT}&quantity=5&bulk=true`,
+			{ ...adapter, authoritativePrice },
+		)
+		expect(JSON.stringify(result)).toContain('authoritative-price-closed')
+		expect(payload).toBeUndefined()
+		expect(paymentsAdapter.createCoupon).not.toHaveBeenCalled()
+	})
+
 	it.each([
 		[60, false, 55_000, 'none', CC_PURCHASE],
 		[60, true, 40_000, 'region', null],

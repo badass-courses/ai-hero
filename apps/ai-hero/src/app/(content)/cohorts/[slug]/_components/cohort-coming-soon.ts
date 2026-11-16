@@ -48,10 +48,10 @@ export function cohortEnrollmentPhase({
 	openEnrollment: string | null | undefined
 	closeEnrollment: string | null | undefined
 }): CohortEnrollmentPhase {
-	if (!openEnrollment) return 'open'
-	if (now.getTime() <= new Date(openEnrollment).getTime()) return 'before-open'
 	if (closeEnrollment && now.getTime() >= new Date(closeEnrollment).getTime())
 		return 'closed'
+	if (openEnrollment && now.getTime() <= new Date(openEnrollment).getTime())
+		return 'before-open'
 	return 'open'
 }
 

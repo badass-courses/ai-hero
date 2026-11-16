@@ -349,6 +349,14 @@ export function createC5AuthoritativePrice(deps: C5PricingDeps) {
 		// Checkout re-runs the engine, so this reads checkout's own result: a
 		// credit resolved since display prices normally and never matches.
 		let result = priced.value
+		// Post-close org prices are invoice-only. Refuse here on the server,
+		// before Course Builder can create a card checkout session.
+		if (
+			request.purpose === 'checkout' &&
+			result.reasons.some((reason) => reason.code === 'team-after-close')
+		) {
+			return refusal('closed', ['team-after-close'], withPolicy)
+		}
 		if (
 			buyer.kind === 'buyer' &&
 			orderKind === 'individual' &&

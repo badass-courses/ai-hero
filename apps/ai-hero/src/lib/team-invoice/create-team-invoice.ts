@@ -139,10 +139,9 @@ export function teamInvoiceOrderKey(
 }
 
 /**
- * When the invoice falls due. A cohort or live product's invoice falls due by
- * the time enrollment closes, so it cannot be paid on terms that outlast the
- * window. Inside the last day it is due on receipt, and the expiry job voids
- * whatever is still open when the window shuts.
+ * When the invoice falls due. Before cohort or live enrollment closes, the
+ * due date is capped at close (due on receipt inside the last day). Once
+ * enrollment has closed, org team invoices use the selected payment terms.
  */
 export function teamInvoiceDue(
 	terms: TeamInvoiceTerms,
@@ -154,7 +153,8 @@ export function teamInvoiceDue(
 		? new Date(product.fields.closeEnrollment)
 		: null
 	const windowed = product.type === 'cohort' || product.type === 'live'
-	if (!windowed || !closes || days === 0) return { kind: 'days', days }
+	if (!windowed || !closes || closes <= now || days === 0)
+		return { kind: 'days', days }
 	if (now.getTime() + days * DAY_MS <= closes.getTime()) {
 		return { kind: 'days', days }
 	}

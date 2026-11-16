@@ -5,9 +5,9 @@
  *
  * The rules mirror the pages that already sell these products. A self-paced
  * workshop is on sale when published and public (`PublicWorkshopPricing`). A
- * cohort or live product is on sale when published and inside its enrollment
- * window (the cohort page's `CAN_ENROLL`). A limited product also needs room
- * for every seat.
+ * cohort or live product sells org team seats when published and enrollment
+ * has opened, even after individual enrollment closes. A limited product
+ * also needs room for every seat. This does not govern individual checkout.
  */
 
 export type TeamSaleProduct = {
@@ -34,7 +34,6 @@ export type TeamSaleState =
 			reason:
 				| 'unpublished'
 				| 'upcoming'
-				| 'closed'
 				| 'sold-out'
 				| 'not-team-product'
 				| 'archived'
@@ -62,12 +61,8 @@ export function teamSaleState(
 
 	if (ENROLLMENT_PRODUCT_TYPES.has(type)) {
 		const opens = at(fields.openEnrollment)
-		const closes = at(fields.closeEnrollment)
 		if (opens && opens > options.now) {
 			return { onSale: false, reason: 'upcoming' }
-		}
-		if (closes && closes <= options.now) {
-			return { onSale: false, reason: 'closed' }
 		}
 	} else if (fields.visibility !== 'public') {
 		return { onSale: false, reason: 'unpublished' }

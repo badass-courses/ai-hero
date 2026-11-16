@@ -5,8 +5,9 @@ import { teamSaleState } from './sale-state'
  * Open self-serve team invoices outlive the moment they were priced. Course
  * Builder's fulfillment grants whatever a paid invoice says, with no sale
  * check of its own, so the app voids an open invoice once its product is no
- * longer on sale for those seats: enrollment closed, sold out, archived or
- * unpublished. A voided invoice cannot be paid.
+ * longer on sale for those seats: sold out, archived or unpublished.
+ * Closing individual enrollment does not expire org invoices. A voided
+ * invoice cannot be paid.
  */
 
 export type OpenTeamInvoice = {

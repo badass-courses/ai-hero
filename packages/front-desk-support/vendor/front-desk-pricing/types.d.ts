@@ -46,6 +46,7 @@ export interface PricingPolicyData {
     readonly opensAt: Ruling<string | null>;
     readonly ppp: Ruling<"better-of-formula-or-ppp">;
     readonly product: string;
+    readonly teamOrdersAfterClose?: Ruling<boolean>;
     readonly teamBands: Ruling<{
         readonly early: readonly TeamBandData[];
         readonly standard: readonly TeamBandData[];
@@ -103,7 +104,7 @@ export interface ProductData {
     readonly merchantUnit: number;
     readonly policy: PricingPolicyData;
 }
-export type ReasonCodeData = "policy-disabled" | "policy-unresolved" | "merchant-price-mismatch" | "not-open" | "checkout-stopped" | "enrollment-closed" | "fact-unknown" | "credit-amount-unrecognized" | "credit-spent" | "individual-quantity" | "quote-basis-unknown" | "quote-expired" | "quote-out-of-scope" | "early-window" | "standard-window" | "selected";
+export type ReasonCodeData = "policy-disabled" | "policy-unresolved" | "merchant-price-mismatch" | "not-open" | "checkout-stopped" | "enrollment-closed" | "fact-unknown" | "credit-amount-unrecognized" | "credit-spent" | "individual-quantity" | "quote-basis-unknown" | "quote-expired" | "quote-out-of-scope" | "early-window" | "standard-window" | "team-after-close" | "selected";
 export interface ReasonData {
     readonly code: ReasonCodeData;
     readonly detail: string;

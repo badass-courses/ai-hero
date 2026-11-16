@@ -1,5 +1,5 @@
-/*! @front-desk/pricing 0.2.3 public build; front-desk commit 0c9759ac1236279dc9b1d7a93cffe56cec4bdb02; sha256 of the body below 645aa01dd690ec3924666b03e1f910a25025edd28acb410baacaeb3f1ff05928 */
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/Pipeable.js
+/*! @front-desk/pricing 0.2.4 public build; front-desk commit 5d9dad519035e93ce35d0877e888356aa49a34a2; sha256 of the body below ba20ddc425f18270bc40ed9f3986cee2e803dccfca6aba5afeff97e4690ed5d8 */
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/Pipeable.js
 var pipeArguments = (self, args) => {
 	switch (args.length) {
 		case 0: return self;
@@ -28,7 +28,7 @@ var Class$1 = function() {
 	return PipeableBase;
 }();
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/Function.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/Function.js
 var dual = function(arity, body) {
 	if (typeof arity === "function") return function() {
 		return arity(arguments) ? body.apply(this, arguments) : (self) => body(self, ...arguments);
@@ -113,11 +113,21 @@ function memoizeIdempotent(f) {
 	};
 }
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/internal/equal.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/internal/equal.js
+var errorSiteKeys = [
+	"line",
+	"column",
+	"sourceURL",
+	"originalLine",
+	"originalColumn"
+];
 var getAllObjectKeys = (obj) => {
 	const keys = new Set(Reflect.ownKeys(obj));
 	if (obj.constructor === Object) return keys;
-	if (obj instanceof Error) keys.delete("stack");
+	if (obj instanceof Error) {
+		keys.delete("stack");
+		for (const key of errorSiteKeys) if (!Object.prototype.propertyIsEnumerable.call(obj, key)) keys.delete(key);
+	}
 	const proto = Object.getPrototypeOf(obj);
 	let current = proto;
 	while (current !== null && current !== Object.prototype) {
@@ -130,14 +140,22 @@ var getAllObjectKeys = (obj) => {
 };
 var byReferenceInstances = new WeakSet();
 var viewBytes = (view) => new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+var isArrayBufferLike = (u) => u instanceof ArrayBuffer || typeof SharedArrayBuffer !== "undefined" && u instanceof SharedArrayBuffer;
+var bufferBytes = (buffer) => {
+	try {
+		return new Uint8Array(buffer);
+	} catch {
+		return;
+	}
+};
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/internal/hash.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/internal/hash.js
 var backEdges = 0;
 var addBackEdge = () => {
 	backEdges++;
 };
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/Predicate.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/Predicate.js
 function isString$1(input) {
 	return typeof input === "string";
 }
@@ -164,7 +182,7 @@ function isObjectKeyword(input) {
 }
 var hasProperty = dual(2, (self, property) => isObjectKeyword(self) && property in self);
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/Hash.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/Hash.js
 var symbol$1 = "~effect/Hash";
 var hash = (self) => {
 	switch (typeof self) {
@@ -189,9 +207,12 @@ var hash = (self) => {
 			const seen = backEdges;
 			let h;
 			try {
-				if ("~effect/Hash" in self) h = self[symbol$1]();
+				if (isHash(self)) h = self[symbol$1]();
 				else if (typeof self === "function") h = random(self);
-				else if (self instanceof DataView) h = array(viewBytes(self));
+				else if (isArrayBufferLike(self)) {
+					const bytes = bufferBytes(self);
+					h = bytes === void 0 ? random(self) : array(bytes);
+				} else if (self instanceof DataView) h = array(viewBytes(self));
 				else if (Array.isArray(self) || ArrayBuffer.isView(self)) h = array(self);
 				else if (self instanceof Map) h = hashMap(self);
 				else if (self instanceof Set) h = hashSet(self);
@@ -218,6 +239,7 @@ var mix = (h) => {
 };
 var combine = dual(2, (self, b) => mix(Math.imul(self, 2654435761) + Math.imul(b, 2246822507)));
 var optimize = (n) => n & 3221225471 | n >>> 1 & 1073741824;
+var isHash = (u) => hasProperty(u, "~effect/Hash") && typeof u["~effect/Hash"] === "function";
 var float64 = new DataView(new ArrayBuffer(8));
 var number$1 = (n) => {
 	const h = n | 0;
@@ -253,7 +275,7 @@ var randomHashCache = new WeakMap();
 var hashCache = new WeakMap();
 var visitedObjects = new WeakSet();
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/Equal.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/Equal.js
 var symbol = "~effect/Equal";
 function equals$1() {
 	if (arguments.length === 1) return (self) => compareBoth(self, arguments[0]);
@@ -306,6 +328,11 @@ function compareStructure(self, that) {
 	else if (Array.isArray(self)) {
 		if (!Array.isArray(that) || self.length !== that.length) return false;
 		return compareArrays(self, that);
+	} else if (isArrayBufferLike(self)) {
+		if (!isArrayBufferLike(that) || self instanceof ArrayBuffer !== that instanceof ArrayBuffer) return false;
+		const selfBytes = bufferBytes(self);
+		const thatBytes = bufferBytes(that);
+		return selfBytes !== void 0 && thatBytes !== void 0 && compareTypedArrays(selfBytes, thatBytes);
 	} else if (ArrayBuffer.isView(self)) {
 		const selfIsDataView = self instanceof DataView;
 		if (!ArrayBuffer.isView(that) || self.byteLength !== that.byteLength || selfIsDataView !== that instanceof DataView) return false;
@@ -362,9 +389,9 @@ function compareHashed(self, that, hashOf, equivalent) {
 }
 var entryHash = (entry) => hash(entry[0]);
 var equalEntries = (self, that) => compareBoth(self[0], that[0]) && compareBoth(self[1], that[1]);
-var isEqual = (u) => hasProperty(u, symbol);
+var isEqual = (u) => hasProperty(u, "~effect/Equal") && typeof u["~effect/Equal"] === "function";
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/Redactable.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/Redactable.js
 var symbolRedactable = Symbol.for("~effect/Redactable");
 var isRedactable = (u) => hasProperty(u, symbolRedactable);
 function redact$2(u) {
@@ -386,7 +413,7 @@ var emptyContext$1 = {
 	}
 };
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/Formatter.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/Formatter.js
 function format$1(input, options) {
 	const space = options?.space ?? 0;
 	const ancestors = new WeakSet();
@@ -473,7 +500,7 @@ function safeGet(input, key) {
 	}
 }
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/Inspectable.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/Inspectable.js
 var NodeInspectSymbol = Symbol.for("nodejs.util.inspect.custom");
 var toJson = (input) => {
 	try {
@@ -497,7 +524,7 @@ var BaseProto = {
 	}
 };
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/internal/stackTraceLimit.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/internal/stackTraceLimit.js
 var isStackTraceLimitWritable = () => {
 	const desc = Object.getOwnPropertyDescriptor(Error, "stackTraceLimit");
 	if (desc === void 0) return Object.isExtensible(Error);
@@ -509,7 +536,7 @@ var setStackTraceLimit = (value) => {
 	if (canWriteStackTraceLimit) Error.stackTraceLimit = value;
 };
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/Utils.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/Utils.js
 var SingleShotGen = class {
 	constructor(self) {
 		this.value = self;
@@ -546,7 +573,7 @@ var pickInternalCall = () => {
 };
 var internalCall = pickInternalCall();
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/internal/record.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/internal/record.js
 function assignProperty(self, key, value) {
 	if (key === "__proto__") Object.defineProperty(self, key, {
 		value,
@@ -564,7 +591,7 @@ function assignProperties(self, source) {
 	for (const key of Reflect.ownKeys(source)) if (Object.prototype.propertyIsEnumerable.call(source, key)) assignProperty(self, key, source[key]);
 }
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/internal/core.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/internal/core.js
 var EffectTypeId = `~effect/Effect`;
 var ExitTypeId = `~effect/Exit`;
 var effectVariance = {
@@ -663,6 +690,7 @@ var ReasonBase = class {
 			if (options?.overwrite !== true && newAnnotations.has(key)) return;
 			newAnnotations.set(key, value);
 		});
+		if (options?.overwrite !== true && newAnnotations.size === this.annotations.size) return this;
 		const self = Object.assign(Object.create(Object.getPrototypeOf(this)), this);
 		self.annotations = newAnnotations;
 		return self;
@@ -894,13 +922,13 @@ var TaggedError$1 = (tag) => {
 var DoneTypeId = "~effect/Cause/Done";
 var isDone = (u) => hasProperty(u, DoneTypeId);
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/Effectable.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/Effectable.js
 var Prototype = (options) => makePrimitiveProto({
 	op: options.label,
 	[evaluate]: options.evaluate
 });
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/internal/option.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/internal/option.js
 var TypeId$15 = "~effect/Option";
 var CommonProto$1 = {
 	[TypeId$15]: { _A: (_) => _ },
@@ -962,7 +990,7 @@ var SomeImpl = function(value) {
 SomeImpl.prototype = SomeProto;
 var some$1 = (value) => new SomeImpl(value);
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/internal/result.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/internal/result.js
 var TypeId$14 = "~effect/Result";
 var CommonProto = {
 	[TypeId$14]: {
@@ -1028,7 +1056,7 @@ var SuccessImpl = function(success) {
 SuccessImpl.prototype = SuccessProto;
 var succeed$5 = (success) => new SuccessImpl(success);
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/Order.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/Order.js
 function make$10(compare) {
 	return (self, that) => self === that ? 0 : compare(self, that);
 }
@@ -1044,7 +1072,7 @@ var isGreaterThan$1 = (O) => dual(2, (self, that) => O(self, that) === 1);
 var isLessThanOrEqualTo$1 = (O) => dual(2, (self, that) => O(self, that) !== 1);
 var isGreaterThanOrEqualTo$1 = (O) => dual(2, (self, that) => O(self, that) !== -1);
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/Option.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/Option.js
 var none = () => none$1;
 var some = some$1;
 var isNone = isNone$1;
@@ -1059,7 +1087,7 @@ var liftThrowable = (f) => (...a) => {
 };
 var filter = dual(2, (self, predicate) => isNone(self) ? none() : predicate(self.value) ? some(self.value) : none());
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/Context.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/Context.js
 var ServiceTypeId = "~effect/Context/Service";
 var Service = function() {
 	function KeyClass() {}
@@ -1107,9 +1135,8 @@ var ServiceProto = {
 var cacheKeys = new Set();
 var ReferenceTypeId = "~effect/Context/Reference";
 var TypeId$13 = "~effect/Context";
-var MaxDepth = 8;
 var FlattenAfterBaseHits = 8;
-var makeImpl = (cacheRoot, base, overlay, depth) => {
+var makeImpl = (cacheRoot, base, overlay, depth, maxDepth) => {
 	const self = Object.create(Proto$5);
 	self.cacheRoot = cacheRoot ?? self;
 	self.base = base;
@@ -1117,6 +1144,7 @@ var makeImpl = (cacheRoot, base, overlay, depth) => {
 	self.depth = depth;
 	self._flat = void 0;
 	self.baseHits = 0;
+	self.maxDepth = maxDepth;
 	return self;
 };
 var applyOverlays = (map, overlay) => {
@@ -1144,7 +1172,10 @@ var lookup = (self, key) => {
 	}
 	return value;
 };
-var makeUnsafe$2 = (mapUnsafe) => makeImpl(void 0, mapUnsafe, void 0, 0);
+var makeUnsafe$2 = (mapUnsafe, options) => {
+	const maxDepth = options?.maxDepth;
+	return makeImpl(void 0, mapUnsafe, void 0, 0, Number.isInteger(maxDepth) && maxDepth >= 0 ? maxDepth : 8);
+};
 var Proto$5 = {
 	get mapUnsafe() {
 		return flatten(this);
@@ -1182,17 +1213,17 @@ var add = dual(3, (self, key, service) => addUnsafe(self, key.key, service));
 var addUnsafe = (self, key, service) => {
 	const impl = self;
 	const cacheRoot = cacheKeys.has(key) ? void 0 : impl.cacheRoot;
-	if (impl.depth >= MaxDepth) {
+	if (impl.depth >= impl.maxDepth) {
 		const map = new Map(impl._flat ?? impl.base);
 		if (!impl._flat) applyOverlays(map, impl.overlay);
 		map.set(key, service);
-		return makeImpl(cacheRoot, map, void 0, 0);
+		return makeImpl(cacheRoot, map, void 0, 0, impl.maxDepth);
 	}
 	return makeImpl(cacheRoot, impl.base, {
 		key,
 		value: service,
 		parent: impl.overlay
-	}, impl.depth + 1);
+	}, impl.depth + 1, impl.maxDepth);
 };
 var getOrUndefinedUnsafe = (self, key) => {
 	const value = lookup(self, key);
@@ -1222,16 +1253,16 @@ var serviceNotFoundError = (service) => {
 };
 var Reference = Service;
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/internal/array.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/internal/array.js
 var isArrayNonEmpty$1 = (self) => self.length > 0;
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/Result.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/Result.js
 var succeed$4 = succeed$5;
 var fail$4 = fail$5;
 var isFailure = isFailure$1;
 var match$1 = dual(2, (self, { onFailure, onSuccess }) => isFailure(self) ? onFailure(self.failure) : onSuccess(self.success));
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/Array.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/Array.js
 var Array$1 = globalThis.Array;
 var append = dual(2, (self, last) => [...self, last]);
 Array$1.isArray;
@@ -1240,7 +1271,7 @@ var isReadonlyArrayNonEmpty = isArrayNonEmpty$1;
 var empty = () => [];
 var map$2 = dual(2, (self, f) => self.map(f));
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/Duration.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/Duration.js
 var TypeId$12 = "~effect/Duration";
 var bigint0$1 = BigInt(0);
 var bigint1$1 = BigInt(1);
@@ -1455,7 +1486,7 @@ var Equivalence$3 = (self, that) => matchPair(self, that, {
 });
 var equals = dual(2, (self, that) => Equivalence$3(self, that));
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/Scheduler.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/Scheduler.js
 var Scheduler = Reference("effect/Scheduler", {
 	fiberCached: true,
 	defaultValue: () => new MixedScheduler()
@@ -1559,15 +1590,20 @@ var PreventSchedulerYield = Reference("effect/Scheduler/PreventSchedulerYield", 
 	defaultValue: () => false
 });
 var TaggedError = TaggedError$1;
+var hexCodes = new Uint8Array(256).fill(255);
+for (let i = 0; i < 16; i++) {
+	hexCodes["0123456789abcdef".charCodeAt(i)] = i;
+	hexCodes["0123456789ABCDEF".charCodeAt(i)] = i;
+}
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/Tracer.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/Tracer.js
 var ParentSpanKey = "effect/Tracer/ParentSpan";
 var TracerKey = "effect/Tracer";
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/internal/metric.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/internal/metric.js
 var FiberRuntimeMetricsKey = "effect/Metric/FiberRuntimeMetrics";
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/internal/references.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/internal/references.js
 var CurrentStackFrame = Reference("effect/References/CurrentStackFrame", {
 	fiberCached: true,
 	defaultValue: constUndefined
@@ -1585,7 +1621,7 @@ var MinimumLogLevel = Reference("effect/References/MinimumLogLevel", {
 	defaultValue: () => "Info"
 });
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/internal/effect.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/internal/effect.js
 var Interrupt = class extends ReasonBase {
 	constructor(fiberId, annotations = constEmptyAnnotations) {
 		super("Interrupt", annotations, "Interrupted");
@@ -1650,6 +1686,7 @@ var FiberImpl = class {
 		this._children = void 0;
 		this._interruptedCause = void 0;
 		this._yielded = void 0;
+		this._autoYielded = false;
 		this._running = false;
 		this._deferredInterrupt = false;
 		this._parent = void 0;
@@ -1729,6 +1766,12 @@ var FiberImpl = class {
 		this._stack.length = 0;
 		this._children = void 0;
 		this.context = empty$1();
+		const cache = this.cache;
+		if (cache.span !== void 0 || cache.stackFrame !== void 0) this.cache = {
+			...cache,
+			span: void 0,
+			stackFrame: void 0
+		};
 	}
 	runLoop(effect) {
 		const prevFiber = globalThis[currentFiberTypeId];
@@ -1736,8 +1779,10 @@ var FiberImpl = class {
 		const prevRunning = this._running;
 		this._running = true;
 		let yielding = false;
+		let resuming = this._autoYielded;
+		this._autoYielded = false;
 		let current = effect;
-		this.currentOpCount = 0;
+		this.currentOpCount = resuming ? 1 : 0;
 		try {
 			while (true) try {
 				if (this._deferredInterrupt) {
@@ -1746,12 +1791,13 @@ var FiberImpl = class {
 				}
 				this.currentOpCount++;
 				const cache = this.cache;
-				if (!yielding && !cache.preventYield && cache.scheduler.shouldYield(this)) {
+				if (!resuming && !yielding && !cache.preventYield && cache.scheduler.shouldYield(this)) {
 					yielding = true;
-					const prev = current;
-					current = flatMap$1(yieldNow, () => prev);
+					current = this.yieldNow(current, 0, true);
+				} else {
+					resuming = false;
+					current = cache.tracerContext ? cache.tracerContext(current, this) : current[evaluate](this);
 				}
-				current = cache.tracerContext ? cache.tracerContext(current, this) : current[evaluate](this);
 				if (current === Yield) {
 					const yielded = this._yielded;
 					if (ExitTypeId in yielded) {
@@ -1801,6 +1847,17 @@ var FiberImpl = class {
 	yieldWith(value) {
 		this._yielded = value;
 		return Yield;
+	}
+	yieldNow(effect, priority = 0, automatic = false) {
+		let resumed = false;
+		this.currentDispatcher.scheduleTask(() => {
+			if (resumed) return;
+			this._autoYielded = automatic;
+			this.evaluate(effect);
+		}, priority);
+		return this.yieldWith(() => {
+			resumed = true;
+		});
 	}
 	children() {
 		return this._children ??= new Set();
@@ -1892,7 +1949,8 @@ var fail$3 = exitFail;
 var sync = makePrimitive({
 	op: "Sync",
 	[evaluate](fiber) {
-		const value = this[args]();
+		const thunk = this[args];
+		const value = thunk();
 		const cont = fiber.getCont(contA);
 		return cont ? cont[contA](value, fiber) : fiber.yieldWith(exitSucceed(value));
 	}
@@ -1900,22 +1958,10 @@ var sync = makePrimitive({
 var suspend$1 = makePrimitive({
 	op: "Suspend",
 	[evaluate](_fiber) {
-		return this[args]();
+		const thunk = this[args];
+		return thunk();
 	}
 });
-var yieldNow = makePrimitive({
-	op: "Yield",
-	[evaluate](fiber) {
-		let resumed = false;
-		fiber.currentDispatcher.scheduleTask(() => {
-			if (resumed) return;
-			fiber.evaluate(exitVoid);
-		}, this[args] ?? 0);
-		return fiber.yieldWith(() => {
-			resumed = true;
-		});
-	}
-})(0);
 var failCauseSync$1 = (evaluate) => suspend$1(() => failCause$1(evaluate()));
 var die$2 = (defect) => exitDie(defect);
 var void_$1 = succeed$3(void 0);
@@ -1968,17 +2014,21 @@ var asyncFinalizer = makePrimitive({
 	}
 });
 var callback = (register) => callbackOptions(register, register.length >= 2);
+var fnBody = (bodyOrOptions, pipeables) => typeof bodyOrOptions === "function" ? bodyOrOptions : pipeables.shift().bind(bodyOrOptions.self);
 var defineFunctionLength = (length, fn) => Object.defineProperty(fn, "length", {
 	value: length,
 	configurable: true
 });
-var fnUntracedEager$1 = (body, ...pipeables) => defineFunctionLength(body.length, pipeables.length === 0 ? function() {
-	return fromIteratorEagerUnsafe(() => body.apply(this, arguments));
-} : function() {
-	let effect = fromIteratorEagerUnsafe(() => body.apply(this, arguments));
-	for (const pipeable of pipeables) effect = pipeable(effect, ...arguments);
-	return effect;
-});
+var fnUntracedEager$1 = (bodyOrOptions, ...pipeables) => {
+	const body = fnBody(bodyOrOptions, pipeables);
+	return defineFunctionLength(body.length, pipeables.length === 0 ? function() {
+		return fromIteratorEagerUnsafe(() => body.apply(this, arguments));
+	} : function() {
+		let effect = fromIteratorEagerUnsafe(() => body.apply(this, arguments));
+		for (const pipeable of pipeables) effect = pipeable(effect, ...arguments);
+		return effect;
+	});
+};
 var fromIteratorEagerUnsafe = (evaluate) => {
 	try {
 		const iterator = evaluate();
@@ -2321,20 +2371,20 @@ var colors = {
 };
 colors.gray, colors.blue, colors.green, colors.yellow, colors.red, colors.bgBrightRed, colors.black;
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/Cause.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/Cause.js
 var isFailReason = isFailReason$1;
 var die$1 = causeDie;
 var map = causeMap;
 var IllegalArgumentError = IllegalArgumentError$1;
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/Exit.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/Exit.js
 var succeed$2 = exitSucceed;
 var failCause = exitFailCause;
 var fail$2 = exitFail;
 var void_ = exitVoid;
 var isSuccess = exitIsSuccess;
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/internal/dateTime.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/internal/dateTime.js
 var TypeId$11 = "~effect/DateTime";
 var TimeZoneTypeId = "~effect/DateTime/TimeZone";
 var Proto$4 = {
@@ -2362,7 +2412,19 @@ var ProtoUtc = {
 		return `DateTime.Utc(${toDateUtc$1(this).toJSON()})`;
 	}
 };
-({ ...Proto$4 });
+var ProtoZoned = {
+	...Proto$4,
+	_tag: "Zoned",
+	[symbol$1]() {
+		return combine(number$1(this.epochMilliseconds))(hash(this.zone));
+	},
+	[symbol](that) {
+		return isDateTime$1(that) && that._tag === "Zoned" && this.epochMilliseconds === that.epochMilliseconds && equals$1(this.zone, that.zone);
+	},
+	toString() {
+		return `DateTime.Zoned(${formatIsoZoned(this)})`;
+	}
+};
 var ProtoTimeZone = {
 	[TimeZoneTypeId]: TimeZoneTypeId,
 	[NodeInspectSymbol]() {
@@ -2371,16 +2433,46 @@ var ProtoTimeZone = {
 };
 ({ ...ProtoTimeZone });
 ({ ...ProtoTimeZone });
+var cacheSlot = {
+	value: void 0,
+	enumerable: false,
+	writable: true
+};
+var sealedCaches = new WeakMap();
+var cacheAccessor = (key, slots) => ({
+	get() {
+		return Object.isExtensible(this) ? void 0 : sealedCaches.get(this)?.[key];
+	},
+	set(value) {
+		if (Object.isExtensible(this)) {
+			for (const slot of slots) Object.defineProperty(this, slot, cacheSlot);
+			this[key] = value;
+		} else {
+			let caches = sealedCaches.get(this);
+			if (caches === void 0) {
+				caches = {};
+				sealedCaches.set(this, caches);
+			}
+			caches[key] = value;
+		}
+	}
+});
+var zonedSlots = [
+	"partsUtc",
+	"adjustedEpochMilliseconds",
+	"partsAdjusted"
+];
+Object.defineProperty(ProtoUtc, "partsUtc", cacheAccessor("partsUtc", ["partsUtc"]));
+Object.defineProperties(ProtoZoned, {
+	partsUtc: cacheAccessor("partsUtc", zonedSlots),
+	adjustedEpochMilliseconds: cacheAccessor("adjustedEpochMilliseconds", zonedSlots),
+	partsAdjusted: cacheAccessor("partsAdjusted", zonedSlots)
+});
 var isDateTime$1 = (u) => hasProperty(u, TypeId$11);
 var isUtc$1 = (self) => self._tag === "Utc";
 var makeUtc = (epochMillis) => {
 	const self = Object.create(ProtoUtc);
 	self.epochMilliseconds = epochMillis;
-	Object.defineProperty(self, "partsUtc", {
-		value: void 0,
-		enumerable: false,
-		writable: true
-	});
 	return self;
 };
 var fromDateUnsafe = (date) => {
@@ -2403,6 +2495,39 @@ var hasZone = (input) => /Z|GMT|[+-]\d{2}$|[+-]\d{2}:?\d{2}$|\]$/.test(input) ||
 var make$7 = liftThrowable(makeUnsafe$1);
 var toUtc$1 = (self) => makeUtc(self.epochMilliseconds);
 var toDateUtc$1 = (self) => new Date(self.epochMilliseconds);
+var toDate = (self) => {
+	if (self._tag === "Utc") return new Date(self.epochMilliseconds);
+	else if (self.zone._tag === "Offset") return new Date(self.epochMilliseconds + self.zone.offset);
+	else if (self.adjustedEpochMilliseconds !== void 0) return new Date(self.adjustedEpochMilliseconds);
+	let bc = false;
+	const parts = self.zone.format.formatToParts(self.epochMilliseconds).filter((_) => {
+		if (_.type === "era") {
+			bc = _.value === "BC";
+			return false;
+		}
+		return _.type !== "literal";
+	});
+	const year = Number(parts[2].value);
+	const date = new Date(0);
+	date.setUTCFullYear(bc ? 1 - year : year, Number(parts[0].value) - 1, Number(parts[1].value));
+	date.setUTCHours(Number(parts[3].value), Number(parts[4].value), Number(parts[5].value), parts[6]?.type === "fractionalSecond" ? Number(parts[6].value) : (self.epochMilliseconds % 1e3 + 1e3) % 1e3);
+	self.adjustedEpochMilliseconds = date.getTime();
+	return date;
+};
+var zonedOffset = (self) => {
+	return toDate(self).getTime() - toEpochMillis$1(self);
+};
+var offsetToString = (offset) => {
+	const abs = Math.abs(offset);
+	let hours = Math.floor(abs / 36e5);
+	let minutes = Math.round(abs % 36e5 / 6e4);
+	if (minutes === 60) {
+		hours += 1;
+		minutes = 0;
+	}
+	return `${offset < 0 ? "-" : "+"}${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+};
+var zonedOffsetIso = (self) => offsetToString(zonedOffset(self));
 var toEpochMillis$1 = (self) => self.epochMilliseconds;
 var setPartsDate = (date, parts) => {
 	if (parts.year !== void 0 || parts.month !== void 0 || parts.day !== void 0) date.setUTCFullYear(parts.year ?? date.getUTCFullYear(), parts.month !== void 0 ? parts.month - 1 : date.getUTCMonth(), parts.day ?? date.getUTCDate());
@@ -2416,6 +2541,11 @@ var setPartsDate = (date, parts) => {
 	if (parts.millisecond !== void 0) date.setUTCMilliseconds(parts.millisecond);
 };
 var formatIso$1 = (self) => toDateUtc$1(self).toISOString();
+var formatIsoOffset = (self) => {
+	const date = toDate(self);
+	return self._tag === "Utc" ? date.toISOString() : `${date.toISOString().slice(0, -1)}${zonedOffsetIso(self)}`;
+};
+var formatIsoZoned = (self) => self.zone._tag === "Offset" ? formatIsoOffset(self) : `${formatIsoOffset(self)}[${self.zone.id}]`;
 var succeed$1 = succeed$3;
 var suspend = suspend$1;
 var fail$1 = fail$3;
@@ -2428,8 +2558,6 @@ var runSyncExit = runSyncExit$1;
 var mapEager = mapEager$1;
 var flatMapEager = flatMapEager$1;
 var fnUntracedEager = fnUntracedEager$1;
-//#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/BigDecimal.js
 var TypeId$10 = "~effect/BigDecimal";
 var BigDecimalProto = {
 	[TypeId$10]: TypeId$10,
@@ -2479,12 +2607,16 @@ var normalize = (self) => {
 		if (self.value === bigint0) self.normalized = zero;
 		else {
 			const digits = `${self.value}`;
-			let end = digits.length;
-			while (digits[end - 1] === "0") end--;
-			self.normalized = makeNormalized(BigInt(digits.slice(0, end)), self.scale - (digits.length - end));
+			const zeros = trailingZeros(digits);
+			self.normalized = makeNormalized(BigInt(digits.slice(0, digits.length - zeros)), self.scale - zeros);
 		}
 	}
 	return self.normalized;
+};
+var trailingZeros = (digits) => {
+	let end = digits.length;
+	while (digits[end - 1] === "0") end--;
+	return digits.length - end;
 };
 var MAX_COMPARISON_SCALE_ALIGNMENT = 100;
 var comparisonPowersOfTen = [bigint1];
@@ -2531,8 +2663,12 @@ var toExponential = (n) => {
 	return `${head}${tail === "" ? "" : `.${tail}`}e${exp >= 0 ? "+" : ""}${exp}`;
 };
 var isZero = (n) => n.value === bigint0;
+var alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+var codes = new Uint8Array(123).fill(255);
+for (let i = 0; i < 64; i++) codes[alphabet.charCodeAt(i)] = i;
+codes["=".charCodeAt(0)] = 0;
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/DateTime.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/DateTime.js
 var isDateTime = isDateTime$1;
 var isUtc = isUtc$1;
 var makeUnsafe = makeUnsafe$1;
@@ -2540,17 +2676,13 @@ var make$5 = make$7;
 var toUtc = toUtc$1;
 var toEpochMillis = toEpochMillis$1;
 var formatIso = formatIso$1;
-var alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-var codes = new Uint8Array(123).fill(255);
-for (let i = 0; i < 64; i++) codes[alphabet.charCodeAt(i)] = i;
-codes["=".charCodeAt(0)] = 0;
 ({ ...BaseProto });
 ({ ...BaseProto });
 ({ ...PipeInspectableProto });
 BaseProto.toString, BaseProto[NodeInspectSymbol];
 ({ ...PipeInspectableProto });
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/internal/schema/annotations.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/internal/schema/annotations.js
 function resolve$1(ast) {
 	return ast.checks ? ast.checks[ast.checks.length - 1].annotations : ast.annotations;
 }
@@ -2563,15 +2695,16 @@ var getExpected = memoize((ast) => {
 	return ast.getExpected(getExpected);
 });
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/internal/schema/parser.js
-var missing = Symbol();
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/internal/schema/parser.js
+var missing = Symbol.for("effect/schema/parser/missing");
 var succeed = succeed$2;
 var missingExit = succeed(missing);
-var sameExit = succeed(missing);
+var sameExit = Object.assign(succeed(missing), { [missing]: true });
+var isSameExit = (result) => result[missing] === true;
 var toOption = (value) => value === missing ? none() : some(value);
 var fromOptionExit = (option) => option._tag === "None" ? missingExit : succeed(option.value);
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/SchemaIssue.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/SchemaIssue.js
 var TypeId$5 = "~effect/SchemaIssue/Issue";
 function isIssue(u) {
 	return hasProperty(u, TypeId$5) && u[TypeId$5] === TypeId$5;
@@ -2799,7 +2932,7 @@ function findMessage(issue) {
 	if (typeof message === "string") return message;
 }
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/internal/schema/cause.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/internal/schema/cause.js
 function getSchemaIssue(cause) {
 	let issue;
 	for (const reason of cause.reasons) {
@@ -2814,7 +2947,7 @@ function getSchemaIssueOrThrow(cause, message) {
 	return issue;
 }
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/SchemaGetter.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/SchemaGetter.js
 var makeGetter = (fields) => Object.assign(Object.create(Prototype$1), fields);
 function fail(f) {
 	return transformOptionalEffect((oe, options) => fail$1(f(oe, options)));
@@ -2870,7 +3003,7 @@ function Number$3() {
 	return transform$1(globalThis.Number);
 }
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/SchemaTransformation.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/SchemaTransformation.js
 var Middleware = class extends Class$1 {
 	_tag = "Middleware";
 	decode;
@@ -2915,7 +3048,7 @@ function passthrough() {
 }
 var numberFromString = new Transformation(Number$3(), String$3());
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/SchemaAST.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/SchemaAST.js
 function makeGuard(tag) {
 	return (ast) => ast._tag === tag;
 }
@@ -3216,7 +3349,7 @@ var Arrays = class extends ASTNodeImpl {
 };
 function stepArray(s, item, exit, i) {
 	if (exit._tag === "Failure") return wrapPropertyKeyIssue(s, s.ast, i, exit);
-	const value = exit === sameExit ? item : exit[args];
+	const value = isSameExit(exit) ? item : exit[args];
 	if (value !== missing) s.output[i] = value;
 	else {
 		const p = s.getParser(s.tailThreshold, i);
@@ -3302,7 +3435,7 @@ var IndexSignature = class {
 		if (!isIndexSignatureParameter(parameter)) throw new Error(`Invalid index signature parameter ${parameter._tag}`);
 		this.parameter = parameter;
 		this.type = type;
-		if (isOptional(type) && !containsUndefined(type)) throw new Error("Cannot use `Schema.optionalKey` with index signatures, use `Schema.optional` instead.");
+		if (isOptional(type) || type.encoding !== void 0 && isOptional(toEncoded$1(type))) throw new Error("Cannot use `Schema.optionalKey` or `Schema.optional` with index signatures. Index signatures already allow keys to be absent; use `Schema.UndefinedOr` to allow `undefined` values.");
 	}
 };
 var Objects = class extends ASTNodeImpl {
@@ -3328,7 +3461,8 @@ var Objects = class extends ASTNodeImpl {
 				properties = ast.propertySignatures.map((ps) => ({
 					parser: compileField(ps.type),
 					name: ps.name,
-					type: ps.type
+					type: ps.type,
+					ownOnly: requiresOwnProperty(ps.name)
 				}));
 				indexes = indexCount ? ast.indexSignatures.map((is) => ({
 					is,
@@ -3342,7 +3476,7 @@ var Objects = class extends ASTNodeImpl {
 			const expectedKeys = new Set(ast.propertySignatures.map((ps) => typeof ps.name === "number" ? globalThis.String(ps.name) : ps.name));
 			const finishIndex = (s, key, k2, inputValue, exitValue) => {
 				if (exitValue._tag === "Failure") return wrapPropertyKeyIssue(s, ast, key, exitValue) ?? void_;
-				const value = exitValue === sameExit ? inputValue : exitValue[args];
+				const value = isSameExit(exitValue) ? inputValue : exitValue[args];
 				if (k2 !== missing && value !== missing) {
 					if (hasProperties && (expectedKeys.has(key) || expectedKeys.has(typeof k2 === "number" ? globalThis.String(k2) : k2))) return void_;
 					assignProperty(s.out, k2, value);
@@ -3356,7 +3490,7 @@ var Objects = class extends ASTNodeImpl {
 					exitKey = eff;
 				}
 				if (exitKey._tag === "Failure") return wrapPropertyKeyIssue(s, ast, key, exitKey) ?? void_;
-				const k2 = exitKey === sameExit ? key : exitKey[args];
+				const k2 = isSameExit(exitKey) ? key : exitKey[args];
 				const inputValue = s.input[key];
 				const result = index.parserValue(inputValue, s.options);
 				return effectIsExit(result) ? finishIndex(s, key, k2, inputValue, result) : flatMap(exit(result), (exit) => finishIndex(s, key, k2, inputValue, exit));
@@ -3466,11 +3600,11 @@ var Objects = class extends ASTNodeImpl {
 				for (let index = 0; index < props.length; index++) {
 					const property = props[index];
 					const name = property.name;
-					const hasKey = hasPropertySignature(record, name);
+					const hasKey = property.ownOnly ? Object.hasOwn(record, name) : name in record;
 					const value = hasKey ? record[name] : missing;
 					const exit = property.parser(value, options);
 					if (!effectIsExit(exit)) return resume(state, index, exit);
-					if (exit === sameExit) {
+					if (isSameExit(exit)) {
 						if (hasKey) assignProperty(out, name, value);
 						continue;
 					}
@@ -3508,7 +3642,7 @@ var Objects = class extends ASTNodeImpl {
 };
 function stepProperty(s, p, exit) {
 	if (exit._tag === "Failure") return wrapPropertyKeyIssue(s, s.ast, p.name, exit);
-	if (exit === sameExit) return;
+	if (isSameExit(exit)) return;
 	const value = exit[args];
 	if (value !== missing) {
 		assignProperty(s.out, p.name, value);
@@ -3526,7 +3660,7 @@ function stepProperty(s, p, exit) {
 }
 var parsePropertiesOptions = {
 	onItem(s, p) {
-		if (!hasPropertySignature(s.input, p.name)) return p.parser(missing, s.options);
+		if (!(p.ownOnly ? Object.hasOwn(s.input, p.name) : p.name in s.input)) return p.parser(missing, s.options);
 		const value = s.input[p.name];
 		assignProperty(s.out, p.name, value);
 		return p.parser(value, s.options);
@@ -3649,7 +3783,9 @@ function collectSentinels(ast) {
 var candidateIndexCache = new WeakMap();
 var emptyCandidates = Object.freeze([]);
 var getRuntimeType = (input) => input === null ? "null" : Array.isArray(input) ? "array" : typeof input;
-var hasPropertySignature = (input, key) => key === "__proto__" ? Object.hasOwn(input, key) : key in input;
+var objectPrototypeKeys = new Set(Reflect.ownKeys(Object.prototype)).add("__proto__");
+var requiresOwnProperty = (key) => objectPrototypeKeys.has(typeof key === "number" ? globalThis.String(key) : key);
+var hasPropertySignature = (input, key) => Object.hasOwn(input, key) || key in input && !requiresOwnProperty(key);
 function getCandidateIndex(types) {
 	let index = candidateIndexCache.get(types);
 	if (index) return index;
@@ -3853,8 +3989,7 @@ function parseUnionCandidates(ast, parser, candidates, input, options) {
 }
 function resumeUnion(eff, state) {
 	return flatMapEager(eff, (_) => {
-		if (state.out === sameExit) return succeed$1(state.input);
-		if (state.out) return state.out;
+		if (state.out) return isSameExit(state.out) ? succeed$1(state.input) : state.out;
 		return fail$1(new AnyOf(state.ast, state.issues ?? [], state.input, state.options));
 	});
 }
@@ -4099,13 +4234,10 @@ var toType = memoizeIdempotent((ast) => {
 		return type === owner && ast.encoding === void 0 ? ast : replaceContext(type, ast.context);
 	}
 	const type = "recur" in ast ? ast.recur(toType) : ast;
-	if ("encodingChecks" in type && type.encodingChecks) {
-		const checks = canPreserveEncodingChecks(ast) ? type.encodingChecks : isArrays(type) || isObjects(type) || isDeclaration(type) && type.typeParameters.length > 0 ? extractStructuralChecks(type.encodingChecks) : void 0;
-		return copy(type, {
-			encodingChecks: void 0,
-			checks: combineChecks(type.checks, checks)
-		});
-	}
+	if ("encodingChecks" in type && type.encodingChecks) return copy(type, {
+		encodingChecks: void 0,
+		checks: combineChecks(canPreserveEncodingChecks(ast) ? type.encodingChecks : isArrays(type) || isObjects(type) || isDeclaration(type) && type.typeParameters.length > 0 ? extractStructuralChecks(type.encodingChecks) : void 0, type.checks)
+	});
 	return type;
 });
 var toEncoded$1 = memoizeIdempotent((ast) => {
@@ -4130,18 +4262,11 @@ var flip$1 = memoize((ast) => {
 	}
 	return "flip" in ast ? ast.flip(flip$1) : "recur" in ast ? ast.recur(flip$1) : ast;
 });
-function containsUndefined(ast) {
-	switch (ast._tag) {
-		case "Undefined": return true;
-		case "Union": return ast.types.some(containsUndefined);
-		default: return false;
-	}
-}
 function fromConst(ast, value) {
-	const succeed$6 = value === 0 ? sameExit : succeed(value);
+	const succeed$7 = value === 0 ? sameExit : succeed(value);
 	return (input, options) => {
 		if (input === missing) return missingExit;
-		if (input === value) return succeed$6;
+		if (input === value) return succeed$7;
 		return fail$1(new InvalidType(ast, input, options));
 	};
 }
@@ -4199,8 +4324,8 @@ function getConstructorDescriptor(ast) {
 	return isFunction(getDescriptor) ? getDescriptor(ast.typeParameters) : void 0;
 }
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/internal/schema/interpreter.js
-var flatMapTransformation = (result, current, f) => result === sameExit ? f(current) : flatMapEager(result, f);
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/internal/schema/interpreter.js
+var flatMapTransformation = (result, current, f) => isSameExit(result) ? f(current) : flatMapEager(result, f);
 function compileTransformation(transformation) {
 	const apply = compileTransformationUnsafe(transformation);
 	return (result, current, options) => {
@@ -4213,11 +4338,11 @@ function compileTransformation(transformation) {
 }
 function compileTransformationUnsafe(transformation) {
 	if (transformation._tag === "Middleware") return (result, current, options) => {
-		return fromOptionalEffect(result === sameExit ? transformation.decode(succeed(toOption(current)), options) : transformation.decode(mapEager(result, toOption), options));
+		return fromOptionalEffect(isSameExit(result) ? transformation.decode(succeed(toOption(current)), options) : transformation.decode(mapEager(result, toOption), options));
 	};
 	const getter = transformation.decode;
 	switch (getter._tag) {
-		case "Passthrough": return (result, current) => result === sameExit ? succeed(current) : result;
+		case "Passthrough": return (result, current) => isSameExit(result) ? succeed(current) : result;
 		case "Transform": {
 			const transform = (value) => value === missing ? missingExit : succeed(getter.transform(value));
 			return (result, current) => flatMapTransformation(result, current, transform);
@@ -4249,11 +4374,11 @@ function withDefault(ast, parser) {
 		const result = defaultValue;
 		if (effectIsExit(result) && result._tag === "Success") {
 			const local = parser(result[args], options);
-			return local === sameExit ? result : local;
+			return isSameExit(local) ? result : local;
 		}
 		return flatMapEager(wrapEncoding(ast, input, options, result), (value) => {
 			const local = parser(value, options);
-			return local === sameExit ? succeed(value) : local;
+			return isSameExit(local) ? succeed(value) : local;
 		});
 	};
 }
@@ -4277,7 +4402,7 @@ function compile(ast, compile, compileField, base, specialize) {
 			if (encodingChecks && !options.disableChecks) {
 				if (effectIsExit(result)) {
 					if (result._tag === "Success") {
-						const output = result === sameExit ? input : result[args];
+						const output = isSameExit(result) ? input : result[args];
 						if (input !== missing && output !== missing) {
 							const issues = collectIssues(encodingChecks, input, void 0, ast, options);
 							if (issues) result = fail$1(new Composite(ast, issues, input, options));
@@ -4294,7 +4419,7 @@ function compile(ast, compile, compileField, base, specialize) {
 			if (checks && !options.disableChecks) {
 				if (effectIsExit(result)) {
 					if (result._tag === "Success") {
-						const value = result === sameExit ? input : result[args];
+						const value = isSameExit(result) ? input : result[args];
 						if (value === missing) return result;
 						const issues = collectIssues(checks, value, void 0, ast, options);
 						if (issues) result = fail$1(new Composite(ast, issues, value, options));
@@ -4327,24 +4452,24 @@ function compile(ast, compile, compileField, base, specialize) {
 					result = next(current, options);
 				} else result = flatMapEager(result, (value) => {
 					const nextResult = next(value, options);
-					return nextResult === sameExit ? succeed(value) : nextResult;
+					return isSameExit(nextResult) ? succeed(value) : nextResult;
 				});
 			}
 		}
 		if (result._tag === "Success") {
 			const value = result[args];
 			const local = parseLocal(value, options);
-			return local === sameExit ? result : local;
+			return isSameExit(local) ? result : local;
 		}
 		result = wrapEncoding(ast, input, options, result);
 		return flatMapEager(result, (value) => {
 			const local = parseLocal(value, options);
-			return local === sameExit ? succeed(value) : local;
+			return isSameExit(local) ? succeed(value) : local;
 		});
 	};
 }
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/internal/schema/compilerRegistry.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/internal/schema/compilerRegistry.js
 var invalid = Symbol();
 var cache = new WeakMap();
 var compilerAdaptersEnabled = false;
@@ -4380,7 +4505,7 @@ function resolve(ast) {
 	return entry;
 }
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/SchemaParser.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/SchemaParser.js
 function makeEffect(schema) {
 	const ast = schema.ast;
 	let parser;
@@ -4426,7 +4551,7 @@ function run(ast) {
 	return runWithCompiler(normalCompiler, ast);
 }
 function parserResult(result, input) {
-	if (result === sameExit) return succeed$1(input);
+	if (isSameExit(result)) return succeed$1(input);
 	if (!effectIsExit(result)) return flatMapEager(result, getValue);
 	return result[args] === missing ? getValue(missing) : result;
 }
@@ -4434,7 +4559,7 @@ function runWithCompiler(compiler, ast) {
 	let parser;
 	return (input, options) => {
 		const result = (parser ??= compiler(ast))(input, options ?? defaultParseOptions);
-		if (result === sameExit) return succeed$1(input);
+		if (isSameExit(result)) return succeed$1(input);
 		if (!effectIsExit(result)) return flatMapEager(result, getValue);
 		return result[args] === missing ? getValue(missing) : result;
 	};
@@ -4456,33 +4581,35 @@ function runSync(effect, message) {
 	const issue = getSchemaIssueOrThrow(exit.cause, message);
 	throw new Error("Schema validation failed", { cause: issue });
 }
+var constructorDefectMessage = "Constructor adapter can only throw schema issues";
+function throwConstructorDefect(error) {
+	throw new Error(constructorDefectMessage, { cause: die$1(error) });
+}
 function makeConstructorSync(ast) {
 	let entry;
-	let parser;
-	return (input, options) => {
-		entry ??= resolve(ast);
-		const parseOptions = options?.disableChecks ? options.parseOptions ? {
-			...options.parseOptions,
-			disableChecks: true
-		} : { disableChecks: true } : options?.parseOptions ?? defaultParseOptions;
-		const make = entry.make;
-		if (make !== void 0 && input !== missing) {
-			let output;
-			try {
-				output = make(input, parseOptions);
-			} catch (error) {
-				getSchemaIssueOrThrow(die$1(error), "Constructor adapter can only throw schema issues");
-				throw error;
-			}
-			if (output !== invalid && output !== missing) return output;
+	return (input, options) => constructSync(entry ??= resolve(ast), input, options);
+}
+function constructSync(entry, input, options) {
+	const parseOptions = options?.disableChecks ? options.parseOptions ? {
+		...options.parseOptions,
+		disableChecks: true
+	} : { disableChecks: true } : options?.parseOptions ?? defaultParseOptions;
+	const make = entry.make;
+	if (make !== void 0 && input !== missing) {
+		let output;
+		try {
+			output = make(input, parseOptions);
+		} catch (error) {
+			throwConstructorDefect(error);
 		}
-		return runSync(parserResult((parser ??= entry.makeEffect)(input, parseOptions), input), "Constructor adapter can only throw schema issues");
-	};
+		if (output !== invalid && output !== missing) return output;
+	}
+	return runSync(parserResult(entry.makeEffect(input, parseOptions), input), constructorDefectMessage);
 }
 var normalCompiler = (ast) => resolve(ast).parser;
 var constructorCompiler = (ast) => resolve(ast).makeEffect;
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/internal/schema/make.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/internal/schema/make.js
 var TypeId$2 = "~effect/Schema/Schema";
 var RebuildOptions = Symbol();
 var SchemaProto = {
@@ -4537,10 +4664,10 @@ function make$1(ast, options) {
 	return self;
 }
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/Struct.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/Struct.js
 var lambda = (f) => f;
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/internal/schemaError.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/internal/schemaError.js
 var SchemaErrorTypeId = "~effect/Schema/SchemaError";
 function isSchemaError$1(u) {
 	return hasProperty(u, "~effect/Schema/SchemaError") && u["~effect/Schema/SchemaError"] === "~effect/Schema/SchemaError";
@@ -4554,7 +4681,7 @@ function isSchemaError$1(u) {
 ({ ...BaseProto });
 ({ ...BaseProto });
 //#endregion
-//#region ../../node_modules/.pnpm/effect@4.0.6/node_modules/effect/dist/Schema.js
+//#region ../../node_modules/.pnpm/effect@4.1.4/node_modules/effect/dist/Schema.js
 function declareConstructor() {
 	return (typeParameters, run, annotations) => {
 		return make(new Declaration(typeParameters.map(getAST), (typeParameters) => run(typeParameters.map((ast) => make(ast))), annotations));
@@ -4984,7 +5111,7 @@ var plainDecoderOf = (schema) => {
 decoderOf(ArraySchema(BindingQuote));
 //#endregion
 //#region src/engine/result.ts
-var ENGINE_VERSION$1 = "0.2.3";
+var ENGINE_VERSION$1 = "0.2.4";
 var Reason = Struct({
 	code: Literals([
 		"policy-disabled",
@@ -5002,6 +5129,7 @@ var Reason = Struct({
 		"quote-out-of-scope",
 		"early-window",
 		"standard-window",
+		"team-after-close",
 		"selected"
 	]).annotate({ description: "Why the engine decided this" }),
 	detail: String$1.annotate({ description: "The field, ruling, amount or quote ref behind the code" })
@@ -5114,6 +5242,7 @@ var PricingPolicy = Struct({
 		seatOrderSource: NonEmptyString.annotate({ description: "Ruling source for highest-paid-first consumption" }),
 		windowEnd: Instant.pipe(annotateEncoded({ description: "Exclusive end compared with the decision's injected now (quote or decision time); a pre-end quote retains credit only until its own expiry" }))
 	}).annotate({ description: "Window and consumption order for caller-supplied Crash Course team seat credits" }),
+	teamOrdersAfterClose: optionalKey(ruling("Whether team orders keep pricing after checkoutStopsAt and closesAt, sold by invoice with no end date; absent means false", Boolean$1)),
 	version: NonEmptyString.annotate({ description: "Policy version; it changes whenever any rule changes" })
 });
 decodeUnknownSync(PricingPolicy);
@@ -5328,8 +5457,9 @@ var absentAs = (entry, value) => entry ?? {
 var resolveTerms = (policy) => {
 	const { alumniPercent, checkoutStopsAt, closesAt, creditAmounts, earlyEndsAt, legend, newBuyerEarlyPercent, opensAt, ppp, teamBands } = policy;
 	const creditOffPpp = absentAs(policy.creditOffPpp, false);
+	const teamOrdersAfterClose = absentAs(policy.teamOrdersAfterClose, false);
 	const creditPaidMaximum = absentAs(policy.creditPaidMaximum, null);
-	if (isRuled(alumniPercent) && isRuled(checkoutStopsAt) && isRuled(closesAt) && isRuled(creditAmounts) && isRuled(creditOffPpp) && isRuled(creditPaidMaximum) && isRuled(earlyEndsAt) && isRuled(legend) && isRuled(newBuyerEarlyPercent) && isRuled(opensAt) && isRuled(ppp) && isRuled(teamBands)) return { resolved: {
+	if (isRuled(alumniPercent) && isRuled(checkoutStopsAt) && isRuled(closesAt) && isRuled(creditAmounts) && isRuled(creditOffPpp) && isRuled(creditPaidMaximum) && isRuled(earlyEndsAt) && isRuled(legend) && isRuled(newBuyerEarlyPercent) && isRuled(opensAt) && isRuled(ppp) && isRuled(teamBands) && isRuled(teamOrdersAfterClose)) return { resolved: {
 		alumniPercent: alumniPercent.value,
 		checkoutStopsAt: checkoutStopsAt.value,
 		closesAt: closesAt.value,
@@ -5341,7 +5471,8 @@ var resolveTerms = (policy) => {
 		list: policy.list,
 		newBuyerEarlyPercent: newBuyerEarlyPercent.value,
 		opensAt: opensAt.value,
-		teamBands: teamBands.value
+		teamBands: teamBands.value,
+		teamOrdersAfterClose: teamOrdersAfterClose.value
 	} };
 	return { held: Object.entries({
 		alumniPercent,
@@ -5355,7 +5486,8 @@ var resolveTerms = (policy) => {
 		newBuyerEarlyPercent,
 		opensAt,
 		ppp,
-		teamBands
+		teamBands,
+		teamOrdersAfterClose
 	}).flatMap(([field, ruling]) => "question" in ruling ? [reason("policy-unresolved", `${field}: ${ruling.question}`)] : []) };
 };
 var gaps = (facts) => Object.entries(facts).flatMap(([field, fact]) => "gap" in fact ? [reason("fact-unknown", `${field}: ${fact.gap}`)] : []);
@@ -5496,6 +5628,8 @@ var lowestReachable = (candidate, facts, terms, phase) => {
 };
 var couldLower = (unresolved, facts, context) => facts === null ? [] : unresolved.filter(({ candidate }) => lowestReachable(candidate, facts, context.terms, context.phase) < context.selected);
 var withoutCodeRef = ({ codeRef: _codeRef, ...candidate }) => candidate;
+var permitsTeamAfterClose = (terms, order, closed) => closed?.kind === "closed" && terms.teamOrdersAfterClose && (!isKnown(order) || order.value === "team");
+var phaseFor = (terms, at, teamAfterClose) => !teamAfterClose && at < toEpochMillis(terms.earlyEndsAt) ? "early" : "standard";
 var cohort005Pricer = (rules, rank = cohort005Rank) => {
 	const select = {
 		individual: pricer(rules.filter((rule) => rule.order === "individual"), rank),
@@ -5518,13 +5652,14 @@ var cohort005Pricer = (rules, rank = cohort005Rank) => {
 		};
 		const at = toEpochMillis(now);
 		const closed = closure(terms.resolved, at);
-		if (closed !== null) return closed;
+		const teamAfterClose = permitsTeamAfterClose(terms.resolved, buyerFacts.order, closed);
+		if (closed !== null && !teamAfterClose) return closed;
 		const buyer = resolveBuyer(buyerFacts, terms.resolved, quantity);
 		if ("held" in buyer) return {
 			kind: "held",
 			reasons: buyer.held
 		};
-		const phase = at < toEpochMillis(terms.resolved.earlyEndsAt) ? "early" : "standard";
+		const phase = phaseFor(terms.resolved, at, teamAfterClose);
 		const outcomes = quotes.map((quote) => quoteOutcome(quote, product.id, quantity, now));
 		const quoteReasons = outcomes.filter((outcome) => "code" in outcome).toSorted((left, right) => left.detail.localeCompare(right.detail));
 		if (quoteReasons.some((item) => item.code === "quote-basis-unknown")) return {
@@ -5553,6 +5688,7 @@ var cohort005Pricer = (rules, rank = cohort005Rank) => {
 			policyVersion: policy.version,
 			reasons: [
 				reason(phase === "early" ? "early-window" : "standard-window"),
+				...teamAfterClose ? [reason("team-after-close")] : [],
 				...spent ? [reason("credit-spent")] : [],
 				...buyer.gaps,
 				...quoteReasons,
