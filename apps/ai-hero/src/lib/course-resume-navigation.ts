@@ -45,8 +45,7 @@ export function getCourseWorkshops(
 	}
 
 	return orderedChildren(courseResource).filter(
-		(resource) =>
-			resource.type === 'workshop' || resource.type === 'tutorial',
+		(resource) => resource.type === 'workshop' || resource.type === 'tutorial',
 	)
 }
 
@@ -74,7 +73,9 @@ function collectLessons(
 			continue
 		}
 
-		if (child.type !== 'solution' && child.type !== 'videoResource') {
+		if (child.type === 'workshop' || child.type === 'tutorial') {
+			collectLessons(child, child, destinations)
+		} else if (child.type === 'section') {
 			collectLessons(child, workshop, destinations)
 		}
 	}
@@ -90,6 +91,79 @@ export function getCourseLessons(
 	}
 
 	return destinations
+}
+
+/** Resolve only resources present in the tree, with their actual owning workshop. */
+export function getWorkshopResourceHref(
+	navigation: CourseResource | null | undefined,
+	target: Partial<Pick<CourseResource, 'id' | 'type'>> | null | undefined,
+): string | null {
+	if (!navigation || !target?.id || !target.type) return null
+	const { id: targetId, type: targetType } = target
+
+	function resolve(
+		resource: CourseResource,
+		owner: CourseResource | null,
+		allowWorkshopPage = true,
+	): string | null {
+		const slug = getResourceSlug(resource)
+		const isWorkshop =
+			resource.type === 'workshop' || resource.type === 'tutorial'
+		if (isWorkshop && allowWorkshopPage) {
+			return slug ? `/workshops/${slug}` : null
+		}
+		if (resource.type === 'section' || isWorkshop) {
+			for (const child of orderedChildren(resource)) {
+				const href = resolve(child, isWorkshop ? resource : owner, false)
+				if (href) return href
+			}
+			return null
+		}
+		if (['lesson', 'exercise', 'post'].includes(resource.type)) {
+			const workshopSlug = owner && getResourceSlug(owner)
+			return workshopSlug && slug ? `/workshops/${workshopSlug}/${slug}` : null
+		}
+		return null
+	}
+
+	function find(
+		resource: CourseResource,
+		workshop: CourseResource | null,
+	): string | null {
+		const owner =
+			resource.type === 'workshop' || resource.type === 'tutorial'
+				? resource
+				: workshop
+
+		if (resource.id === targetId && resource.type === targetType) {
+			return resolve(resource, owner)
+		}
+
+		if (
+			!['workshop', 'tutorial', 'cohort', 'section'].includes(resource.type)
+		) {
+			return null
+		}
+		for (const child of orderedChildren(resource)) {
+			const href = find(child, owner)
+			if (href) return href
+		}
+		return null
+	}
+
+	return find(navigation, null)
+}
+
+/** First playable destination, or a child workshop overview. Never an untyped slug. */
+export function getWorkshopStartHref(
+	navigation: CourseResource | null | undefined,
+): string | null {
+	if (!navigation) return null
+	for (const child of orderedChildren(navigation)) {
+		const href = getWorkshopResourceHref(navigation, child)
+		if (href) return href
+	}
+	return null
 }
 
 function getProgressTime(progress: CourseProgress): number {
@@ -108,13 +182,12 @@ export function getLatestCourseLesson(
 	)
 
 	const latestProgress = progress
-		.filter(
-			(item): item is CourseProgress & { resourceId: string } =>
-				Boolean(item.resourceId && lessonsById.has(item.resourceId)),
+		.filter((item): item is CourseProgress & { resourceId: string } =>
+			Boolean(item.resourceId && lessonsById.has(item.resourceId)),
 		)
 		.sort((left, right) => getProgressTime(right) - getProgressTime(left))[0]
 
 	return latestProgress
-		? lessonsById.get(latestProgress.resourceId) ?? null
+		? (lessonsById.get(latestProgress.resourceId) ?? null)
 		: null
 }

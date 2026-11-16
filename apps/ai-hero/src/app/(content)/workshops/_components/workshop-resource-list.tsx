@@ -15,6 +15,10 @@ import {
 	findSectionIdForResourceSlug,
 	type ResourceNavigation,
 } from '@/lib/content-navigation'
+import {
+	getWorkshopResourceHref,
+	type CourseResource,
+} from '@/lib/course-resume-navigation'
 import { api } from '@/trpc/react'
 import { formatCohortDateRange } from '@/utils/format-cohort-date'
 import type { RawRuleOf } from '@casl/ability'
@@ -72,6 +76,41 @@ export function getAnonymousWorkshopAbilityRules(
 		: []
 }
 
+/** The shared list renders section children as rows, not recursive sections. */
+export function getWorkshopListResources(navigation: ResourceNavigation) {
+	const hrefs = new Map<string, string>()
+	type Wrappers = NonNullable<ResourceNavigation['resources']>
+	type Wrapper = {
+		resource: CourseResource
+		metadata?: Record<string, unknown> | null
+	}
+	function rows(wrappers: Wrapper[], insideSection = false): Wrapper[] {
+		return wrappers.flatMap((wrapper): Wrapper[] => {
+			const { resource } = wrapper
+			if (resource.type === 'section') {
+				const children = rows(
+					(resource.resources ?? []).filter((child): child is Wrapper =>
+						Boolean(child.resource),
+					),
+					true,
+				)
+				// Nested sections have no page. Keep their playable rows under the
+				// enclosing heading rather than handing a section to LessonResource.
+				return insideSection
+					? children
+					: [{ ...wrapper, resource: { ...resource, resources: children } }]
+			}
+			const href = getWorkshopResourceHref(navigation, resource)
+			const slug = resource.fields?.slug
+			if (!href || typeof slug !== 'string' || !slug) return []
+			hrefs.set(slug, href)
+			return [{ ...wrapper, resource }]
+		})
+	}
+	// All relation/resource fields survive the spreads; only nesting is reduced.
+	return { resources: rows(navigation.resources ?? []) as Wrappers, hrefs }
+}
+
 export function WorkshopResourceList(props: Props) {
 	const wrapperClassName = props.wrapperClassName ?? ''
 	const className = props.className ?? ''
@@ -117,8 +156,8 @@ export function WorkshopResourceList(props: Props) {
 		return null
 	}
 
-	const { resources, setIsSidebarCollapsed, isSidebarCollapsed } =
-		workshopNavigation
+	const { setIsSidebarCollapsed, isSidebarCollapsed } = workshopNavigation
+	const { resources, hrefs } = getWorkshopListResources(workshopNavigation)
 
 	const cohort = getCohortFromNavigation(workshopNavigation)
 
@@ -156,14 +195,13 @@ export function WorkshopResourceList(props: Props) {
 			}
 		: undefined
 
-	const moduleSlug = String(
-		params.module ?? workshopNavigation.fields?.slug ?? '',
-	)
-
 	return (
 		<ResourceListView
 			title={workshopNavigation.fields?.title ?? ''}
-			titleHref={`/workshops/${workshopNavigation.fields?.slug}`}
+			titleHref={
+				getWorkshopResourceHref(workshopNavigation, workshopNavigation) ??
+				'/posts?type=workshop'
+			}
 			breadcrumb={{
 				label: cohort?.title ?? 'Workshops',
 				href: cohort
@@ -181,8 +219,10 @@ export function WorkshopResourceList(props: Props) {
 			currentSlug={currentLessonSlug}
 			isOnSolution={pathname.includes('/solution')}
 			completedLessons={moduleProgress?.completedLessons}
-			buildLessonHref={(slug) => `/workshops/${moduleSlug}/${slug}`}
-			buildEditHref={(slug) => `/workshops/${moduleSlug}/${slug}/edit`}
+			buildLessonHref={(slug) => hrefs.get(slug) ?? '#'}
+			buildEditHref={(slug) =>
+				hrefs.has(slug) ? `${hrefs.get(slug)}/edit` : '#'
+			}
 			ability={ability}
 			abilityStatus={isAnonymousShell ? 'success' : abilityStatus}
 			isCollapsible={isCollapsible}
