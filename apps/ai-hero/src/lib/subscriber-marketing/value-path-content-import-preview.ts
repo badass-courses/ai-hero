@@ -45,6 +45,10 @@ export type ValuePathAnswerPagePreview = {
 	emailId: string
 	surveyId: string
 	optionValue: string
+	variant?: 'did-it' | 'goal'
+	clickIntent?: 'confirmed' | 'deferred' | 'record'
+	helpUrl?: string
+	helpLabel?: string
 	result?: string
 	position: number
 	headline?: string
@@ -239,6 +243,13 @@ function parseAnswerPageSet(source: string) {
 		const attrs = parseAttrs(match[1] ?? '')
 		const body = match[2] ?? ''
 		const id = attrs.id ?? `${attrs.surveyId}.${attrs.optionValue}`
+		if (attrs.variant && attrs.variant !== 'did-it' && attrs.variant !== 'goal')
+			throw new Error(`Invalid answer variant: ${id}`)
+		if (
+			attrs.clickIntent &&
+			!['confirmed', 'deferred', 'record'].includes(attrs.clickIntent)
+		)
+			throw new Error(`Invalid answer intent: ${id}`)
 		pages.push({
 			kind: 'answer',
 			id: `${sequenceId}.${id}`,
@@ -248,7 +259,12 @@ function parseAnswerPageSet(source: string) {
 			surveyId: attrs.surveyId ?? 'unknown-survey',
 			optionValue: attrs.optionValue ?? 'unknown-option',
 			result: attrs.result,
-			position,
+			variant: attrs.variant as ValuePathAnswerPagePreview['variant'],
+			clickIntent:
+				attrs.clickIntent as ValuePathAnswerPagePreview['clickIntent'],
+			helpUrl: attrs.helpUrl,
+			helpLabel: attrs.helpLabel,
+			position: attrs.position ? Number(attrs.position) : position,
 			headline: textOf(body, 'Headline'),
 			body: textOf(body, 'Body'),
 			takeaway: textOf(body, 'Takeaway'),
@@ -265,7 +281,9 @@ function parseAnswerPageSet(source: string) {
 function parseCertificateLink(
 	body: string,
 ): ValuePathCertificateLinkPreview | undefined {
-	const match = body.match(/<CertificateLink\b([^>]*)>([\s\S]*?)<\/CertificateLink>/)
+	const match = body.match(
+		/<CertificateLink\b([^>]*)>([\s\S]*?)<\/CertificateLink>/,
+	)
 	if (!match) return undefined
 	const attrs = parseAttrs(match[1] ?? '')
 	if (!attrs.href) return undefined

@@ -108,6 +108,23 @@ describe('POST /api/drovr/personalize', () => {
 			}),
 		)
 	})
+	it.each([13, 14, 999])(
+		'accepts journeyVersion %i before the producer ships',
+		async (journeyVersion) => {
+			mocks.personalize.mockResolvedValue({
+				sendable: true,
+				variables: {},
+				reasons: [],
+				flags: [],
+			})
+			const request = { ...body, journeyVersion }
+			const response = await post(request, 'test-executor-token-1234567890')
+			expect(response.status).toBe(200)
+			expect(mocks.personalize).toHaveBeenCalledWith(
+				expect.objectContaining({ request }),
+			)
+		},
+	)
 	it('logs one answered line with the decision and no email, name or variables', async () => {
 		const info = vi.spyOn(log, 'info')
 		mocks.personalize.mockResolvedValue({

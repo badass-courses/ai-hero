@@ -107,7 +107,13 @@ export async function recordValuePathAnswerProgression(args: {
 			reviewReasons: ['answer-page-token-sequence-mismatch'],
 		}
 	}
-	const nextEmailResourceId = fields.nextEmailResourceId
+	const recordOnly =
+		fields.clickIntent === 'deferred' || fields.clickIntent === 'record'
+	// Non-advancing answers cannot schedule legacy sends or capture fields,
+	// even when imported content accidentally includes those instructions.
+	const nextEmailResourceId = recordOnly
+		? undefined
+		: fields.nextEmailResourceId
 	const nextValuePathSlug =
 		fields.nextSequenceId ?? args.token.valuePathResourceId
 	// Only an answer that leaves its own path names its next email on the
@@ -116,7 +122,7 @@ export async function recordValuePathAnswerProgression(args: {
 		Boolean(nextEmailResourceId && fields.nextSequenceId) &&
 		fields.nextSequenceId !== (fields.sequenceId ?? args.token.sequenceId)
 	const capturesFinisher = Boolean(
-		fields.captureFieldKey || fields.captureDateFieldKey,
+		!recordOnly && (fields.captureFieldKey || fields.captureDateFieldKey),
 	)
 	const sequenceExhaustionEnabled =
 		args.sequenceExhaustionEnabled ??
@@ -142,7 +148,7 @@ export async function recordValuePathAnswerProgression(args: {
 			reviewReasons: ['finisher-capture-token-binding-missing'],
 		}
 	}
-	if (!nextEmailResourceId && !capturesFinisher) {
+	if (!nextEmailResourceId && !capturesFinisher && !recordOnly) {
 		return {
 			status: 'skipped',
 			reason: 'next-email-resource-missing',
@@ -319,6 +325,11 @@ export async function recordValuePathAnswerProgression(args: {
 			privacyLevel: 'internal',
 			identityEvidence: identity.evidence,
 			payloadSummary: {
+				clickIntent: fields.clickIntent ?? 'confirmed',
+				...(fields.optionValue !== undefined
+					? { answer: fields.optionValue }
+					: {}),
+				...(fields.surveyId !== undefined ? { surveyId: fields.surveyId } : {}),
 				summary: `Selected answer ${fields.optionValue ?? 'unknown'} for ${fields.surveyId ?? 'unknown survey'}`,
 				keywords: [
 					'value-path',
@@ -333,6 +344,15 @@ export async function recordValuePathAnswerProgression(args: {
 			schemaVersion: CONTACT_EVENT_SCHEMA_VERSION,
 			createdAt: now,
 		}))
+
+	if (recordOnly) {
+		return {
+			status: 'recorded',
+			contactEventId: event.id,
+			idempotentNoop: false,
+			reviewReasons: [],
+		}
+	}
 
 	if (!nextEmailResourceId) {
 		const selectedAt =

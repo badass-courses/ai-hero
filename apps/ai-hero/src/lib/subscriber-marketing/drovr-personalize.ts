@@ -28,7 +28,10 @@ import {
 } from './old-newsletter-exit'
 import type { ValuePathAnswerPageResource } from './value-path-answer-page'
 import type { ValuePathLinkAnchorStore } from './value-path-link-anchor'
-import { personalizeValuePathEmailWithAnchoredLinks } from './value-path-email-executor'
+import {
+	canonicalSkillsMessageKey,
+	personalizeValuePathEmailWithAnchoredLinks,
+} from './value-path-email-executor'
 import type {
 	ContactEventRecord,
 	ContactRecord,
@@ -42,6 +45,7 @@ export const DrovrPersonalizeRequestSchema = z
 		contactId: z.string().trim().min(1),
 		journeyId: z.string().trim().min(1),
 		emailKey: z.string().trim().min(1),
+		journeyVersion: z.number().int().positive().optional(),
 		idempotencyKey: z.string().trim().min(1),
 		dueAt: z.string().datetime({ offset: true }),
 	})
@@ -157,11 +161,14 @@ export async function personalizeDrovrIntent(args: {
 	const reasons = [...standing.reasons]
 	let variables: Record<string, string> = {}
 	if (request.journeyId === DROVR_SKILLS_COURSE_JOURNEY_ID) {
-		const step = getSkillsWorkflowEmailStep(request.emailKey)
+		const step = getSkillsWorkflowEmailStep(
+			canonicalSkillsMessageKey(request.emailKey),
+		)
 		if (!step) reasons.push('email-resource-missing')
 		else {
 			const personalized = await personalizeValuePathEmailWithAnchoredLinks({
 				contactId: contact.id,
+				messageKey: request.emailKey,
 				kitSubscriberId: args.kitSubscriberId,
 				valuePathSlug: step.valuePathSlug,
 				emailResourceId: step.emailResourceId,

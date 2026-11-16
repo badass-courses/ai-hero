@@ -226,6 +226,7 @@ describe('a drovr-owned lesson 1 track choice', () => {
 		expect(answer?.payload).toEqual({
 			emailResourceId: 'ai-hero-skills-workflow.email-0',
 			nextEmailResourceId: 'ai-hero-skills-team-workflow.team-email-1',
+			answer: 'team',
 		})
 	})
 
@@ -238,6 +239,7 @@ describe('a drovr-owned lesson 1 track choice', () => {
 		const [answer] = mapDrovrShadowFact({ kind: 'contact-event', event })
 		expect(answer?.payload).toEqual({
 			emailResourceId: 'ai-hero-skills-workflow.email-0',
+			answer: 'personal',
 		})
 	})
 })
