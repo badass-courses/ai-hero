@@ -88,11 +88,15 @@ export interface OffersPort {
 }
 
 export interface AuditPort {
-	/** One line per paid read: user id, capability, resource id. No emails. */
+	/**
+	 * One line per paid read: user id, capability, resource id. No emails.
+	 * `read_lesson` also records whether the solution was requested.
+	 */
 	readonly read: (event: {
 		readonly userId: string
 		readonly capability: string
 		readonly resourceId: string
+		readonly includeSolution?: boolean
 	}) => void
 }
 
