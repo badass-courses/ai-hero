@@ -516,7 +516,7 @@ describe('DOI learners: answers, and only answers, reach their actor', () => {
 					doiRequestedAt: [before],
 					answeredEmailResourceIds: [lesson],
 					anchoredEmailResourceIds: new Set([lesson]),
-					since: '2026-11-01T00:00:00.000Z',
+					since: new Date(Date.parse(before) - 86_400_000).toISOString(),
 				}),
 			).toBe(true)
 		})
