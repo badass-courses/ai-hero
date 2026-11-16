@@ -27,12 +27,32 @@ export async function checkValuePathAnswerPublication(args: {
 	const baseline = args.baselineResources
 		.map(parseValuePathAnswerPageResource)
 		.filter((page): page is ValuePathAnswerPageResource => page !== null)
-	const candidates = args.candidateResources
+	const candidateAnswers = args.candidateResources.filter((resource) => {
+		if (!resource || typeof resource !== 'object') return false
+		const candidate = resource as {
+			type?: unknown
+			fields?: { kind?: unknown }
+		}
+		return (
+			candidate.type === 'value-path-page' &&
+			candidate.fields?.kind === 'answer'
+		)
+	})
+	const candidates = candidateAnswers
 		.map(parseValuePathAnswerPageResource)
 		.filter((page): page is ValuePathAnswerPageResource => page !== null)
-	if (candidates.length !== args.candidateResources.length)
+	if (candidates.length !== candidateAnswers.length)
 		errors.push('candidate-resource-invalid')
 	const ids = new Set(baseline.map((page) => page.id))
+	const routeKey = (page: ValuePathAnswerPageResource) =>
+		JSON.stringify([
+			page.fields.sequenceId,
+			page.fields.emailId,
+			page.fields.slug,
+		])
+	// Existing certificate options intentionally share a baseline route. Do not
+	// change that contract; reject any new page reusing an occupied route.
+	const routes = new Set(baseline.map(routeKey))
 	for (const page of [...baseline, ...candidates]) {
 		if (
 			page.fields.sequenceId === individual &&
@@ -45,6 +65,9 @@ export async function checkValuePathAnswerPublication(args: {
 		const f = page.fields
 		if (ids.has(page.id)) errors.push(`duplicate-page-id:${page.id}`)
 		ids.add(page.id)
+		const route = routeKey(page)
+		if (routes.has(route)) errors.push(`duplicate-answer-route:${page.id}`)
+		routes.add(route)
 		if (f.sequenceId !== individual)
 			errors.push(`candidate-sequence-invalid:${page.id}`)
 		if (f.helpUrl && !allowedValuePathHelpUrl(f.helpUrl))

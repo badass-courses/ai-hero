@@ -108,8 +108,8 @@ describe('answer page import and prepublication contract', () => {
 			)
 			.join('')}</AnswerPageSet>`
 		const preview = previewValuePathContentImport({
-			individualSequenceMdx: `<EmailSequence id="${sequence}"></EmailSequence>`,
-			teamSequenceMdx: `<EmailSequence id="${team}"></EmailSequence>`,
+			individualSequenceMdx: `<EmailSequence id="${sequence}"><EmailPlan id="email-0" kitSequenceId="test-individual"><Body>Test email</Body></EmailPlan></EmailSequence>`,
+			teamSequenceMdx: `<EmailSequence id="${team}"><EmailPlan id="team-email-0" kitSequenceId="test-team"><Body>Test email</Body></EmailPlan></EmailSequence>`,
 			individualAnswerPagesMdx: source,
 			teamAnswerPagesMdx: `<AnswerPageSet sequenceId="${team}"></AnswerPageSet>`,
 		})
@@ -119,6 +119,12 @@ describe('answer page import and prepublication contract', () => {
 			(r) => r.fields.kind === 'answer',
 		)
 		expect(pages).toHaveLength(19)
+		expect(
+			result.plan.resources.filter((r) => r.type === 'value-path'),
+		).toHaveLength(2)
+		expect(
+			result.plan.resources.filter((r) => r.fields.kind === 'email'),
+		).toHaveLength(2)
 		for (const [i, p] of pages.entries()) {
 			expect(parseValuePathAnswerPageResource(p)?.fields).toMatchObject({
 				...candidates[i]!.fields,
@@ -130,11 +136,51 @@ describe('answer page import and prepublication contract', () => {
 			(
 				await checkValuePathAnswerPublication({
 					baselineResources: baseline,
-					candidateResources: pages,
+					candidateResources: result.plan.resources,
 					requireNewPages: true,
 				})
 			).errors,
 		).toEqual([])
+	})
+
+	it.each(['baseline', 'candidate'] as const)(
+		'rejects a candidate route colliding with a %s route',
+		async (collision) => {
+			const changed = structuredClone(candidates)
+			const occupied =
+				collision === 'baseline'
+					? baseline.find((p) => p.fields.emailId === 'email-1')!
+					: changed[1]!
+			changed[0]!.fields.slug = occupied.fields.slug
+			const result = await checkValuePathAnswerPublication({
+				baselineResources: baseline,
+				candidateResources: changed,
+				requireNewPages: true,
+			})
+			expect(result.passed).toBe(false)
+			expect(result.errors).toContain(
+				`duplicate-answer-route:${collision === 'baseline' ? changed[0]!.id : changed[1]!.id}`,
+			)
+		},
+	)
+
+	it('still rejects an answer resource that fails parsing inside a full mixed plan', async () => {
+		const invalid = {
+			...candidates[0]!,
+			fields: { ...candidates[0]!.fields, slug: null },
+		}
+		const result = await checkValuePathAnswerPublication({
+			baselineResources: baseline,
+			candidateResources: [
+				{ id: sequence, type: 'value-path', fields: {} },
+				{ id: 'email', type: 'value-path-page', fields: { kind: 'email' } },
+				invalid,
+				...candidates.slice(1),
+			],
+			requireNewPages: true,
+		})
+		expect(result.passed).toBe(false)
+		expect(result.errors).toContain('candidate-resource-invalid')
 	})
 
 	it('compares full v13 responses, including every byte of every link and token, with fixed inputs', async () => {
