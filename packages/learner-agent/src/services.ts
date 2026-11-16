@@ -108,6 +108,7 @@ export class LearnerAudit extends Context.Service<
 			readonly userId: string
 			readonly capability: string
 			readonly resourceId: string
+			readonly includeSolution?: boolean
 		}) => Effect.Effect<void>
 	}
 >()('@ai-hero/learner-agent/LearnerAudit') {}

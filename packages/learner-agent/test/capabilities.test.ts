@@ -277,17 +277,27 @@ describe('read_lesson', () => {
 						userId: 'user-owner',
 						capability: 'read_lesson',
 						resourceId: 'lesson-1',
+						includeSolution: false,
 					},
 				])
 			}),
 	)
 
-	it.effect('returns the solution only when asked', () =>
+	it.effect('returns and logs the solution only when asked', () =>
 		Effect.gen(function* () {
+			const recorder = newRecorder()
 			const result = yield* readLesson
 				.handler({ lesson: 'first-lesson', includeSolution: true })
-				.pipe(as(learner))
+				.pipe(as(learner, recorder))
 			expect(result.solution?.body).toBe('Here is the answer.')
+			expect(recorder.reads).toEqual([
+				{
+					userId: 'user-owner',
+					capability: 'read_lesson',
+					resourceId: 'lesson-1',
+					includeSolution: true,
+				},
+			])
 		}),
 	)
 
