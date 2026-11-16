@@ -8,7 +8,7 @@ export const drovrProfileRestatementSweep = inngest.createFunction(
 		retries: 3,
 		concurrency: [{ limit: 1 }],
 	},
-	{ cron: '0 6 * * *' },
+	{ cron: '0 10 * * *' },
 	async ({ step }) => {
 		const [
 			{ db },

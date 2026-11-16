@@ -40,9 +40,10 @@ export async function runProfileRestatementSweep(args: {
 		return { status: 'skipped' as const, reason: 'drovr-not-configured' }
 	// Each contact's sync posts its own drovr batch, so a group of 100 hit
 	// drovr as ~100 simultaneous calls and saturated its database pool
-	// (2026-11-14). Ten every 12 seconds keeps the same ~50 a minute, evenly.
+	// (2026-11-14, #743). Ten every 24 seconds averages 25 batches a
+	// minute, below the downstream guidance of 30 batches a minute.
 	const batchSize = args.batchSize ?? 10
-	const pause = args.pause ?? '12s'
+	const pause = args.pause ?? '24s'
 	if (!Number.isSafeInteger(batchSize) || batchSize < 1)
 		throw new Error('profile restatement batch size must be a positive integer')
 	const before = new Date(
