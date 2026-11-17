@@ -130,6 +130,16 @@ export async function LessonPage({
 				aria-hidden
 				className="pointer-events-none absolute inset-x-0 top-0 h-px"
 			/>
+			{/* Before <main>, not inside it: before hydration it holds the player's
+			    place, and the layout's player then takes that same place above
+			    the page. Inside <main> the handover moved <main>'s top down by
+			    the player's height, a layout shift on every load. */}
+			<LessonVideoRegistration
+				workshopId={workshop?.id}
+				lesson={lesson}
+				params={params}
+				lessonType={lessonType}
+			/>
 			{/* Clips full-width rules drawn from inside the prose (the quiz's) at
 			    the column's edges. */}
 			<main className="w-full overflow-x-clip">
@@ -139,19 +149,13 @@ export async function LessonPage({
 					contentSlug={String(lesson.fields?.slug ?? params.lesson)}
 					parentSlug={params.module}
 				/>
-				<LessonVideoRegistration
-					workshopId={workshop?.id}
-					lesson={lesson}
-					params={params}
-					lessonType={lessonType}
-				/>
 				<LessonControls
 					abilityLoader={abilityLoader}
 					lesson={lesson}
 					problem={problem}
 					moduleSlug={params.module}
 				/>
-				{/* Centred: the column is wider than this with the wide player on. */}
+				{/* Centred: the lesson column is uncapped, wider than this. */}
 				<div className="relative container mx-auto max-w-(--breakpoint-xl) px-5 md:px-10 lg:px-14">
 					<div className="relative z-10">
 						<article className="">
