@@ -47,6 +47,11 @@ type HostContext = {
 
 const LessonPlayerHostContext = React.createContext<HostContext | null>(null)
 
+// True while this lesson's session panel is hidden beside the player, so the
+// toolbar can offer to bring it back. Hidden, the player sizes exactly as
+// on a lesson without a session or with the panel popped out.
+const SessionPanelHiddenContext = React.createContext(false)
+
 // Positions written in this tab, by resource id. The router cache can replay
 // a page with the saved position from its first visit; back/forward resumes
 // from here instead. Module scope, so leaving the lessons for the workshop
@@ -112,7 +117,6 @@ const PLAYER_BOX =
 function VideoSection({
 	children,
 	aside,
-	asideCollapsed = false,
 	below,
 }: {
 	children: React.ReactNode
@@ -123,8 +127,6 @@ function VideoSection({
 	 * remaining width, letterboxed, so lessons never change height.
 	 */
 	aside?: React.ReactNode
-	/** The aside is only the strip that brings the hidden panel back. */
-	asideCollapsed?: boolean
 	/** Under the player below `lg`, where the aside is hidden. */
 	below?: React.ReactNode
 }) {
@@ -147,7 +149,7 @@ function VideoSection({
 					<div
 						className={cn(
 							'relative hidden lg:block lg:shrink-0 lg:border-l',
-							asideCollapsed ? 'lg:w-10' : 'lg:w-[22rem] 2xl:w-[26rem]',
+							'lg:w-[22rem] 2xl:w-[26rem]',
 						)}
 					>
 						<div className="absolute inset-0">{aside}</div>
@@ -206,17 +208,6 @@ export function LessonPlayerHost({ children }: { children: React.ReactNode }) {
 			}
 		/>
 	) : null
-	const showSessionPanel = (
-		<button
-			type="button"
-			onClick={() => writeSessionPanelHidden(false)}
-			aria-label="Show session panel"
-			title="Show session panel"
-			className="bg-background text-muted-foreground hover:text-foreground focus-visible:ring-ring flex h-full w-full items-start justify-center pt-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset"
-		>
-			<PanelRightOpen className="size-4" aria-hidden />
-		</button>
-	)
 	const panelHiddenInline = Boolean(
 		sessionPanel && sessionPanelHidden && !sessionWindow.pipWindow,
 	)
@@ -233,17 +224,17 @@ export function LessonPlayerHost({ children }: { children: React.ReactNode }) {
 
 	return (
 		<LessonPlayerHostContext value={context}>
+			<SessionPanelHiddenContext value={panelHiddenInline}>
 			{video && (
 				<VideoPlayerOverlayProvider>
 					<VideoSection
+						// Hidden or popped out, nothing sits beside the player: it sizes
+						// as on a lesson without a session. The toolbar brings it back.
 						aside={
-							sessionWindow.pipWindow
+							sessionWindow.pipWindow || panelHiddenInline
 								? undefined
-								: panelHiddenInline
-									? showSessionPanel
-									: sessionPanel
+								: sessionPanel
 						}
-						asideCollapsed={panelHiddenInline}
 						below={
 							video.sessionExtract && (
 								<SessionExtractStrip
@@ -295,7 +286,30 @@ export function LessonPlayerHost({ children }: { children: React.ReactNode }) {
 				sessionPanel &&
 				createPortal(sessionPanel, sessionWindow.pipWindow.document.body)}
 			{children}
+			</SessionPanelHiddenContext>
 		</LessonPlayerHostContext>
+	)
+}
+
+/**
+ * Toolbar cell that brings back a session panel the viewer hid. Renders
+ * nothing unless this lesson's panel is hidden beside the player (from `lg`,
+ * where the panel sits beside it).
+ */
+export function ShowSessionPanelButton() {
+	const hidden = React.use(SessionPanelHiddenContext)
+	if (!hidden) return null
+	return (
+		<button
+			type="button"
+			onClick={() => writeSessionPanelHidden(false)}
+			aria-label="Show session panel"
+			title="Show session panel"
+			className="hover:bg-hover border-l-border text-foreground hidden h-10 items-center gap-2 border-l px-3 text-sm sm:h-12 lg:inline-flex"
+		>
+			<PanelRightOpen className="text-muted-foreground size-4" aria-hidden />
+			Session panel
+		</button>
 	)
 }
 
