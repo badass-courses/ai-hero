@@ -549,12 +549,22 @@ describe('LessonPlayerHost', () => {
 			expect(cinema()).toBe(false)
 			await click(panel()!.querySelector('button'))
 			expect(cinema()).toBe(true)
-			await render(video('b'))
-			expect(cinema()).toBe(false)
 			await render(withSession('c'))
 			expect(cinema()).toBe(true)
 			await click(showButton())
 			expect(cinema()).toBe(false)
+		})
+
+		it('keeps the viewer\'s wide player on a lesson without a session, so a problem and its solution match', async () => {
+			const cinema = () => 'lessonCinema' in document.documentElement.dataset
+			await render(video('problem'))
+			expect(cinema()).toBe(false)
+			await render(withSession('solution'))
+			await click(panel()!.querySelector('button'))
+			expect(cinema()).toBe(true)
+			await render(video('problem'))
+			expect(cinema()).toBe(true)
+			expect(showButton()).toBeNull()
 		})
 
 		it('remembers the choice across lessons and page loads', async () => {
