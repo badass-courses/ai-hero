@@ -572,7 +572,7 @@ export async function acceptContactResubscribe(args: {
 			tenantId: args.tenantId,
 			contactId: intent.contactId,
 			journeyId: intent.journeyId as DrovrShadowEvent['journeyId'],
-			type: 'contact.resubscribed',
+			type: CONTACT_RESUBSCRIBED_EVENT_TYPE,
 			occurredAt:
 				stringField(row.completedAt) ??
 				stringField(row.metadata.completedAt) ??
