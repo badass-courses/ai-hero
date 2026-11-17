@@ -140,7 +140,10 @@ import {
 	ShowSessionPanelButton,
 	type LessonVideo,
 } from './lesson-player-host'
-import { writeLessonWide } from './lesson-wide-player'
+import {
+	SESSION_PANEL_BOOT_SCRIPT,
+	SESSION_PANEL_HIDDEN_ATTRIBUTE,
+} from './session-panel-boot'
 
 // The host remembers positions for the whole tab, so each test gets its own
 // lesson ids.
@@ -530,9 +533,15 @@ describe('LessonPlayerHost', () => {
 			await act(async () => el!.click())
 		}
 
-		beforeEach(() => window.localStorage.clear())
+		const hiddenAttribute = () =>
+			document.documentElement.hasAttribute(SESSION_PANEL_HIDDEN_ATTRIBUTE)
 
-		it('sits beside the player until hidden, then gives the player the width', async () => {
+		beforeEach(() => {
+			window.localStorage.clear()
+			document.documentElement.removeAttribute(SESSION_PANEL_HIDDEN_ATTRIBUTE)
+		})
+
+		it('sits beside the player until hidden, and comes back from the toolbar', async () => {
 			await render(withSession('a'))
 			expect(panel()).not.toBeNull()
 			expect(showButton()).toBeNull()
@@ -547,58 +556,68 @@ describe('LessonPlayerHost', () => {
 			expect(window.localStorage.getItem('aih.session-panel-hidden')).toBeNull()
 		})
 
-		it('never lifts the page-width cap by hiding the panel, so a problem and its solution match', async () => {
-			const wide = () => document.documentElement.hasAttribute('data-lesson-wide')
-			await render(withSession('solution'))
-			await click(panel()!.querySelector('button'))
-			expect(showButton()).not.toBeNull()
-			expect(wide()).toBe(false)
-			await render(video('problem'))
-			expect(wide()).toBe(false)
-		})
-
-		it('sizes the player as on a lesson without a session once hidden, with nothing beside it', async () => {
+		it('never changes the player, with the panel open, hidden or absent', async () => {
 			const section = () => container.querySelector('section[aria-label="video"]')!
+			const playerCell = () => section().firstElementChild!
 			await render(video('problem'))
-			const noSession = section().className
+			const noSession = [section().className, playerCell().className]
 			await render(withSession('solution'))
-			expect(section().className).not.toBe(noSession)
+			expect([section().className, playerCell().className]).toEqual(noSession)
+			// The panel and its strip are their own cells, never the player's.
+			expect(section().querySelector('[data-session-aside]')).not.toBeNull()
+			expect(section().querySelector('[data-session-below]')).not.toBeNull()
 			await click(panel()!.querySelector('button'))
-			expect(section().className).toBe(noSession)
-			// No column beside the player (the phone strip under it stays).
-			expect(
-				Array.from(section().children).some((c) =>
-					c.className.includes('lg:shrink-0'),
-				),
-			).toBe(false)
-			expect(showButton()).not.toBeNull()
+			expect([section().className, playerCell().className]).toEqual(noSession)
+			expect(section().querySelector('[data-session-aside]')).toBeNull()
+			expect(section().querySelector('[data-session-below]')).toBeNull()
 			await click(showButton())
 			expect(panel()).not.toBeNull()
 			expect(showButton()).toBeNull()
 		})
 
-		it('lifts the cap on every lesson while the wide player is on, whatever the panel', async () => {
-			const wide = () => document.documentElement.hasAttribute('data-lesson-wide')
-			await render(video('problem'))
-			expect(wide()).toBe(false)
-			await act(async () => writeLessonWide(true))
-			expect(wide()).toBe(true)
-			expect(window.localStorage.getItem('aih.lesson-wide')).toBe('1')
-			await render(withSession('solution'))
-			expect(wide()).toBe(true)
+		it('keeps the before-paint attribute in step with the choice', async () => {
+			await render(withSession('a'))
+			expect(hiddenAttribute()).toBe(false)
 			await click(panel()!.querySelector('button'))
-			expect(wide()).toBe(true)
-			await act(async () => writeLessonWide(false))
-			expect(wide()).toBe(false)
-			expect(window.localStorage.getItem('aih.lesson-wide')).toBeNull()
+			expect(hiddenAttribute()).toBe(true)
+			await click(showButton())
+			expect(hiddenAttribute()).toBe(false)
 		})
 
-		it('drops the wide attribute when the lessons leave the page', async () => {
-			window.localStorage.setItem('aih.lesson-wide', '1')
-			await render(video('a'))
-			expect(document.documentElement.hasAttribute('data-lesson-wide')).toBe(true)
-			await act(async () => root.render(<div />))
-			expect(document.documentElement.hasAttribute('data-lesson-wide')).toBe(false)
+		it('follows a choice made in another tab', async () => {
+			await render(withSession('a'))
+			await act(async () => {
+				window.localStorage.setItem('aih.session-panel-hidden', '1')
+				window.dispatchEvent(
+					new StorageEvent('storage', {
+						key: 'aih.session-panel-hidden',
+						newValue: '1',
+					}),
+				)
+			})
+			expect(hiddenAttribute()).toBe(true)
+			expect(panel()).toBeNull()
+		})
+
+		it('boot script sets the attribute only for a stored hide', () => {
+			// biome-ignore lint/security/noGlobalEval: the inline script under test
+			const boot = () => (0, eval)(SESSION_PANEL_BOOT_SCRIPT)
+			boot()
+			expect(hiddenAttribute()).toBe(false)
+			window.localStorage.setItem('aih.session-panel-hidden', '1')
+			boot()
+			expect(hiddenAttribute()).toBe(true)
+		})
+
+		it('holds the panel place before hydration, so the player does not slide', async () => {
+			const { renderToString } = await import('react-dom/server')
+			const html = renderToString(
+				<LessonPlayerHost>
+					<LessonVideoSource video={withSession('a')} />
+				</LessonPlayerHost>,
+			)
+			expect(html).toContain('data-skeleton')
+			expect(html).toContain('data-session-aside')
 		})
 
 		it('remembers the choice across lessons and page loads', async () => {
