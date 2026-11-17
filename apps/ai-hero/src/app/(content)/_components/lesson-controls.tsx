@@ -17,6 +17,7 @@ import GetAccessButton from '../workshops/_components/get-access-button'
 import { NextLessonToolbarButton } from '../workshops/_components/next-lesson-toolbar-button'
 import { AutoPlayToggle } from './autoplay-toggle'
 import { CopyPageButton } from './copy-page-button'
+import { LessonWideToggle } from './lesson-wide-player'
 import { ModuleLessonProgressToggle } from './module-lesson-progress-toggle'
 
 export const LessonControls = async ({
@@ -108,6 +109,7 @@ export const LessonControls = async ({
 				)}
 			</div>
 			<div className="flex items-center justify-end empty:hidden">
+				<LessonWideToggle />
 				{isProblemLesson && (
 					<Button
 						asChild
