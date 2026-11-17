@@ -15,6 +15,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
 import { AuthedVideoPlayer } from './authed-video-player'
+import { useLessonWideAttribute } from './lesson-wide-player'
 import {
 	SessionExtractPanel,
 	SessionExtractStrip,
@@ -219,21 +220,10 @@ export function LessonPlayerHost({ children }: { children: React.ReactNode }) {
 	const panelHiddenInline = Boolean(
 		sessionPanel && sessionPanelHidden && !sessionWindow.pipWindow,
 	)
-	// With the panel hidden the (learn) layout drops its page-width cap, so
-	// the player can use a wide monitor (still capped at 75svh tall). The
-	// choice is the viewer's, not the lesson's: it also applies to a lesson
-	// with no session, so a problem and its solution play at the same size.
-	const cinema = Boolean(
-		video && sessionPanelHidden && !sessionWindow.pipWindow,
-	)
-	React.useEffect(() => {
-		if (!cinema) return
-		const root = document.documentElement
-		root.dataset.lessonCinema = ''
-		return () => {
-			delete root.dataset.lessonCinema
-		}
-	}, [cinema])
+	// Hiding the panel only gives the player the panel's width, inside the
+	// page cap, so a problem and its solution play at the same size. Lifting
+	// the cap is the separate wide-player choice (lesson-wide-player).
+	useLessonWideAttribute()
 	// A lesson without a session would leave the floating window empty.
 	const hasSession = Boolean(video?.sessionExtract)
 	const closeSessionWindow = sessionWindow.close

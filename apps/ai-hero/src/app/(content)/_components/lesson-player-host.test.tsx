@@ -139,6 +139,7 @@ import {
 	LessonVideoSource,
 	type LessonVideo,
 } from './lesson-player-host'
+import { writeLessonWide } from './lesson-wide-player'
 
 // The host remembers positions for the whole tab, so each test gets its own
 // lesson ids.
@@ -543,28 +544,38 @@ describe('LessonPlayerHost', () => {
 			expect(window.localStorage.getItem('aih.session-panel-hidden')).toBeNull()
 		})
 
-		it('lifts the page-width cap only while the panel is hidden', async () => {
-			const cinema = () => 'lessonCinema' in document.documentElement.dataset
-			await render(withSession('a'))
-			expect(cinema()).toBe(false)
-			await click(panel()!.querySelector('button'))
-			expect(cinema()).toBe(true)
-			await render(withSession('c'))
-			expect(cinema()).toBe(true)
-			await click(showButton())
-			expect(cinema()).toBe(false)
-		})
-
-		it('keeps the viewer\'s wide player on a lesson without a session, so a problem and its solution match', async () => {
-			const cinema = () => 'lessonCinema' in document.documentElement.dataset
-			await render(video('problem'))
-			expect(cinema()).toBe(false)
+		it('never lifts the page-width cap by hiding the panel, so a problem and its solution match', async () => {
+			const wide = () => document.documentElement.hasAttribute('data-lesson-wide')
 			await render(withSession('solution'))
 			await click(panel()!.querySelector('button'))
-			expect(cinema()).toBe(true)
+			expect(showButton()).not.toBeNull()
+			expect(wide()).toBe(false)
 			await render(video('problem'))
-			expect(cinema()).toBe(true)
-			expect(showButton()).toBeNull()
+			expect(wide()).toBe(false)
+		})
+
+		it('lifts the cap on every lesson while the wide player is on, whatever the panel', async () => {
+			const wide = () => document.documentElement.hasAttribute('data-lesson-wide')
+			await render(video('problem'))
+			expect(wide()).toBe(false)
+			await act(async () => writeLessonWide(true))
+			expect(wide()).toBe(true)
+			expect(window.localStorage.getItem('aih.lesson-wide')).toBe('1')
+			await render(withSession('solution'))
+			expect(wide()).toBe(true)
+			await click(panel()!.querySelector('button'))
+			expect(wide()).toBe(true)
+			await act(async () => writeLessonWide(false))
+			expect(wide()).toBe(false)
+			expect(window.localStorage.getItem('aih.lesson-wide')).toBeNull()
+		})
+
+		it('drops the wide attribute when the lessons leave the page', async () => {
+			window.localStorage.setItem('aih.lesson-wide', '1')
+			await render(video('a'))
+			expect(document.documentElement.hasAttribute('data-lesson-wide')).toBe(true)
+			await act(async () => root.render(<div />))
+			expect(document.documentElement.hasAttribute('data-lesson-wide')).toBe(false)
 		})
 
 		it('remembers the choice across lessons and page loads', async () => {
