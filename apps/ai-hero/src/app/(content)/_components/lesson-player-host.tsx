@@ -15,7 +15,10 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
 import { AuthedVideoPlayer } from './authed-video-player'
-import { useLessonWideAttribute } from './lesson-wide-player'
+import {
+	SESSION_PANEL_HIDDEN_ATTRIBUTE,
+	SESSION_PANEL_HIDDEN_KEY,
+} from './session-panel-boot'
 import {
 	SessionExtractPanel,
 	SessionExtractStrip,
@@ -47,9 +50,9 @@ type HostContext = {
 
 const LessonPlayerHostContext = React.createContext<HostContext | null>(null)
 
-// True while this lesson's session panel is hidden beside the player, so the
-// toolbar can offer to bring it back. Hidden, the player sizes exactly as
-// on a lesson without a session or with the panel popped out.
+// True while this lesson's session panel is hidden, so the toolbar can offer
+// to bring it back. The panel never changes the player's size, so hiding it
+// only frees the space it took.
 const SessionPanelHiddenContext = React.createContext(false)
 
 // Positions written in this tab, by resource id. The router cache can replay
@@ -63,16 +66,26 @@ const SessionPanelHiddenContext = React.createContext(false)
 // resuming where this screen stopped is a fair answer, so that is accepted.
 const sessionPositions = new Map<string, number>()
 
-// A viewer can hide the session panel to give the player the section's full
-// width (learners on wide monitors and tiling window managers, where pop-out
-// does not help). The choice is per browser, and every tab follows it.
-const SESSION_PANEL_HIDDEN_KEY = 'aih.session-panel-hidden'
+// A viewer can hide the session panel (learners who find it distracting, or
+// on tiling window managers where pop-out does not help). The choice is per
+// browser, and every tab follows it. The (learn) layout's boot script sets
+// the <html> attribute before paint; it changes only here and on another
+// tab's write, never from a render, so hydration cannot flash it off.
 const sessionPanelListeners = new Set<() => void>()
+
+function setSessionPanelHiddenAttribute(hidden: boolean) {
+	document.documentElement.toggleAttribute(
+		SESSION_PANEL_HIDDEN_ATTRIBUTE,
+		hidden,
+	)
+}
 
 function subscribeSessionPanel(onChange: () => void) {
 	sessionPanelListeners.add(onChange)
 	const onStorage = (event: StorageEvent) => {
-		if (event.key === SESSION_PANEL_HIDDEN_KEY) onChange()
+		if (event.key !== SESSION_PANEL_HIDDEN_KEY) return
+		setSessionPanelHiddenAttribute(event.newValue === '1')
+		onChange()
 	}
 	window.addEventListener('storage', onStorage)
 	return () => {
@@ -103,6 +116,7 @@ function writeSessionPanelHidden(hidden: boolean) {
 		// Storage can be blocked or full; the choice then lasts for this page.
 		pageOnlySessionPanelHidden = hidden
 	}
+	setSessionPanelHiddenAttribute(hidden)
 	for (const listener of sessionPanelListeners) listener()
 }
 
@@ -114,48 +128,54 @@ function writeSessionPanelHidden(hidden: boolean) {
 const PLAYER_BOX =
 	'aspect-video h-auto w-full max-w-full overflow-hidden md:max-h-[75svh] md:max-w-[calc(75svh*16/9)]'
 
+// The player's size depends on the window alone: the column's width, capped
+// at 75svh tall from `md`. Nothing about the lesson (a session panel, hidden
+// or popped out) enters it, so a problem and its solution play at the same
+// size. The session panel only takes black space the player was not using.
+//
+// "Beside" holds from `lg` when that spare space beside a height-capped
+// player fits a 17rem panel: column ≥ 75svh × 16/9 + 17rem. A pure CSS
+// container query, so it is settled at first paint. The panel then fills the
+// spare space up to 28rem. Otherwise the panel opens from a strip under the
+// player, as on phones. A browser that cannot evaluate the query keeps the
+// strip, which never shrinks the player either.
+// Tailwind needs these class strings whole, so they are spelled out below.
 function VideoSection({
 	children,
 	aside,
 	below,
 }: {
 	children: React.ReactNode
-	/**
-	 * Beside the player from `lg`, flush right. The section keeps the full
-	 * width and the height a lesson without one has (the player's own
-	 * 16:9-capped-at-75svh box at full width), and the player shrinks into the
-	 * remaining width, letterboxed, so lessons never change height.
-	 */
+	/** Beside the player, flush right, when there is room for it. */
 	aside?: React.ReactNode
-	/** Under the player below `lg`, where the aside is hidden. */
+	/** Under the player whenever the aside is not beside it. */
 	below?: React.ReactNode
 }) {
-	// The height comes from the wrapper's width (`cqw`): an aspect ratio on
-	// the section itself would also cap its width at 75svh × 16/9 and leave a
-	// gap on the right of wide screens.
 	return (
 		<div className="@container">
 			<section
 				aria-label="video"
-				className={cn(
-					'dark relative flex flex-col border-b bg-black text-white dark:text-white',
-					aside && 'lg:h-[min(75svh,calc(100cqw*9/16))] lg:flex-row',
-				)}
+				className="dark relative flex flex-col border-b bg-black text-white lg:[@container(min-width:calc(75svh*16/9_+_17rem))]:flex-row dark:text-white"
 			>
 				<div className="relative flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center">
 					{children}
 				</div>
 				{aside && (
 					<div
-						className={cn(
-							'relative hidden lg:block lg:shrink-0 lg:border-l',
-							'lg:w-[22rem] 2xl:w-[26rem]',
-						)}
+						data-session-aside=""
+						className="relative hidden shrink-0 border-l lg:[@container(min-width:calc(75svh*16/9_+_17rem))]:block lg:[@container(min-width:calc(75svh*16/9_+_17rem))]:w-[clamp(17rem,calc(100cqw_-_75svh*16/9),28rem)] [html[data-session-panel-hidden]_&]:hidden"
 					>
 						<div className="absolute inset-0">{aside}</div>
 					</div>
 				)}
-				{below && <div className="border-t lg:hidden">{below}</div>}
+				{below && (
+					<div
+						data-session-below=""
+						className="border-t lg:[@container(min-width:calc(75svh*16/9_+_17rem))]:hidden [html[data-session-panel-hidden]_&]:hidden"
+					>
+						{below}
+					</div>
+				)}
 			</section>
 		</div>
 	)
@@ -179,8 +199,7 @@ export function LessonPlayerHost({ children }: { children: React.ReactNode }) {
 		() => ({ register: setVideo, registered: video !== undefined }),
 		[video],
 	)
-	// The session panel can float in its own window; the player then takes
-	// the section's full width again.
+	// The session panel can float in its own window.
 	const sessionWindow = useDocumentPictureInPicture()
 	// Server and first client render show the panel; a stored choice to hide
 	// it applies right after hydration.
@@ -189,8 +208,9 @@ export function LessonPlayerHost({ children }: { children: React.ReactNode }) {
 		readSessionPanelHidden,
 		() => false,
 	)
-	// Below `lg` the panel opens in a bottom sheet from a strip under the
-	// player; a scroller of its own in the page would trap scrolling.
+	// Where the panel does not fit beside the player, it opens in a bottom
+	// sheet from a strip under it; a scroller of its own in the page would
+	// trap scrolling.
 	const [sessionSheetOpen, setSessionSheetOpen] = React.useState(false)
 	const sessionPanel = video?.sessionExtract ? (
 		<SessionExtractPanel
@@ -211,10 +231,6 @@ export function LessonPlayerHost({ children }: { children: React.ReactNode }) {
 	const panelHiddenInline = Boolean(
 		sessionPanel && sessionPanelHidden && !sessionWindow.pipWindow,
 	)
-	// Hiding the panel only gives the player the panel's width, inside the
-	// page cap, so a problem and its solution play at the same size. Lifting
-	// the cap is the separate wide-player choice (lesson-wide-player).
-	useLessonWideAttribute()
 	// A lesson without a session would leave the floating window empty.
 	const hasSession = Boolean(video?.sessionExtract)
 	const closeSessionWindow = sessionWindow.close
@@ -228,15 +244,16 @@ export function LessonPlayerHost({ children }: { children: React.ReactNode }) {
 			{video && (
 				<VideoPlayerOverlayProvider>
 					<VideoSection
-						// Hidden or popped out, nothing sits beside the player: it sizes
-						// as on a lesson without a session. The toolbar brings it back.
+						// Hidden or popped out, nothing sits beside or under the player.
+						// The toolbar brings a hidden panel back.
 						aside={
 							sessionWindow.pipWindow || panelHiddenInline
 								? undefined
 								: sessionPanel
 						}
 						below={
-							video.sessionExtract && (
+							video.sessionExtract &&
+							!panelHiddenInline && (
 								<SessionExtractStrip
 									extract={video.sessionExtract}
 									onOpen={() => setSessionSheetOpen(true)}
@@ -271,7 +288,7 @@ export function LessonPlayerHost({ children }: { children: React.ReactNode }) {
 			)}
 			{video?.sessionExtract && (
 				<Sheet open={sessionSheetOpen} onOpenChange={setSessionSheetOpen}>
-					<SheetContent side="bottom" className="h-[70svh] p-0 lg:hidden">
+					<SheetContent side="bottom" className="h-[70svh] p-0">
 						<SheetHeader className="sr-only">
 							<SheetTitle>Session on screen</SheetTitle>
 						</SheetHeader>
@@ -293,8 +310,7 @@ export function LessonPlayerHost({ children }: { children: React.ReactNode }) {
 
 /**
  * Toolbar cell that brings back a session panel the viewer hid. Renders
- * nothing unless this lesson's panel is hidden beside the player (from `lg`,
- * where the panel sits beside it).
+ * nothing unless this lesson's panel is hidden.
  */
 export function ShowSessionPanelButton() {
 	const hidden = React.use(SessionPanelHiddenContext)
@@ -305,10 +321,10 @@ export function ShowSessionPanelButton() {
 			onClick={() => writeSessionPanelHidden(false)}
 			aria-label="Show session panel"
 			title="Show session panel"
-			className="hover:bg-hover border-l-border text-foreground hidden h-10 items-center gap-2 border-l px-3 text-sm sm:h-12 lg:inline-flex"
+			className="hover:bg-hover border-l-border text-foreground inline-flex h-10 items-center gap-2 border-l px-3 text-sm sm:h-12"
 		>
 			<PanelRightOpen className="text-muted-foreground size-4" aria-hidden />
-			Session panel
+			<span className="hidden sm:inline">Session panel</span>
 		</button>
 	)
 }
@@ -336,8 +352,11 @@ export function LessonVideoSource({ video }: { video: LessonVideo | null }) {
 	// the host will draw it (directly above this page), so the server HTML has
 	// the box and nothing shifts. Gone in the commit that registers.
 	if (registered || !video) return null
+	// The aside's place is held too, empty, so a player beside a panel does
+	// not slide over when the host draws the real one.
 	return (
 		<VideoSection
+			aside={video.sessionExtract ? <div className="h-full" /> : undefined}
 			below={
 				video.sessionExtract && (
 					<SessionExtractStrip

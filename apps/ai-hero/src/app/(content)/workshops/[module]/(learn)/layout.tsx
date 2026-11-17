@@ -1,6 +1,6 @@
 import React from 'react'
 import { LessonPlayerHost } from '@/app/(content)/_components/lesson-player-host'
-import { LESSON_WIDE_BOOT_SCRIPT } from '@/app/(content)/_components/lesson-wide-boot'
+import { SESSION_PANEL_BOOT_SCRIPT } from '@/app/(content)/_components/session-panel-boot'
 import { WorkshopResourceList } from '@/app/(content)/workshops/_components/workshop-resource-list'
 import LayoutClient from '@/components/layout-client'
 import { getServerAuthSession } from '@/server/auth'
@@ -20,18 +20,16 @@ const LessonLayout = async (props: { children: React.ReactNode }) => {
 
 	return (
 		<LessonRouteSessionProvider session={session as Session | null}>
-			{/* Synchronous and before the container: a viewer who chose the wide
-			    player gets it on first paint, with no jump at hydration. The
-			    player host keeps the attribute in step after that. */}
+			{/* Synchronous and before the lesson: a viewer who hid the session
+			    panel never sees it flash at hydration. The player host keeps the
+			    attribute in step after that. */}
 			<script
-				id="lesson-wide-bootstrap"
-				dangerouslySetInnerHTML={{ __html: LESSON_WIDE_BOOT_SCRIPT }}
+				id="session-panel-bootstrap"
+				dangerouslySetInnerHTML={{ __html: SESSION_PANEL_BOOT_SCRIPT }}
 			/>
-			{/* Uncapped while the viewer has the wide player on. */}
-			<LayoutClient
-				withContainer
-				className="[html[data-lesson-wide]_&]:max-w-none"
-			>
+			{/* Uncapped: the player caps itself at 75svh tall, so it grows with
+			    the screen, and the lesson text keeps its own reading width. */}
+			<LayoutClient withContainer className="max-w-none">
 				<div className="flex min-w-0">
 					<WorkshopResourceList className="hidden lg:block" />
 					<LessonsSheet />
