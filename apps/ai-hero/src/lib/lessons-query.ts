@@ -325,21 +325,18 @@ export async function getLesson(lessonSlugOrId: string) {
 				`lesson:${env.NEXT_PUBLIC_APP_NAME}:${lessonSlugOrId}`,
 			)
 
-			const lesson = cachedLesson
-				? cachedLesson
-				: await db.query.contentResource.findFirst({
+			const notFoundKey = `lesson:not-found:${env.NEXT_PUBLIC_APP_NAME}:${lessonSlugOrId}`
+			let lesson = cachedLesson
+
+			if (!cachedLesson && !(await redis.get(notFoundKey))) {
+				const findLesson = (
+					condition: ReturnType<typeof eq>,
+					orderBy?: ReturnType<typeof asc>[],
+				) =>
+					db.query.contentResource.findFirst({
+						orderBy,
 						where: and(
-							or(
-								eq(
-									sql`JSON_EXTRACT (${contentResource.fields}, "$.slug")`,
-									lessonSlugOrId,
-								),
-								eq(contentResource.id, lessonSlugOrId),
-								like(
-									contentResource.id,
-									`%${last(lessonSlugOrId.split('-'))}%`,
-								),
-							),
+							condition,
 							or(
 								eq(contentResource.type, 'lesson'),
 								eq(contentResource.type, 'exercise'),
@@ -365,6 +362,25 @@ export async function getLesson(lessonSlugOrId: string) {
 							},
 						},
 					})
+
+				lesson =
+					(await findLesson(eq(contentResource.id, lessonSlugOrId))) ??
+					(await findLesson(
+						eq(
+							sql`JSON_EXTRACT (${contentResource.fields}, "$.slug")`,
+							lessonSlugOrId,
+						),
+						// Preserve the type index's tie-break for duplicate slugs.
+						[asc(contentResource.type), asc(contentResource.id)],
+					)) ??
+					(await findLesson(
+						like(contentResource.id, `%${last(lessonSlugOrId.split('-'))}%`),
+					))
+
+				if (!lesson) {
+					await redis.set(notFoundKey, true, { ex: 60 })
+				}
+			}
 
 			// An unknown slug or id (crawlers, section ids) is a miss, not a schema failure.
 			if (!lesson) {
