@@ -99,6 +99,7 @@ export type DrovrShadowEvent = {
 		| 'email.completed'
 		| 'course.sequence-exhausted'
 		| 'contact.unsubscribed'
+		| 'contact.resubscribed'
 		| 'purchase.recorded'
 		| 'entitlement.granted'
 		| 'entitlement.revoked'

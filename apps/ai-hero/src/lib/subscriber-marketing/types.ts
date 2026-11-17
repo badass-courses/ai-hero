@@ -233,7 +233,7 @@ export type SideEffectIntent = {
 	id: string
 	nextActionId: string
 	contactId: string
-	provider: 'dry-run' | 'kit' | 'postmark'
+	provider: 'dry-run' | 'kit' | 'postmark' | 'ai-hero'
 	type:
 		| 'none'
 		| 'human-review'
@@ -247,6 +247,7 @@ export type SideEffectIntent = {
 		| 'subscribe-evergreen-list'
 		| 'unsubscribe-kit-list'
 		| 'subscribe-kit-form'
+		| 'record-resubscribe'
 	status: SideEffectIntentStatus
 	completedAt?: string | null
 	idempotencyKey: string

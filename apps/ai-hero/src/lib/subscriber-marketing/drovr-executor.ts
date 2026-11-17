@@ -36,7 +36,9 @@ import {
 	type KitUnsubscriber,
 } from './drovr-list-unsubscribe'
 import {
+	acceptContactResubscribe,
 	acceptListSubscribe,
+	CONTACT_RESUBSCRIBE_INTENT_KIND,
 	DOUBLE_OPT_IN_JOURNEY_ID,
 	LIST_SUBSCRIBE_INTENT_KIND,
 	type KitFormSubscriber,
@@ -305,6 +307,18 @@ export async function acceptDrovrIntent(args: {
 			now,
 			unsubscribeInKit: args.unsubscribeInKit,
 			findKitSubscriberId: args.findKitSubscriberId,
+		})
+	}
+
+	// A confirmation's lift of an earlier unsubscribe, with no Kit call. Routed
+	// by kind: acceptContactResubscribe refuses any journey but double-opt-in.
+	if (intent.kind === CONTACT_RESUBSCRIBE_INTENT_KIND) {
+		return await acceptContactResubscribe({
+			repository: args.repository,
+			intent,
+			tenantId,
+			now,
+			recordResubscribe: args.recordResubscribe,
 		})
 	}
 
