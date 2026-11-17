@@ -220,15 +220,20 @@ export function LessonPlayerHost({ children }: { children: React.ReactNode }) {
 		sessionPanel && sessionPanelHidden && !sessionWindow.pipWindow,
 	)
 	// With the panel hidden the (learn) layout drops its page-width cap, so
-	// the player can use a wide monitor (still capped at 75svh tall).
+	// the player can use a wide monitor (still capped at 75svh tall). The
+	// choice is the viewer's, not the lesson's: it also applies to a lesson
+	// with no session, so a problem and its solution play at the same size.
+	const cinema = Boolean(
+		video && sessionPanelHidden && !sessionWindow.pipWindow,
+	)
 	React.useEffect(() => {
-		if (!panelHiddenInline) return
+		if (!cinema) return
 		const root = document.documentElement
 		root.dataset.lessonCinema = ''
 		return () => {
 			delete root.dataset.lessonCinema
 		}
-	}, [panelHiddenInline])
+	}, [cinema])
 	// A lesson without a session would leave the floating window empty.
 	const hasSession = Boolean(video?.sessionExtract)
 	const closeSessionWindow = sessionWindow.close
