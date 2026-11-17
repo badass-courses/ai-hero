@@ -843,3 +843,256 @@ describe('a confirmation lifts an earlier unsubscribe (DOI Q5)', () => {
 		expect(result.status).toBe('completed')
 	})
 })
+
+describe('drovr contact.resubscribe (the lift, with no Kit call)', () => {
+	const unsubscribedAt = '2026-09-01T00:00:00.000Z'
+	const intentKey =
+		'9:confirmed:10:org-aihero:9:contact-1:17:skills-newsletter:36:resubscribe:2026-09-01T00:00:00.000Z'
+	const resubscribe = (overrides: Partial<DrovrIntent> = {}): DrovrIntent => ({
+		tenantId: 'org-aihero',
+		contactId: 'contact-1',
+		journeyId: 'double-opt-in',
+		kind: 'contact.resubscribe',
+		idempotencyKey: intentKey,
+		dueAt: now,
+		payload: { confirmedAt: now },
+		...overrides,
+	})
+	const event = (eventType: string, occurredAt: string) =>
+		({
+			id: `${eventType}:${occurredAt}`,
+			contactId: 'contact-1',
+			providerIdentityId: 'identity-kit',
+			eventType,
+			occurredAt,
+		}) as ContactEventRecord
+
+	function lifting(
+		initial: ContactEventRecord[],
+		findProviderIdentityId: () => Promise<string | undefined> = async () =>
+			'identity-any',
+	) {
+		const events = [...initial]
+		const requestSync = vi.fn(async () => undefined)
+		const recorder = vi.fn(
+			createResubscribeRecorder({
+				repository: {
+					findContactEventsByType: (_, type) =>
+						events.filter((row) => row.eventType === type),
+					findValuePathEmailSideEffectIntentsByContact: () => [],
+					async createContactEvent(input) {
+						events.push({ ...input, id: `e${events.length}` } as never)
+					},
+				},
+				findProviderIdentityId,
+				requestSync,
+				info: () => undefined,
+				now: () => now,
+			}),
+		)
+		return { events, recorder, requestSync }
+	}
+
+	it('records the lift at confirmedAt and completes contact.resubscribed, with no Kit call', async () => {
+		const f = lifting([event('contact.unsubscribed', unsubscribedAt)])
+		const repository = setup()
+		const subscribeInKit = kit()
+		const result = await acceptDrovrIntent({
+			repository,
+			intent: resubscribe(),
+			now,
+			subscribeInKit,
+			recordResubscribe: f.recorder,
+		})
+		expect(result).toMatchObject({
+			status: 'completed',
+			completion: {
+				tenantId: 'org-aihero',
+				contactId: 'contact-1',
+				journeyId: 'double-opt-in',
+				type: 'contact.resubscribed',
+				idempotencyKey: `completion:${intentKey}`,
+			},
+		})
+		expect(subscribeInKit).not.toHaveBeenCalled()
+		expect(
+			f.events.filter((row) => row.eventType === 'contact.resubscribed'),
+		).toEqual([
+			expect.objectContaining({
+				contactId: 'contact-1',
+				provider: 'ai-hero',
+				providerEventId: resubscribeProviderEventId(intentKey),
+				occurredAt: now,
+			}),
+		])
+		expect(f.requestSync).toHaveBeenCalledWith({
+			contactId: 'contact-1',
+			reason: 'contact-resubscribed',
+		})
+		const [row] = Array.from(repository.intents.values())
+		expect(row).toMatchObject({
+			provider: 'ai-hero',
+			type: 'record-resubscribe',
+			status: 'completed',
+			metadata: { lift: 'lifted', confirmedAt: now },
+		})
+	})
+
+	it('completes, recording nothing, when there is no active unsubscribe', async () => {
+		const f = lifting([])
+		const result = await acceptDrovrIntent({
+			repository: setup(),
+			intent: resubscribe(),
+			now,
+			recordResubscribe: f.recorder,
+		})
+		expect(result).toMatchObject({
+			status: 'completed',
+			completion: { type: 'contact.resubscribed' },
+		})
+		expect(f.events).toEqual([])
+	})
+
+	it('is idempotent: a redrive answers the same completion without recording again', async () => {
+		const f = lifting([event('contact.unsubscribed', unsubscribedAt)])
+		const repository = setup()
+		const first = await acceptDrovrIntent({
+			repository,
+			intent: resubscribe(),
+			now,
+			recordResubscribe: f.recorder,
+		})
+		const again = await acceptDrovrIntent({
+			repository,
+			intent: resubscribe(),
+			now: '2026-09-25T07:00:00.000Z',
+			recordResubscribe: f.recorder,
+		})
+		expect(again).toEqual(first)
+		expect(f.recorder).toHaveBeenCalledTimes(1)
+		expect(repository.intents.size).toBe(1)
+	})
+
+	it('blocks, and stays blocked, when a later unsubscribe wins', async () => {
+		const f = lifting([
+			event('contact.unsubscribed', unsubscribedAt),
+			event('contact.unsubscribed', '2026-09-25T07:00:00.000Z'),
+		])
+		const repository = setup()
+		const result = await acceptDrovrIntent({
+			repository,
+			intent: resubscribe(),
+			now,
+			recordResubscribe: f.recorder,
+		})
+		expect(result).toMatchObject({
+			status: 'blocked',
+			reviewReasons: ['unsubscribed-after-confirmation'],
+		})
+		expect(
+			f.events.some((row) => row.eventType === 'contact.resubscribed'),
+		).toBe(false)
+		const again = await acceptDrovrIntent({
+			repository,
+			intent: resubscribe(),
+			now: '2026-09-25T08:00:00.000Z',
+			recordResubscribe: f.recorder,
+		})
+		expect(again).toMatchObject({ status: 'blocked' })
+		expect(f.recorder).toHaveBeenCalledTimes(1)
+	})
+
+	it('blocks when the contact has no provider identity', async () => {
+		const recorder = createResubscribeRecorder({
+			repository: {
+				findContactEventsByType: () => [],
+				findValuePathEmailSideEffectIntentsByContact: () => [
+					{
+						completedAt: unsubscribedAt,
+						createdAt: unsubscribedAt,
+						metadata: { providerResult: { unsubscribed: true } },
+					} as never,
+				],
+				createContactEvent: async () => undefined,
+			},
+			findProviderIdentityId: async () => undefined,
+			requestSync: async () => undefined,
+			info: () => undefined,
+		})
+		const result = await acceptDrovrIntent({
+			repository: setup(),
+			intent: resubscribe(),
+			now,
+			recordResubscribe: recorder,
+		})
+		expect(result).toMatchObject({
+			status: 'blocked',
+			reviewReasons: ['resubscribe-lift-no-provider-identity'],
+		})
+	})
+
+	it('retries when the lift fails, then completes on the redrive', async () => {
+		const f = lifting([event('contact.unsubscribed', unsubscribedAt)])
+		const repository = setup()
+		f.recorder.mockRejectedValueOnce(new Error('db down'))
+		const first = await acceptDrovrIntent({
+			repository,
+			intent: resubscribe(),
+			now,
+			recordResubscribe: f.recorder,
+		})
+		expect(first).toMatchObject({
+			status: 'retry',
+			reason: 'resubscribe-lift-failed',
+		})
+		const retried = await acceptDrovrIntent({
+			repository,
+			intent: resubscribe(),
+			now: '2026-09-25T07:00:00.000Z',
+			recordResubscribe: f.recorder,
+		})
+		expect(retried).toMatchObject({ status: 'completed' })
+	})
+
+	it('retries, recording nothing, when the lift is not wired', async () => {
+		const result = await acceptDrovrIntent({
+			repository: setup(),
+			intent: resubscribe(),
+			now,
+		})
+		expect(result).toMatchObject({
+			status: 'retry',
+			reason: 'resubscribe-lift-not-configured',
+		})
+	})
+
+	it('refuses another journey, a missing confirmedAt and an unknown contact', async () => {
+		const f = lifting([event('contact.unsubscribed', unsubscribedAt)])
+		const repository = setup()
+		expect(
+			await acceptDrovrIntent({
+				repository,
+				intent: resubscribe({ journeyId: 'value-path-skills-course' }),
+				now,
+				recordResubscribe: f.recorder,
+			}),
+		).toMatchObject({ status: 'unsupported' })
+		expect(
+			await acceptDrovrIntent({
+				repository,
+				intent: resubscribe({ payload: { confirmedAt: 'soon' } }),
+				now,
+				recordResubscribe: f.recorder,
+			}),
+		).toMatchObject({ status: 'unsupported' })
+		expect(
+			await acceptDrovrIntent({
+				repository,
+				intent: resubscribe({ contactId: 'contact-unknown' }),
+				now,
+				recordResubscribe: f.recorder,
+			}),
+		).toEqual({ status: 'contact-missing' })
+		expect(f.recorder).not.toHaveBeenCalled()
+	})
+})

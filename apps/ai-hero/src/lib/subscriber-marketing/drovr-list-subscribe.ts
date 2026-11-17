@@ -494,6 +494,214 @@ export type ResubscribeRecorder = (confirmation: {
 	| 'no-provider-identity'
 >
 
+export const CONTACT_RESUBSCRIBE_INTENT_KIND = 'contact.resubscribe' as const
+export const RECORD_RESUBSCRIBE_INTENT_TYPE = 'record-resubscribe' as const
+export const CONTACT_RESUBSCRIBE_CLAIM_STALE_MS = 2 * 60_000
+export const CONTACT_RESUBSCRIBE_RETRY_MS = 60_000
+export const CONTACT_RESUBSCRIBE_UNCONFIGURED_RETRY_MS = 15 * 60_000
+
+export const ContactResubscribePayload = z.object({
+	confirmedAt: z
+		.string()
+		.min(1)
+		.refine((value) => Number.isFinite(Date.parse(value)), 'not a timestamp'),
+})
+
+export function contactResubscribeIdempotencyKey(
+	contactId: string,
+	intentKey: string,
+): string {
+	const intent = createHash('sha256')
+		.update(intentKey)
+		.digest('hex')
+		.slice(0, 32)
+	return `contact:${contactId}:resubscribe:${intent}`
+}
+
+/**
+ * drovr's `contact.resubscribe`: a confirmed double opt-in lifted an earlier
+ * unsubscribe in drovr, and AI Hero records the same lift so personalize
+ * stops answering `unsubscribed`. This replaces the lift half of
+ * `list.subscribe`, which drovr stopped sending when the Kit mirror retired;
+ * there is no Kit call here.
+ *
+ * One receipt row per drovr intent, so drovr's retries find it. The recorder
+ * is idempotent on its own (a second lift finds nothing to lift), and a later
+ * unsubscribe still wins: that confirmation is blocked, not lifted.
+ *
+ * Answers: `completed` with a `contact.resubscribed` completion when the lift
+ * is recorded or there was nothing to lift; `blocked` when a later
+ * unsubscribe wins or the contact has no provider identity; `retry` when the
+ * recorder fails or is not wired.
+ */
+export async function acceptContactResubscribe(args: {
+	repository: DrovrExecutorRepository
+	intent: DrovrIntent
+	tenantId: DrovrTenantId
+	now: string
+	recordResubscribe?: ResubscribeRecorder
+}): Promise<DrovrExecutorResult> {
+	const { intent } = args
+	if (intent.journeyId !== DOUBLE_OPT_IN_JOURNEY_ID) {
+		return {
+			status: 'unsupported',
+			reason: `contact.resubscribe from journey ${intent.journeyId} has no ai-hero executor`,
+			hint: `Only ${DOUBLE_OPT_IN_JOURNEY_ID} confirmations lift an unsubscribe.`,
+		}
+	}
+	const payload = ContactResubscribePayload.safeParse(intent.payload ?? {})
+	if (!payload.success) {
+		return {
+			status: 'unsupported',
+			reason: 'contact.resubscribe payload has no valid confirmedAt',
+			hint: 'Send { confirmedAt: "<ISO time the unsubscribe was lifted>" }.',
+		}
+	}
+	const { confirmedAt } = payload.data
+	const contact = await args.repository.findContactById(intent.contactId)
+	if (!contact) return { status: 'contact-missing' }
+
+	const idempotencyKey = contactResubscribeIdempotencyKey(
+		contact.id,
+		intent.idempotencyKey,
+	)
+	const completionFor = (row: SideEffectIntent): DrovrExecutorResult => ({
+		status: 'completed',
+		intentId: row.id,
+		completion: {
+			tenantId: args.tenantId,
+			contactId: intent.contactId,
+			journeyId: intent.journeyId as DrovrShadowEvent['journeyId'],
+			type: CONTACT_RESUBSCRIBED_EVENT_TYPE,
+			occurredAt:
+				stringField(row.completedAt) ??
+				stringField(row.metadata.completedAt) ??
+				args.now,
+			idempotencyKey: `completion:${intent.idempotencyKey}`,
+		},
+	})
+	const blockedFor = (row: SideEffectIntent): DrovrExecutorResult => ({
+		status: 'blocked',
+		intentId: row.id,
+		reviewReasons: row.reviewReasons,
+	})
+
+	let row =
+		await args.repository.findSideEffectIntentByIdempotencyKey(idempotencyKey)
+	if (row?.status === 'completed') return completionFor(row)
+	if (row?.status === 'blocked') return blockedFor(row)
+	if (!row) {
+		try {
+			row = await args.repository.createSideEffectIntent({
+				id: createInternalId(),
+				nextActionId: boundedNextActionId(intent.idempotencyKey),
+				contactId: contact.id,
+				provider: 'ai-hero',
+				type: RECORD_RESUBSCRIBE_INTENT_TYPE,
+				status: 'pending',
+				idempotencyKey,
+				gates: [],
+				reviewReasons: [],
+				metadata: {
+					source: 'drovr',
+					drovr: {
+						tenantId: args.tenantId,
+						journeyId: intent.journeyId,
+						intentKey: intent.idempotencyKey,
+						dueAt: intent.dueAt,
+					},
+					confirmedAt,
+					reason: DOUBLE_OPT_IN_CONFIRMED_REASON,
+				},
+				createdAt: args.now,
+			})
+		} catch (cause) {
+			const raced =
+				await args.repository.findSideEffectIntentByIdempotencyKey(
+					idempotencyKey,
+				)
+			if (!raced) throw cause
+			if (raced.status === 'completed') return completionFor(raced)
+			if (raced.status === 'blocked') return blockedFor(raced)
+			row = raced
+		}
+	}
+
+	const retry = (
+		reason: string,
+		retryAfterMs = CONTACT_RESUBSCRIBE_RETRY_MS,
+	): DrovrExecutorResult => ({
+		status: 'retry',
+		intentId: row.id,
+		retryAfterMs,
+		reason,
+	})
+	const afterLostClaim = async (): Promise<DrovrExecutorResult> => {
+		const latest =
+			await args.repository.findSideEffectIntentByIdempotencyKey(idempotencyKey)
+		if (latest?.status === 'completed') return completionFor(latest)
+		if (latest?.status === 'blocked') return blockedFor(latest)
+		return retry('resubscribe-lift-in-flight')
+	}
+
+	const recordResubscribe = args.recordResubscribe
+	if (!recordResubscribe) {
+		return retry(
+			'resubscribe-lift-not-configured',
+			CONTACT_RESUBSCRIBE_UNCONFIGURED_RETRY_MS,
+		)
+	}
+	if (
+		!args.repository.claimSideEffectIntentForSend ||
+		!args.repository.finishClaimedSideEffectIntent
+	) {
+		return retry('resubscribe-lift-claim-unavailable')
+	}
+	const claimed = await args.repository.claimSideEffectIntentForSend(row.id, {
+		now: args.now,
+		staleAfterMs: CONTACT_RESUBSCRIBE_CLAIM_STALE_MS,
+	})
+	if (!claimed) return afterLostClaim()
+
+	let lift: Awaited<ReturnType<ResubscribeRecorder>>
+	try {
+		lift = await recordResubscribe({
+			contactId: contact.id,
+			confirmedAt,
+			intentKey: intent.idempotencyKey,
+		})
+	} catch {
+		const failed = await finish(args.repository, row, {
+			status: 'failed',
+			metadata: { retryReason: 'resubscribe-lift-failed' },
+			now: args.now,
+		})
+		return failed ? retry('resubscribe-lift-failed') : afterLostClaim()
+	}
+
+	if (
+		lift === 'unsubscribed-after-confirmation' ||
+		lift === 'no-provider-identity'
+	) {
+		const blocked = await finish(args.repository, row, {
+			status: 'blocked',
+			reviewReasons: [
+				lift === 'no-provider-identity'
+					? 'resubscribe-lift-no-provider-identity'
+					: 'unsubscribed-after-confirmation',
+			],
+			now: args.now,
+		})
+		return blocked ? blockedFor(blocked) : afterLostClaim()
+	}
+	const completed = await finish(args.repository, row, {
+		status: 'completed',
+		metadata: { lift },
+		now: args.now,
+	})
+	return completed ? completionFor(completed) : afterLostClaim()
+}
+
 export const resubscribeProviderEventId = (intentKey: string) =>
 	`doi-resubscribed:${createHash('sha256').update(intentKey).digest('hex').slice(0, 40)}`
 
