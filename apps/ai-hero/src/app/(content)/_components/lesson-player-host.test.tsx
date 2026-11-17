@@ -137,6 +137,7 @@ vi.mock('./session-extract-panel', () => ({
 import {
 	LessonPlayerHost,
 	LessonVideoSource,
+	ShowSessionPanelButton,
 	type LessonVideo,
 } from './lesson-player-host'
 import { writeLessonWide } from './lesson-wide-player'
@@ -172,6 +173,8 @@ async function render(...videos: (LessonVideo | null)[]) {
 				{videos.map((v, i) => (
 					<LessonVideoSource key={i} video={v} />
 				))}
+				{/* What the lesson toolbar renders. */}
+				<ShowSessionPanelButton />
 			</LessonPlayerHost>,
 		)
 	})
@@ -552,6 +555,26 @@ describe('LessonPlayerHost', () => {
 			expect(wide()).toBe(false)
 			await render(video('problem'))
 			expect(wide()).toBe(false)
+		})
+
+		it('sizes the player as on a lesson without a session once hidden, with nothing beside it', async () => {
+			const section = () => container.querySelector('section[aria-label="video"]')!
+			await render(video('problem'))
+			const noSession = section().className
+			await render(withSession('solution'))
+			expect(section().className).not.toBe(noSession)
+			await click(panel()!.querySelector('button'))
+			expect(section().className).toBe(noSession)
+			// No column beside the player (the phone strip under it stays).
+			expect(
+				Array.from(section().children).some((c) =>
+					c.className.includes('lg:shrink-0'),
+				),
+			).toBe(false)
+			expect(showButton()).not.toBeNull()
+			await click(showButton())
+			expect(panel()).not.toBeNull()
+			expect(showButton()).toBeNull()
 		})
 
 		it('lifts the cap on every lesson while the wide player is on, whatever the panel', async () => {
