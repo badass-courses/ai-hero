@@ -116,6 +116,7 @@ function fixture() {
 				linkAnchors?: ValuePathLinkAnchorStore
 				kitSubscriberId?: string
 				baseUrl?: string
+				kitExitGateOff?: boolean
 			} = {},
 		) =>
 			personalizeDrovrIntent({
@@ -127,6 +128,9 @@ function fixture() {
 				kitSubscriberId: extra.kitSubscriberId ?? 'kit-1',
 				identityConflict,
 				...(extra.linkAnchors ? { linkAnchors: extra.linkAnchors } : {}),
+				...(extra.kitExitGateOff !== undefined
+					? { kitExitGateOff: extra.kitExitGateOff }
+					: {}),
 			}),
 	}
 }
@@ -697,6 +701,74 @@ describe('shadow newsletter personalization requires positive old-sequence exit 
 			})
 		},
 	)
+})
+
+describe('shadow newsletter personalization of drovr-rendered issues', () => {
+	const ship = { journeyId: 'shadow-newsletter', emailKey: 'ship_21k_v1' }
+	const kitEra = {
+		journeyId: 'shadow-newsletter',
+		emailKey: SHADOW_NEWSLETTER_KIT_SEQUENCES[0].messageId,
+	}
+	it('serves ship_21k_v1 to an unmarked reader without reading old-sequence membership', async () => {
+		const f = fixture()
+		const read = vi.spyOn(f.repository, 'findContactEventsByType')
+		expect(await f.answer(ship)).toMatchObject({
+			email: 'ada@example.com',
+			sendable: true,
+			variables: {},
+			reasons: [],
+		})
+		expect(read).not.toHaveBeenCalledWith(
+			contact.id,
+			OLD_NEWSLETTER_EXIT_CONFIRMED,
+		)
+	})
+	it('serves ship_21k_v1 to a reader still subscribed to the old sequence', async () => {
+		const f = fixture()
+		f.legacyEvents.set(OLD_NEWSLETTER_SUBSCRIBED, [
+			oldNewsletterEvent(OLD_NEWSLETTER_SUBSCRIBED),
+		])
+		expect(await f.answer(ship)).toMatchObject({ sendable: true, reasons: [] })
+	})
+	it.each(['contact.unsubscribed', 'contact.bounced', 'contact.complained'])(
+		'still holds ship_21k_v1 on a %s stop',
+		async (eventType) => {
+			const f = fixture()
+			f.events.set(eventType, 1)
+			expect(await f.answer(ship)).toMatchObject({
+				sendable: false,
+				variables: {},
+			})
+		},
+	)
+	it('keeps the exit gate on Kit-era issues by default', async () => {
+		vi.stubEnv('AIH_SHADOW_NEWSLETTER_PERSONALIZE_EXIT_GATE_OFF', '')
+		try {
+			expect(await fixture().answer(kitEra)).toMatchObject({
+				sendable: false,
+				reasons: ['old-newsletter-exit-unconfirmed'],
+			})
+		} finally {
+			vi.unstubAllEnvs()
+		}
+	})
+	it('skips the exit gate on Kit-era issues only when the switch is on', async () => {
+		expect(
+			await fixture().answer(kitEra, undefined, { kitExitGateOff: true }),
+		).toMatchObject({ sendable: true, reasons: [] })
+		vi.stubEnv('AIH_SHADOW_NEWSLETTER_PERSONALIZE_EXIT_GATE_OFF', 'true')
+		try {
+			expect(await fixture().answer(kitEra)).toMatchObject({
+				sendable: true,
+				reasons: [],
+			})
+			const f = fixture()
+			f.events.set('contact.unsubscribed', 1)
+			expect((await f.answer(kitEra))?.sendable).toBe(false)
+		} finally {
+			vi.unstubAllEnvs()
+		}
+	})
 })
 
 describe('drovr personalization: the answered log line', () => {

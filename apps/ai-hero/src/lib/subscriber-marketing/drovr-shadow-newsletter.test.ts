@@ -3,9 +3,51 @@ import { describe, expect, it } from 'vitest'
 import {
 	readbackShadowNewsletterSequences,
 	SHADOW_NEWSLETTER_CATALOG_REVISION,
+	SHADOW_NEWSLETTER_DROVR_MESSAGES,
 	SHADOW_NEWSLETTER_KIT_SEQUENCES,
+	shadowNewsletterCatalogEntry,
 	shadowNewsletterSequenceForMessage,
 } from './drovr-shadow-newsletter'
+
+describe('shadow newsletter catalog entries', () => {
+	it('serves ship_21k_v1 as drovr-rendered and never as a Kit sequence', () => {
+		expect(SHADOW_NEWSLETTER_DROVR_MESSAGES).toEqual(['ship_21k_v1'])
+		expect(
+			shadowNewsletterCatalogEntry(
+				SHADOW_NEWSLETTER_CATALOG_REVISION,
+				'ship_21k_v1',
+			),
+		).toEqual({ kind: 'drovr', messageId: 'ship_21k_v1' })
+		// The Kit executor resolves only Kit sequences, so it refuses this issue.
+		expect(
+			shadowNewsletterSequenceForMessage(
+				SHADOW_NEWSLETTER_CATALOG_REVISION,
+				'ship_21k_v1',
+			),
+		).toBeUndefined()
+	})
+	it('keeps every Kit-era message on its Kit sequence', () => {
+		for (const sequence of SHADOW_NEWSLETTER_KIT_SEQUENCES)
+			expect(
+				shadowNewsletterCatalogEntry(
+					SHADOW_NEWSLETTER_CATALOG_REVISION,
+					sequence.messageId,
+				),
+			).toEqual({ kind: 'kit', sequence })
+	})
+	it('no drovr-rendered id collides with a Kit-era id', () => {
+		const kit = new Set<string>(
+			SHADOW_NEWSLETTER_KIT_SEQUENCES.map((s) => s.messageId),
+		)
+		for (const id of SHADOW_NEWSLETTER_DROVR_MESSAGES) expect(kit.has(id)).toBe(false)
+	})
+	it('refuses unknown messages and other catalog revisions', () => {
+		expect(
+			shadowNewsletterCatalogEntry(SHADOW_NEWSLETTER_CATALOG_REVISION, 'nope'),
+		).toBeUndefined()
+		expect(shadowNewsletterCatalogEntry('other-rev', 'ship_21k_v1')).toBeUndefined()
+	})
+})
 
 describe('shadow newsletter Kit sequence table', () => {
 	it('pins the ten catalog messages to the owner readback ids', () => {
