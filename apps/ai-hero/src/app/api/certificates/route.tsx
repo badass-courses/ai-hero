@@ -110,7 +110,9 @@ export async function GET(request: Request) {
 			completedAt = eligibility.completedAt
 			certificateTitle = 'AI Hero Skills Workflow'
 			certificateKind = 'Course'
-			certificateName = eligibility.learnerName || eligibility.learnerEmail
+			// Name only, never the email: this route is unauthenticated, and the
+			// emailed link carries only the contact id (security desk, 2026-11-20).
+			certificateName = eligibility.learnerName
 		} else if (!publicShare && resource?.type === 'cohort' && userId) {
 			const { hasCompletedCohort, date } =
 				await checkCohortCertificateEligibility(resource.id, userId)
@@ -143,8 +145,10 @@ export async function GET(request: Request) {
 		const user =
 			publicShare || valuePathCertificate || !userId
 				? null
-				: await db.query.users.findFirst({
-						where: or(eq(users.id, userId), eq(users.email, userId)),
+				: // By id only. Matching `user` against email let anyone name an
+					// address and learn whether that person finished, and their name.
+					await db.query.users.findFirst({
+						where: eq(users.id, userId),
 					})
 
 		if (!user && !publicShare && !valuePathCertificate) {
@@ -154,7 +158,8 @@ export async function GET(request: Request) {
 			})
 		}
 
-		certificateName = certificateName || user?.name || user?.email
+		// The learner's chosen name, or none. Never their email.
+		certificateName = certificateName || user?.name
 
 		const fontData = await readFile(
 			join(
