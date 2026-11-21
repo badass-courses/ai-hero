@@ -226,3 +226,58 @@ describe('public certificate PNG', () => {
 		)
 	})
 })
+
+describe('the unauthenticated route never renders an email', () => {
+	it.each(['workshop', 'cohort'])(
+		'%s certificate for a learner with no name shows no address',
+		async (type) => {
+			mocks.contentResourceFindFirst.mockResolvedValue({
+				id: 'test-resource',
+				type,
+				fields: { title: 'Test Course' },
+			})
+			mocks.userFindFirst.mockResolvedValue({
+				id: 'test-user',
+				name: null,
+				email: 'learner@example.test',
+			})
+			mocks.checkCertificateEligibility.mockResolvedValue({
+				hasCompletedModule: true,
+				date: new Date('2026-07-18T12:00:00Z'),
+			})
+			mocks.checkCohortCertificateEligibility.mockResolvedValue({
+				hasCompletedCohort: true,
+				date: new Date('2026-07-18T12:00:00Z'),
+			})
+			const response = await GET(
+				new Request(
+					'https://www.aihero.dev/api/certificates?resource=test-resource&user=test-user',
+				),
+			)
+			expect(response.status).toBe(200)
+			expect(
+				JSON.stringify(mocks.imageResponse.mock.calls[0]?.[0]),
+			).not.toContain('learner@example.test')
+		},
+	)
+
+	it('value-path certificate for a contact with no name shows no address', async () => {
+		mocks.checkSkillsWorkflowValuePathCertificateEligibility.mockResolvedValue({
+			eligible: true,
+			resourceIdOrSlug: 'value-path:ai-hero-skills-workflow',
+			contactId: 'test-contact',
+			learnerName: null,
+			learnerEmail: 'learner@example.test',
+			completedAt: new Date('2026-07-18T12:00:00Z'),
+		})
+		const response = await GET(
+			new Request(
+				'https://www.aihero.dev/api/certificates?resource=value-path%3Aai-hero-skills-workflow&user=test-contact',
+			),
+		)
+		expect(response.status).toBe(200)
+		expect(
+			JSON.stringify(mocks.imageResponse.mock.calls[0]?.[0]),
+		).not.toContain('learner@example.test')
+	})
+})
