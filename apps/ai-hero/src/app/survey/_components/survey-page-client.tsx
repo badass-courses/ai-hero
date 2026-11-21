@@ -5,6 +5,7 @@ import Spinner from '@/components/spinner'
 import { useConvertkitSubscriberUrlParam } from '@/hooks/use-convertkit-subscriber-url-param'
 import { api } from '@/trpc/react'
 import { useSession } from 'next-auth/react'
+import { useSearchParams } from 'next/navigation'
 
 import { useSurveyPageOfferMachine } from '@coursebuilder/survey'
 import type {
@@ -34,6 +35,14 @@ export function SurveyPageClient({
 	surveyConfig,
 	surveyId,
 }: SurveyPageClientProps) {
+	// Read the email-link params before the cookie hook strips ck_subscriber_id
+	// from the URL. sh_kit stays in the URL, and the server falls back to the
+	// cookie for the id on a reload.
+	const searchParams = useSearchParams()
+	const [link] = React.useState(() => ({
+		subscriberId: searchParams.get('ck_subscriber_id') || undefined,
+		shKit: searchParams.get('sh_kit') || undefined,
+	}))
 	const cookieReady = useConvertkitSubscriberUrlParam()
 	const { data: session, status: sessionStatus } = useSession()
 
@@ -42,19 +51,26 @@ export function SurveyPageClient({
 			enabled: cookieReady,
 		})
 
+	// The address comes only from the session or a hash-verified email link.
+	// The cookie payload never carries one: it is public and caller-settable.
+	const { data: linkSubscriber, isLoading: linkLoading } =
+		api.ability.getVerifiedLinkSubscriber.useQuery(
+			{ shKit: link.shKit ?? '', subscriberId: link.subscriberId },
+			{ enabled: cookieReady && Boolean(link.shKit) },
+		)
+
 	const effectiveSubscriber = React.useMemo(
 		() =>
-			subscriberData || session?.user?.email
+			subscriberData || linkSubscriber || session?.user?.email
 				? {
-						...(subscriberData || {}),
-						id: subscriberData?.id || 0,
+						id: linkSubscriber?.id || 0,
 						email_address:
-							subscriberData?.email_address || session?.user?.email || '',
+							session?.user?.email || linkSubscriber?.email_address || '',
 						state: subscriberData?.state || 'active',
 						fields: subscriberData?.fields || {},
 					}
 				: null,
-		[subscriberData, session?.user?.email],
+		[subscriberData, linkSubscriber, session?.user?.email],
 	)
 
 	const {
@@ -70,7 +86,7 @@ export function SurveyPageClient({
 		quizResource,
 		surveyId,
 		effectiveSubscriber,
-		status === 'pending' || sessionStatus === 'loading',
+		status === 'pending' || linkLoading || sessionStatus === 'loading',
 	)
 
 	const answerSurveyMutation = api.convertkit.answerSurvey.useMutation()
@@ -196,7 +212,8 @@ export function SurveyPageClient({
 					/>
 				) : isSkillsWorkflowCompletionSurvey(surveyId) ? (
 					<ValuePathCompletionResult
-						kitSubscriberId={effectiveSubscriber?.id}
+						kitSubscriberId={linkSubscriber?.id}
+						shKit={link.shKit}
 						email={effectiveSubscriber?.email_address}
 					/>
 				) : undefined

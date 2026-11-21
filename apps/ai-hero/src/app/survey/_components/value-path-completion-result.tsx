@@ -5,6 +5,7 @@ import { CheckCircle, LockKeyhole } from 'lucide-react'
 
 type ValuePathCompletionResultProps = {
 	kitSubscriberId?: string | number
+	shKit?: string
 	email?: string
 }
 
@@ -14,20 +15,23 @@ export function isSkillsWorkflowCompletionSurvey(surveyId: string) {
 
 export function ValuePathCompletionResult({
 	kitSubscriberId,
+	shKit,
 	email,
 }: ValuePathCompletionResultProps) {
+	// The server answers for the session or a hash-verified link only; `email`
+	// here just says whether we know who this is.
 	const eligibility = api.certificate.valuePathEligibility.useQuery(
 		{
 			resourceIdOrSlug: 'value-path:ai-hero-skills-workflow',
 			kitSubscriberId,
-			email,
+			shKit,
 		},
 		{
-			enabled: Boolean(kitSubscriberId || email),
+			enabled: Boolean(email),
 		},
 	)
 
-	if (!kitSubscriberId && !email) {
+	if (!email) {
 		return (
 			<div className="flex flex-col gap-3 py-10 text-center">
 				<h2 className="text-2xl font-bold">Your answers are saved.</h2>
