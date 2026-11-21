@@ -17,6 +17,7 @@
 type Estree = { type: string; [key: string]: unknown }
 type MdxNode = {
 	type: string
+	name?: string | null
 	children?: MdxNode[]
 	value?: unknown
 	data?: { estree?: Estree }
@@ -77,8 +78,14 @@ function isStatic(node: unknown, allowed: ReadonlySet<string>): boolean {
 			const opening = n.openingElement as Estree | undefined
 			if (opening) {
 				if (!isStaticJsxName(opening.name as Estree)) return false
+				if (isUnsafeElementName(jsxNameText(opening.name as Estree))) {
+					return false
+				}
 				for (const attr of opening.attributes as Estree[]) {
 					if (attr.type !== 'JSXAttribute') return false
+					if (isUnsafeAttributeName(jsxNameText(attr.name as Estree))) {
+						return false
+					}
 					const v = attr.value as Estree | null
 					if (v === null || v.type === 'Literal') continue
 					if (v.type === 'JSXExpressionContainer') {
@@ -136,6 +143,71 @@ function isStaticJsxName(name: Estree): boolean {
 	return false
 }
 
+function jsxNameText(name: Estree | undefined): string {
+	if (!name) return ''
+	if (name.type === 'JSXIdentifier') return String(name.name)
+	if (name.type === 'JSXMemberExpression') {
+		return `${jsxNameText(name.object as Estree)}.${jsxNameText(name.property as Estree)}`
+	}
+	if (name.type === 'JSXNamespacedName') {
+		return `${jsxNameText(name.namespace as Estree)}:${jsxNameText(name.name as Estree)}`
+	}
+	return ''
+}
+
+/**
+ * Elements a CMS body may not render. They run script, load another
+ * document, or change how the page resolves URLs and submits data, so any
+ * author could plant script that runs in a reader's or previewing admin's
+ * session (sec-040). No stored body uses any of them (scan 2026-11-21).
+ */
+export const UNSAFE_ELEMENTS: ReadonlySet<string> = new Set([
+	'script',
+	'style',
+	'iframe',
+	'frame',
+	'frameset',
+	'object',
+	'embed',
+	'base',
+	'meta',
+	'link',
+	'form',
+	'noscript',
+	'template',
+])
+
+/** Member segments that reach constructors, e.g. `<Probe.constructor>`. */
+const UNSAFE_SEGMENTS = new Set(['constructor', 'prototype', '__proto__'])
+
+/** True for an element a CMS body must not render (sec-040). */
+export function isUnsafeElementName(name: string | null | undefined): boolean {
+	if (!name) return false
+	if (UNSAFE_ELEMENTS.has(name.toLowerCase())) return true
+	return name.split(/[.:]/).some((segment) => UNSAFE_SEGMENTS.has(segment))
+}
+
+/**
+ * Attributes a CMS body may not set: inline handlers, a nested document,
+ * a form target, raw HTML, and a `javascript:`-style URL target (sec-040).
+ */
+export function isUnsafeAttributeName(
+	name: string | null | undefined,
+): boolean {
+	if (!name) return false
+	const lower = name.toLowerCase()
+	return (
+		/^on/.test(lower) ||
+		lower === 'srcdoc' ||
+		lower === 'formaction' ||
+		lower === 'action' ||
+		lower === 'dangerouslysetinnerhtml' ||
+		lower === 'xlink:href'
+	)
+}
+
+const UNSAFE_URL = /^[\s\u0000-\u001f]*(javascript|vbscript|data):/i
+
 /** True when a whole MDX expression program is data only. */
 export function isStaticProgram(
 	program: Estree | undefined,
@@ -154,6 +226,13 @@ export function remarkStaticMdxExpressions(
 ) {
 	const allowed = new Set(options.allowedIdentifiers ?? [])
 	const keep = (n: MdxNode): boolean => {
+		if (
+			(n.type === 'mdxJsxFlowElement' || n.type === 'mdxJsxTextElement') &&
+			isUnsafeElementName(n.name)
+		) {
+			options.onRemoved?.(`element ${n.name}`)
+			return false
+		}
 		if (n.type === 'mdxjsEsm') {
 			// import/export never belongs in CMS content.
 			options.onRemoved?.('esm')
@@ -176,6 +255,18 @@ export function remarkStaticMdxExpressions(
 			n.attributes = n.attributes.filter((attr) => {
 				if (attr.type === 'mdxJsxExpressionAttribute') {
 					options.onRemoved?.('spread attribute')
+					return false
+				}
+				if (isUnsafeAttributeName(attr.name)) {
+					options.onRemoved?.(`attribute ${attr.name}`)
+					return false
+				}
+				if (
+					/^(href|src|xlink:href|poster|background)$/i.test(attr.name ?? '') &&
+					typeof attr.value === 'string' &&
+					UNSAFE_URL.test(attr.value)
+				) {
+					options.onRemoved?.(`attribute ${attr.name}`)
 					return false
 				}
 				const v = attr.value
