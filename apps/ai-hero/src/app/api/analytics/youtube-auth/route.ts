@@ -87,6 +87,9 @@ function getStateCookieOptions() {
 	}
 }
 
+const YOUTUBE_AUTH_PAGE_CSP =
+	"default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+
 function buildHtmlPage(title: string, body: string) {
 	return `<!doctype html><html><body style="font-family:system-ui;max-width:600px;margin:40px auto;padding:20px">${title}${body}</body></html>`
 }
@@ -114,7 +117,13 @@ async function createHtmlResponse(
 ): Promise<NextResponse> {
 	await log.flush()
 	const response = new NextResponse(buildHtmlPage(title, body), {
-		headers: { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' },
+		headers: {
+			'Content-Type': 'text/html',
+			'Cache-Control': 'no-store',
+			// These pages run no script. Even if a value slipped through
+			// unescaped, the browser must not execute it (sec-038).
+			'Content-Security-Policy': YOUTUBE_AUTH_PAGE_CSP,
+		},
 	})
 	if (clearStateCookie) {
 		response.cookies.set(STATE_COOKIE_NAME, '', {
@@ -128,7 +137,8 @@ async function createHtmlResponse(
 async function verifyStoredYouTubeAuth(): Promise<StoredAuthVerification> {
 	const clientId = process.env.YOUTUBE_OAUTH_CLIENT_ID || null
 	const clientSecret = process.env.YOUTUBE_OAUTH_CLIENT_SECRET || null
-	const refreshToken = (await getIntegrationRefreshToken('youtube_analytics')) || null
+	const refreshToken =
+		(await getIntegrationRefreshToken('youtube_analytics')) || null
 	const missingEnvKeys = [
 		!clientId ? 'YOUTUBE_OAUTH_CLIENT_ID' : null,
 		!clientSecret ? 'YOUTUBE_OAUTH_CLIENT_SECRET' : null,
@@ -311,7 +321,8 @@ export const GET = withSkill(async (request: NextRequest) => {
 		})
 		return createHtmlResponse(
 			'<h1>❌ Authorization denied</h1>',
-			`<p>Error: ${error}</p><p>You can close this tab.</p>`,
+			// The OAuth error comes from the query string: escape it (sec-038).
+			`<p>Error: ${escapeHtml(error)}</p><p>You can close this tab.</p>`,
 			true,
 		)
 	}
@@ -383,7 +394,7 @@ export const GET = withSkill(async (request: NextRequest) => {
 				})
 				return createHtmlResponse(
 					'<h1>❌ YouTube token was not stored</h1>',
-					`<p>${dbStorageNotice}</p>`,
+					`<p>${escapeHtml(dbStorageNotice ?? '')}</p>`,
 					true,
 				)
 			}
