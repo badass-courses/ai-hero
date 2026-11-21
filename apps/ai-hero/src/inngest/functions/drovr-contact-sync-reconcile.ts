@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { inngest } from '@/inngest/inngest.server'
 import type { GetStepTools } from 'inngest'
 import {
@@ -21,6 +22,16 @@ import {
 } from './drovr-events-deliver'
 
 type ReconcileStep = Pick<GetStepTools<typeof inngest>, 'run' | 'invoke'>
+
+/**
+ * Step-id suffix for one stop batch: the same rows in any order give the
+ * same key, so a replayed batch still dedupes through memoization, and a
+ * different batch gets its own steps.
+ */
+export function stopBatchKey(stops: readonly { id: string }[]): string {
+	const ids = stops.map((stop) => stop.id).sort()
+	return createHash('sha256').update(ids.join('\n')).digest('hex').slice(0, 16)
+}
 
 /**
  * One reconcile run as Inngest steps: every read memoized, every contact's
@@ -78,11 +89,15 @@ export async function reconcileContactSync(args: {
 				})) as ContactProfileSyncReceipt,
 			),
 		resendStops: async (stops) => {
-			const events = (await step.run('load-stops', () =>
+			// Keyed by the batch: a fixed id would hand a second, different batch
+			// the first one's memoized result, and the watermark would pass stops
+			// that never went out (security desk sec-046).
+			const batch = stopBatchKey(stops)
+			const events = (await step.run(`load-stops:${batch}`, () =>
 				args.stopFacts(stops),
 			)) as DrovrShadowEvent[]
 			if (events.length === 0) return
-			const receipt = (await step.invoke('resend-stops', {
+			const receipt = (await step.invoke(`resend-stops:${batch}`, {
 				function: drovrEventsDeliver,
 				data: { events, source: 'contact-event' },
 			})) as DrovrEventsDeliverReceipt
