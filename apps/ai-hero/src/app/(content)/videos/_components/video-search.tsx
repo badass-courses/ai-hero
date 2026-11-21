@@ -32,6 +32,8 @@ import { InstantSearchNext } from 'react-instantsearch-nextjs'
 import { Button, Label, Switch } from '@coursebuilder/ui'
 import { cn } from '@coursebuilder/ui/utils/cn'
 
+import { KEYWORD_QUERY_PARAMS } from '@/lib/search-query-params'
+
 import { VideoCard } from './video-card'
 import { VideoGrid } from './video-grid'
 
@@ -216,14 +218,9 @@ function VideoSearchContent({
 			<Configure
 				filters={filters}
 				hitsPerPage={HITS_PER_PAGE}
-				// Hybrid (keyword + semantic) only with a query; embedding an empty
-				// string errors at the provider.
-				{...(hasQuery
-					? {
-							query_by: 'title,description,summary,embedding',
-							prefix: 'true,true,true,false',
-						}
-					: {})}
+				// Keyword only until vectors are computed off-cluster; see
+				// KEYWORD_QUERY_PARAMS.
+				{...(hasQuery ? KEYWORD_QUERY_PARAMS : {})}
 			/>
 			<div className="bg-background/90 top-(--nav-height) z-10 flex flex-col gap-3 border-y px-[18px] py-3 backdrop-blur-lg sm:sticky sm:flex-row sm:items-center sm:gap-3 sm:px-11">
 				<div className="w-full sm:flex-1">

@@ -653,6 +653,12 @@ async function queryNearestNeighbour(
 		})
 		return null
 	}
+	// Docs indexed while the embedder is unavailable carry no vector. Skip the
+	// recommendation rather than throwing on a missing array.
+	if (!Array.isArray(document.embedding) || document.embedding.length === 0) {
+		void log.debug('typesense.query.no-vector', { documentId })
+		return null
+	}
 
 	const excludedItemIds = Array.from(
 		new Set([documentId, ...completedItemIds, ...(documentIdsToSkip ?? [])]),

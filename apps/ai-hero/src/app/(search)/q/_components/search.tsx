@@ -26,6 +26,8 @@ import { InfiniteHits } from './infinite-hits'
 import ClearRefinements from './instantsearch/clear-refinements'
 import { RefinementList } from './instantsearch/refinement-list'
 import { SearchBox } from './instantsearch/searchbox'
+import { KEYWORD_QUERY_PARAMS } from '@/lib/search-query-params'
+
 import { SortBy } from './instantsearch/sort-by'
 import {
 	DEFAULT_SORT_VALUE,
@@ -162,14 +164,9 @@ function SearchContent({
 			<Configure
 				filters={SEARCH_FILTER}
 				hitsPerPage={view === 'graph' ? 250 : 40}
-				// Hybrid (keyword + semantic) only when there's a query — embedding an
-				// empty string errors at the provider, which breaks plain browsing.
-				{...(hasQuery
-					? {
-							query_by: 'title,description,summary,embedding',
-							prefix: 'true,true,true,false',
-						}
-					: {})}
+				// Keyword only until vectors are computed off-cluster; see
+				// KEYWORD_QUERY_PARAMS.
+				{...(hasQuery ? KEYWORD_QUERY_PARAMS : {})}
 			/>
 			<div className="bg-background/90 top-(--nav-height) z-10 flex flex-col border-y px-4 pb-4 backdrop-blur-lg sm:sticky sm:flex-row sm:items-center sm:gap-x-3 sm:border-t-0 sm:pb-0">
 				<div className="w-full sm:flex-1">
