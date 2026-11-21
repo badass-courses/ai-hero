@@ -4,7 +4,12 @@ vi.mock('@/inngest/inngest.server', () => ({
 	inngest: { createFunction: vi.fn(() => ({})) },
 }))
 
-const { reconcileContactSync } = await import('./drovr-contact-sync-reconcile')
+const { reconcileContactSync, stopBatchKey } =
+	await import('./drovr-contact-sync-reconcile')
+
+// Stop steps carry a per-batch key; the order checks below read the step name.
+const stepName = (id: string) =>
+	id.replace(/^(load-stops|resend-stops):[0-9a-f]{16}$/, '$1')
 
 function harness(
 	overrides: {
@@ -22,11 +27,11 @@ function harness(
 	const order: string[] = []
 	const step = {
 		run: vi.fn(async (id: string, callback: () => Promise<unknown>) => {
-			order.push(id)
+			order.push(stepName(id))
 			return callback()
 		}),
 		invoke: vi.fn(async (id: string) => {
-			order.push(id)
+			order.push(stepName(id))
 			if (id === `sync:${overrides.failSync}`) throw new Error('drovr 503')
 			return id.startsWith('sync:')
 				? {
@@ -105,6 +110,58 @@ function harness(
 		writeLateCursor,
 	}
 }
+
+describe('stop re-send step ids (sec-046)', () => {
+	it('keys a batch by its rows, in any order', () => {
+		expect(stopBatchKey([{ id: 'a' }, { id: 'b' }])).toBe(
+			stopBatchKey([{ id: 'b' }, { id: 'a' }]),
+		)
+		expect(stopBatchKey([{ id: 'a' }])).not.toBe(stopBatchKey([{ id: 'b' }]))
+		expect(stopBatchKey([{ id: 'a' }])).toMatch(/^[0-9a-f]{16}$/)
+	})
+
+	it('names both stop steps for the batch they send', async () => {
+		const h = harness()
+		await h.run()
+		const ids = [
+			...h.step.run.mock.calls.map((call) => call[0]),
+			...h.step.invoke.mock.calls.map((call) => call[0]),
+		].filter((id) => /stops/.test(id))
+		expect(ids).toHaveLength(2)
+		const [load, resend] = ids
+		expect(load).toMatch(/^load-stops:[0-9a-f]{16}$/)
+		expect(resend).toBe(load!.replace('load-stops', 'resend-stops'))
+	})
+
+	it('a second, different batch in one run is not served the first batch result', async () => {
+		// A memoizing step, as Inngest replays it: same id, same answer.
+		const memo = new Map<string, unknown>()
+		const sent: unknown[] = []
+		const step = {
+			run: async (id: string, callback: () => Promise<unknown>) => {
+				if (!memo.has(id)) memo.set(id, await callback())
+				return memo.get(id)
+			},
+			invoke: async (id: string, opts: { data: { events: unknown[] } }) => {
+				if (!memo.has(id)) {
+					sent.push(...opts.data.events)
+					memo.set(id, { status: 'delivered', accepted: 1, rejected: 0 })
+				}
+				return memo.get(id)
+			},
+		}
+		const ids = [stopBatchKey([{ id: 'x' }]), stopBatchKey([{ id: 'y' }])]
+		for (const [i, key] of ids.entries()) {
+			const events = await step.run(`load-stops:${key}`, async () => [
+				`event-${i}`,
+			])
+			await step.invoke(`resend-stops:${key}`, {
+				data: { events: events as unknown[] },
+			})
+		}
+		expect(sent).toEqual(['event-0', 'event-1'])
+	})
+})
 
 describe('drovr contact sync reconcile function', () => {
 	it('does nothing while the flag is off', async () => {
