@@ -169,7 +169,9 @@ export const env = createEnv({
 		// contact directory and reads preference state locally, with Kit out of
 		// the request path. Off keeps the Kit-backed reads.
 		DROVR_EXECUTOR_TOKEN: z.string().min(16).optional(),
-		AI_HERO_VALUE_PATH_TOKEN_SECRET: z.string().min(16).optional(),
+		// Required: signs value-path, answer-page and recovery tokens. There is no
+		// fallback, so a deploy without it fails at boot (sec-037).
+		AI_HERO_VALUE_PATH_TOKEN_SECRET: z.string().min(16),
 		// drovr #36T link tests mint throwaway principals with this; never the
 		// executor token. Unset means the endpoint answers 503.
 		AIHERO_TEST_PRINCIPAL_TOKEN: z.string().min(32).optional(),

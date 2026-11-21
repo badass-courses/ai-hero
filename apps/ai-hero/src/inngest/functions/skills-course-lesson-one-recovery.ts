@@ -201,11 +201,8 @@ export const skillsCourseLessonOneRecovery = inngest.createFunction(
 				)
 			}
 
-			const pathTokenSecret =
-				process.env.AI_HERO_VALUE_PATH_TOKEN_SECRET ??
-				(process.env.NODE_ENV === 'production'
-					? undefined
-					: 'dev-value-path-token-secret')
+			// No committed fallback (sec-037): unset means personalization fails.
+			const pathTokenSecret = process.env.AI_HERO_VALUE_PATH_TOKEN_SECRET
 			const personalization = buildValuePathEmailPersonalization({
 				contactId: contact.id,
 				kitSubscriberId: event.data.kitSubscriberId,

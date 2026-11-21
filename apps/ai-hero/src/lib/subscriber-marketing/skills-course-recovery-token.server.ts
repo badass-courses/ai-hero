@@ -34,11 +34,8 @@ export async function readSkillsCourseRecoveryToken() {
 }
 
 function recoveryTokenSecret() {
-	const secret =
-		process.env.AI_HERO_VALUE_PATH_TOKEN_SECRET ??
-		(process.env.NODE_ENV === 'production'
-			? undefined
-			: 'dev-value-path-token-secret')
+	// No committed fallback (sec-037): a missing secret fails here.
+	const secret = process.env.AI_HERO_VALUE_PATH_TOKEN_SECRET
 	if (!secret) throw new Error('Skills course recovery token is unavailable')
 	return secret
 }
