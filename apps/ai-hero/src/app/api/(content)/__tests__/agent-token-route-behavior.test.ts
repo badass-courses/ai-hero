@@ -1275,7 +1275,8 @@ describe('agent token route behavior', () => {
 					memoryRoute.GET(
 						new NextRequest('http://localhost:3000/api/memory?q=test'),
 					),
-				expected: expected(200, 403, 200),
+				// Anonymous recall closed in #774 (sec-032).
+				expected: expected(401, 403, 200),
 			},
 			{
 				name: '/api/memory POST',
