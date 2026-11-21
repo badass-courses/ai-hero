@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getUserAbilityForRequest } from '@/server/ability-for-request'
+import { log } from '@/server/logger'
 import { withSkill } from '@/server/with-skill'
 import Typesense from 'typesense'
 import { v4 as uuidv4 } from 'uuid'
@@ -7,10 +8,9 @@ import { v4 as uuidv4 } from 'uuid'
 const COLLECTION = 'support_memory'
 const DECAY_RATE = 0.01 // exp(-0.01 * days) => 50% at ~70 days
 
+// No Access-Control-Allow-Origin: this store holds private support context, so
+// no other origin may read it from a browser (security desk, 2026-11-21).
 const corsHeaders = {
-	'Access-Control-Allow-Origin': '*',
-	'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-	'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 	'Cache-Control': 'no-store, max-age=0',
 }
 
@@ -30,18 +30,21 @@ function getClient() {
 }
 
 /**
- * GET /api/memory?q=<query>&semantic=true&category=<cat>&per_page=5
- *
- * Recall support memory. Returns observations ranked by relevance
- * with time decay applied.
+ * Support memory is private operator context and can hold customer details,
+ * so both recall and store need an admin device token. Anonymous callers,
+ * personal access tokens and narrower device scopes are refused
+ * (security desk, 2026-11-21: GET used to answer anyone).
  */
-const recallHandler = async (request: NextRequest) => {
-	const { authMethod } = await getUserAbilityForRequest(request)
+async function refuseUnlessMemoryAdmin(
+	request: NextRequest,
+	command: 'memory recall' | 'memory store',
+) {
+	const { authMethod, user, ability } = await getUserAbilityForRequest(request)
 	if (authMethod === 'personal-access-token') {
 		return NextResponse.json(
 			{
 				ok: false,
-				command: 'memory recall',
+				command,
 				error: { message: 'Forbidden', code: 'FORBIDDEN' },
 				fix: 'Use a credential with memory access.',
 				docs: '/api',
@@ -50,6 +53,44 @@ const recallHandler = async (request: NextRequest) => {
 			{ status: 403, headers: corsHeaders },
 		)
 	}
+	if (!user) {
+		return NextResponse.json(
+			{
+				ok: false,
+				command,
+				error: { message: 'Unauthorized', code: 'UNAUTHORIZED' },
+				fix: 'Authenticate with an admin device token.',
+				docs: '/api',
+				next_actions: [],
+			},
+			{ status: 401, headers: corsHeaders },
+		)
+	}
+	if (!ability.can('manage', 'all')) {
+		return NextResponse.json(
+			{
+				ok: false,
+				command,
+				error: { message: 'Forbidden', code: 'FORBIDDEN' },
+				fix: 'Support memory needs an admin credential.',
+				docs: '/api',
+				next_actions: [],
+			},
+			{ status: 403, headers: corsHeaders },
+		)
+	}
+	return null
+}
+
+/**
+ * GET /api/memory?q=<query>&semantic=true&category=<cat>&per_page=5
+ *
+ * Recall support memory. Returns observations ranked by relevance
+ * with time decay applied.
+ */
+const recallHandler = async (request: NextRequest) => {
+	const refused = await refuseUnlessMemoryAdmin(request, 'memory recall')
+	if (refused) return refused
 
 	const { searchParams } = new URL(request.url)
 	const q = searchParams.get('q')
@@ -180,6 +221,9 @@ const recallHandler = async (request: NextRequest) => {
 			{ headers: corsHeaders },
 		)
 	} catch (error) {
+		await log.error('memory.recall.failed', {
+			error: error instanceof Error ? error.message : String(error),
+		})
 		return NextResponse.json(
 			{
 				ok: false,
@@ -188,10 +232,7 @@ const recallHandler = async (request: NextRequest) => {
 					message: 'Recall failed',
 					code: 'RECALL_ERROR',
 				},
-				fix:
-					error instanceof Error
-						? `Typesense error: ${error.message}`
-						: 'Check Typesense configuration.',
+				fix: 'Check Typesense configuration.',
 				next_actions: [],
 			},
 			{ status: 500, headers: corsHeaders },
@@ -209,34 +250,8 @@ const recallHandler = async (request: NextRequest) => {
  * increments merged_count on the existing doc instead of inserting.
  */
 const storeHandler = async (request: NextRequest) => {
-	const { authMethod, user } = await getUserAbilityForRequest(request)
-	if (authMethod === 'personal-access-token') {
-		return NextResponse.json(
-			{
-				ok: false,
-				command: 'memory store',
-				error: { message: 'Forbidden', code: 'FORBIDDEN' },
-				fix: 'Use a credential with memory write access.',
-				docs: '/api',
-				next_actions: [],
-			},
-			{ status: 403, headers: corsHeaders },
-		)
-	}
-
-	if (!user) {
-		return NextResponse.json(
-			{
-				ok: false,
-				command: 'memory store',
-				error: { message: 'Unauthorized', code: 'UNAUTHORIZED' },
-				fix: 'Authenticate with a valid device token.',
-				docs: '/api',
-				next_actions: [],
-			},
-			{ status: 401, headers: corsHeaders },
-		)
-	}
+	const refused = await refuseUnlessMemoryAdmin(request, 'memory store')
+	if (refused) return refused
 
 	const client = getClient()
 	if (!client) {
@@ -367,6 +382,9 @@ const storeHandler = async (request: NextRequest) => {
 			{ headers: corsHeaders },
 		)
 	} catch (error) {
+		await log.error('memory.store.failed', {
+			error: error instanceof Error ? error.message : String(error),
+		})
 		return NextResponse.json(
 			{
 				ok: false,
@@ -375,10 +393,7 @@ const storeHandler = async (request: NextRequest) => {
 					message: 'Store failed',
 					code: 'STORE_ERROR',
 				},
-				fix:
-					error instanceof Error
-						? `Error: ${error.message}`
-						: 'Check request body and Typesense configuration.',
+				fix: 'Check request body and Typesense configuration.',
 				next_actions: [],
 			},
 			{ status: 500, headers: corsHeaders },
