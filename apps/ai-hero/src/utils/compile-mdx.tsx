@@ -42,6 +42,7 @@ import {
 } from '@/utils/rehype-internal-links'
 import { rehypeNumberCheckboxes } from '@/utils/rehype-number-checkboxes'
 import { remarkLiteralPlaceholders } from '@/utils/remark-literal-placeholders'
+import { remarkStaticMdxExpressions } from '@/utils/mdx-static-expressions'
 import {
 	remarkSandcastleLinks,
 	SANDCASTLE_PAGE_AUTOLINK,
@@ -756,11 +757,31 @@ async function compileMDXInternal(
 					...components,
 				},
 				options: {
+					...options,
+					// Expressions stay on so authored data props work, but only pure
+					// data survives: remarkStaticMdxExpressions strips the rest before
+					// compile (sec-036). Pinned here, after the caller's options, so no
+					// caller can turn the guard off.
 					blockJS: false,
+					blockDangerousJS: true,
 					mdxOptions: {
 						remarkPlugins: [
 							// First: a later plugin must never see an unresolvable `{name}`.
 							remarkLiteralPlaceholders,
+							[
+								remarkStaticMdxExpressions,
+								{
+									allowedIdentifiers: Object.keys(
+										(options as { scope?: Record<string, unknown> })?.scope ??
+											{},
+									),
+									onRemoved: (where: string) =>
+										void log.warn('mdx.expression.removed', {
+											where,
+											lessonId: context?.lessonId,
+										}),
+								},
+							],
 							[
 								remarkMermaid,
 								{
@@ -796,7 +817,6 @@ async function compileMDXInternal(
 						],
 						recmaPlugins: [[recmaCodeHike, { components: { code: 'Code' } }]],
 					},
-					...options,
 				},
 			})
 				.then((value) => ({ ok: true as const, value }))
