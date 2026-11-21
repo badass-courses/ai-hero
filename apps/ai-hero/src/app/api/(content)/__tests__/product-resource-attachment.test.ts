@@ -57,7 +57,7 @@ describe("POST /api/products/[productId]/resources", () => {
     vi.clearAllMocks();
     mocks.auth.mockResolvedValue({
       user: { id: "user_1" },
-      ability: { can: () => true },
+      ability: { can: () => true, cannot: () => false },
     });
     mocks.getProduct.mockResolvedValue({ id: "product_1" });
     mocks.getContentResource.mockResolvedValue({ id: "resource_1" });
@@ -71,16 +71,16 @@ describe("POST /api/products/[productId]/resources", () => {
   });
 
   it("rejects anonymous requests before database access", async () => {
-    mocks.auth.mockResolvedValue({ user: null, ability: { can: () => false } });
+    mocks.auth.mockResolvedValue({ user: null, ability: { can: () => false, cannot: () => true } });
     const response = await POST(request(), context);
     expect(response.status).toBe(401);
     expect(mocks.getProduct).not.toHaveBeenCalled();
   });
 
-  it("forbids callers without update Content", async () => {
+  it("forbids callers who are not admins", async () => {
     mocks.auth.mockResolvedValue({
       user: { id: "user_1" },
-      ability: { can: () => false },
+      ability: { can: () => false, cannot: () => true },
     });
     const response = await POST(request(), context);
     expect(response.status).toBe(403);

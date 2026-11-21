@@ -60,7 +60,7 @@ export async function GET(request: NextRequest) {
 		}
 		// Check the permission BEFORE resolving the resource, so a caller who lacks
 		// access can't tell an existing private event (403) from a missing one (404).
-		if (ability.cannot('update', 'Content')) {
+		if (ability.cannot('manage', 'all')) {
 			return NextResponse.json(
 				{ error: 'Forbidden' },
 				{ status: 403, headers: corsHeaders },
@@ -110,7 +110,7 @@ export async function POST(request: NextRequest) {
 			)
 		}
 		// Permission check before resolving the resource (avoid a 403-vs-404 existence leak).
-		if (ability.cannot('update', 'Content')) {
+		if (ability.cannot('manage', 'all')) {
 			return NextResponse.json(
 				{ error: 'Forbidden' },
 				{ status: 403, headers: corsHeaders },
@@ -163,7 +163,7 @@ export async function DELETE(request: NextRequest) {
 			)
 		}
 		// Permission check before resolving the resource (avoid a 403-vs-404 existence leak).
-		if (ability.cannot('update', 'Content')) {
+		if (ability.cannot('manage', 'all')) {
 			return NextResponse.json(
 				{ error: 'Forbidden' },
 				{ status: 403, headers: corsHeaders },

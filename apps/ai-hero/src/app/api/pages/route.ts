@@ -7,6 +7,7 @@ import { getUserAbilityForRequest } from '@/server/ability-for-request'
 import { log } from '@/server/logger'
 import { canPublishContent, canUpdateContentDraft } from '@/server/pat-scopes'
 import { withSkill } from '@/server/with-skill'
+import { subject } from '@casl/ability'
 import { and, desc, eq } from 'drizzle-orm'
 import { revalidateTag } from 'next/cache'
 import { z } from 'zod'
@@ -138,6 +139,34 @@ const updatePageHandler = async (request: NextRequest) => {
 				{ error: 'Page not found' },
 				{ status: 404, headers: corsHeaders },
 			)
+		}
+
+		if (authMethod !== 'personal-access-token') {
+			// Session callers: check this page, not just the type. Contributor
+			// rules are createdById-conditioned, so the type-level check above
+			// passes everyone, and a state change needs its own gate
+			// (security desk, sec-034, 2026-11-21).
+			const nextState = parsed.data.fields.state
+			const stateChanges =
+				nextState !== undefined && nextState !== currentPage.fields.state
+			const allowed =
+				ability.can('update', subject('Content', currentPage)) &&
+				(!stateChanges ||
+					(nextState === 'published'
+						? canPublishContent(ability, currentPage)
+						: nextState === 'archived' || nextState === 'deleted'
+							? ability.can('delete', subject('Content', currentPage))
+							: true))
+			if (!allowed) {
+				await log.warn('api.pages.put.forbidden', {
+					userId: user.id,
+					pageId: id,
+				})
+				return NextResponse.json(
+					{ error: 'Forbidden: Insufficient permissions' },
+					{ status: 403, headers: corsHeaders },
+				)
+			}
 		}
 
 		if (authMethod === 'personal-access-token') {

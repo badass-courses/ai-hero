@@ -200,7 +200,10 @@ const updateProductHandler = async (request: NextRequest) => {
 			)
 		}
 
-		if (!ability.can('update', 'Content')) {
+		// Admin only: a product carries price, state and visibility, and has no
+		// owner. The type-level update check passed every contributor
+		// (security desk, sec-034, 2026-11-21).
+		if (ability.cannot('manage', 'all')) {
 			await log.warn('api.products.put.forbidden', { userId: user.id })
 			return NextResponse.json(
 				{ error: 'Forbidden', docs: '/api' },

@@ -505,6 +505,10 @@ export async function addPostToList({
 	})
 
 	if (!list) throw new Error('List not found')
+	// Per-record check (sec-034): the type-level check passes every contributor.
+	if (ability.cannot('update', subject('Content', list))) {
+		throw new Error('Unauthorized')
+	}
 
 	await dbContext.insert(contentResourceResource).values({
 		resourceOfId: list.id,
@@ -560,6 +564,10 @@ export async function removePostFromList({
 	})
 
 	if (!list) throw new Error('List not found')
+	// Per-record check (sec-034): the type-level check passes every contributor.
+	if (ability.cannot('update', subject('Content', list))) {
+		throw new Error('Unauthorized')
+	}
 
 	// Find the resource to remove - could be in top level or in a section
 	const resourceToRemove = list.resources.find(

@@ -43,7 +43,9 @@ const getEnrollment = async (
 		)
 	}
 
-	if (ability.cannot('update', 'Content')) {
+	// Admin only: products have no owner, so contributor rules never match a
+	// product and the type-level check passed every contributor (sec-034).
+	if (ability.cannot('manage', 'all')) {
 		return NextResponse.json(
 			{ error: 'Forbidden', docs: '/api' },
 			{ status: 403, headers: corsHeaders },
