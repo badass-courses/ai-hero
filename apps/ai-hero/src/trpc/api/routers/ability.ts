@@ -1,4 +1,3 @@
-import { getSubscriberFromCookie } from '@/lib/convertkit'
 import { getAllLists } from '@/lib/lists-query'
 import { getAllPosts } from '@/lib/posts-query'
 import { resolveSkillsCtaState } from '@/lib/skills-cta-state'
@@ -40,8 +39,13 @@ export const abilityRouter = createTRPCRouter({
 
 			return abilityRules
 		}),
-	getCurrentSubscriberFromCookie: publicProcedure.query(async ({ ctx }) => {
-		return getSubscriberFromCookie()
+	// Same payload as getSubscriberForCtaGating below: state, fields and
+	// hasIdentity, never an address. It used to return the full Kit record, so
+	// anyone could set ck_subscriber_id=N and read back N's email and name
+	// (security desk, 2026-11-20). The survey posts answers with the session
+	// email, or asks for one.
+	getCurrentSubscriberFromCookie: publicProcedure.query(async () => {
+		return getCtaGatingPayload()
 	}),
 	/**
 	 * Whether this viewer has already answered an ask, and nothing more.
@@ -59,9 +63,6 @@ export const abilityRouter = createTRPCRouter({
 	 * id and read back the matching email address. The payload carries `state`
 	 * and the interest flags, and the id-cookie path does not reach Kit at all.
 	 *
-	 * (`getCurrentSubscriberFromCookie` above still has that shape. It predates
-	 * this and the survey depends on the full record, so it is left alone here
-	 * rather than changed as a side effect of adding CTA gating.)
 	 */
 	getSubscriberForCtaGating: publicProcedure.query(async () => {
 		return getCtaGatingPayload()

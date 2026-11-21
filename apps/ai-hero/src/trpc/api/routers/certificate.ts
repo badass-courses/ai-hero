@@ -34,10 +34,30 @@ export const certificateRouter = createTRPCRouter({
 			}),
 		)
 		.query(async ({ input }) => {
-			return checkSkillsWorkflowValuePathCertificateEligibility({
-				kitSubscriberId: input.kitSubscriberId,
-				email: input.email,
+			// Answers for the signed-in learner only. This is a publicProcedure, and
+			// it used to resolve a caller-chosen kitSubscriberId or email and return
+			// that contact's name and email, so anyone could walk subscriber ids and
+			// read back the list (security desk, 2026-11-20). The identity inputs are
+			// still accepted so old clients don't fail validation, but never used.
+			const { session } = await getServerAuthSession()
+			const email = session?.user?.email
+			if (!email) {
+				return {
+					eligible: false as const,
+					resourceIdOrSlug: input.resourceIdOrSlug,
+					reason: 'sign-in-required' as const,
+				}
+			}
+			const result = await checkSkillsWorkflowValuePathCertificateEligibility({
+				email,
 			})
+			return {
+				eligible: result.eligible,
+				resourceIdOrSlug: result.resourceIdOrSlug,
+				contactId: 'contactId' in result ? result.contactId : undefined,
+				completedAt: 'completedAt' in result ? result.completedAt : undefined,
+				reason: 'reason' in result ? result.reason : undefined,
+			}
 		}),
 	upload: publicProcedure
 		.input(

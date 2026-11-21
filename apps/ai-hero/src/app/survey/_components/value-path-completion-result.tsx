@@ -32,8 +32,7 @@ export function ValuePathCompletionResult({
 			<div className="flex flex-col gap-3 py-10 text-center">
 				<h2 className="text-2xl font-bold">Your answers are saved.</h2>
 				<p className="text-muted-foreground mx-auto max-w-xl text-base">
-					Sign in or use the survey link from your email so we can connect your
-					certificate to your workflow progress.
+					Sign in so we can connect your certificate to your workflow progress.
 				</p>
 			</div>
 		)

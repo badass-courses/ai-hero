@@ -46,10 +46,11 @@ export function SurveyPageClient({
 		() =>
 			subscriberData || session?.user?.email
 				? {
-						...(subscriberData || {}),
-						id: subscriberData?.id || 0,
-						email_address:
-							subscriberData?.email_address || session?.user?.email || '',
+						// The cookie payload never carries an address (it is public and
+						// caller-settable), so answers post with the session email or the
+						// one the reader types in.
+						id: 0,
+						email_address: session?.user?.email || '',
 						state: subscriberData?.state || 'active',
 						fields: subscriberData?.fields || {},
 					}
