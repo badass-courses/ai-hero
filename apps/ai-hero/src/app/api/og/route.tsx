@@ -8,6 +8,7 @@ import { ImageResponse } from 'next/og'
 import { db } from '@/db'
 import { contentResource, contentResourceResource, products } from '@/db/schema'
 import { getVideoResourceForLesson } from '@/lib/lessons-query'
+import { safeOgImageUrl } from '@/lib/og-image-url'
 import { generateGridPattern } from '@/utils/generate-grid-pattern'
 import { PlayIcon } from '@heroicons/react/24/solid'
 import { and, asc, eq, or, sql } from 'drizzle-orm'
@@ -28,9 +29,10 @@ export async function GET(request: Request) {
 		const hasResource = searchParams.has('resource')
 		const resourceSlugOrID = hasResource ? searchParams.get('resource') : null
 		const hasTitle = searchParams.has('title')
-		const hasImage = searchParams.has('image')
 		let title
-		let image = hasImage ? searchParams.get('image') : null
+		// No ?image= parameter: next/og fetches image URLs server-side, so only
+		// stored images on allowed hosts are used (sec-039).
+		let image: string | null = null
 		let muxPlaybackId
 		let resource
 
@@ -88,12 +90,13 @@ export async function GET(request: Request) {
 			title = resource?.fields?.title || product?.name
 
 			if (resource && resourceTypesWithImages.includes(resource.type)) {
-				image =
+				image = safeOgImageUrl(
 					resource?.fields?.coverImage?.url ||
-					resource.fields?.image ||
-					product?.fields?.image?.url ||
-					(muxPlaybackId &&
-						`https://image.mux.com/${muxPlaybackId}/thumbnail.png?time=${resource?.fields.thumbnailTime || 0}&width=1200`)
+						resource.fields?.image ||
+						product?.fields?.image?.url ||
+						(muxPlaybackId &&
+							`https://image.mux.com/${muxPlaybackId}/thumbnail.png?time=${resource?.fields.thumbnailTime || 0}&width=1200`),
+				)
 			}
 		} else {
 			if (hasTitle) {
@@ -114,10 +117,14 @@ export async function GET(request: Request) {
 
 		const squareGridPattern = generateGridPattern(seed)
 
-		if (resource?.type === 'cohort' && resource?.fields?.image) {
+		const cohortImage =
+			resource?.type === 'cohort'
+				? safeOgImageUrl(resource?.fields?.image)
+				: null
+		if (cohortImage) {
 			return new ImageResponse(
 				<img
-					src={resource?.fields?.image}
+					src={cohortImage}
 					style={{
 						width: 1200,
 						height: 630,
@@ -135,8 +142,12 @@ export async function GET(request: Request) {
 		// Matt's portrait overlapping the right side of both. Falls through
 		// to the default render below if coverImage isn't set, so all other
 		// posts behave exactly as before.
-		if (resource?.type === 'post' && resource?.fields?.coverImage?.url) {
-			const artworkUrl = resource.fields.coverImage.url as string
+		const postArtwork =
+			resource?.type === 'post'
+				? safeOgImageUrl(resource?.fields?.coverImage?.url)
+				: null
+		if (postArtwork) {
+			const artworkUrl = postArtwork
 			const mattUrl =
 				'https://res.cloudinary.com/total-typescript/image/upload/v1777888071/matt-for-og.png'
 			const STRIP_HEIGHT = 240
