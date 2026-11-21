@@ -78,6 +78,10 @@ import { PostClosingNewsletter } from './_components/post-closing-newsletter'
 import { PostActionBar } from './_components/post-action-bar'
 import { PostNextLessonButton } from './_components/post-next-lesson-button'
 import {
+	isWithheldFromPublicRoute,
+	publicRouteRobots,
+} from '@/lib/public-content-visibility'
+import {
 	PersonalizedPostRelatedNewsletter,
 	type RelatedPostPersonalization,
 } from './_components/personalized-post-related-newsletter'
@@ -97,7 +101,7 @@ export default async function PostPage(props: {
 
 	const post = await getRoutePost(params.post)
 
-	if (!post) {
+	if (!post || isWithheldFromPublicRoute(post.fields)) {
 		notFound()
 	}
 
@@ -923,11 +927,12 @@ export async function generateMetadata(
 
 	const resource = await getRoutePost(params.post)
 
-	if (!resource) {
+	if (!resource || isWithheldFromPublicRoute(resource.fields)) {
 		return parent as Metadata
 	}
 
 	return {
+		robots: publicRouteRobots(resource.fields),
 		title: resource.fields.title,
 		description: metaDescription(resource.fields.description),
 		alternates: {
