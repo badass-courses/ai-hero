@@ -17,7 +17,15 @@ import {
 } from '@clack/prompts'
 import colors from 'picocolors'
 
-const TOKEN = process.env.AUTH_TOKEN || '3cc95395-b39e-42b3-9f61-26a3290d9534'
+// No committed fallback: a token in source works wherever someone mints it as
+// a real device token (security desk sec-045).
+const TOKEN = process.env.AUTH_TOKEN
+if (!TOKEN) {
+	console.error(
+		'AUTH_TOKEN is not set. Export a device access token to use the posts CLI.',
+	)
+	process.exit(1)
+}
 const BASE_URL = 'http://localhost:3000'
 
 const adjectives = [
