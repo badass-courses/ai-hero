@@ -93,7 +93,10 @@ async function resolveAuthorizedRecovery(): Promise<AuthorizedRecovery | null> {
 			token.payload.email,
 			token.payload.kitSubscriberId,
 		)
-		if (!subscriber || String(subscriber.id) !== token.payload.kitSubscriberId) {
+		if (
+			!subscriber ||
+			String(subscriber.id) !== token.payload.kitSubscriberId
+		) {
 			return null
 		}
 		return {
@@ -153,11 +156,8 @@ async function resolveLocalSubscriber(
 }
 
 function recoverySecret() {
-	const secret =
-		process.env.AI_HERO_VALUE_PATH_TOKEN_SECRET ??
-		(process.env.NODE_ENV === 'production'
-			? undefined
-			: 'dev-value-path-token-secret')
+	// No committed fallback (sec-037): a missing secret fails here.
+	const secret = process.env.AI_HERO_VALUE_PATH_TOKEN_SECRET
 	if (!secret) throw new Error('Recovery key is unavailable')
 	return secret
 }

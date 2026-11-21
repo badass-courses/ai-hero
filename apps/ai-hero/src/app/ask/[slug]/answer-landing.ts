@@ -77,8 +77,11 @@ function emailIdFromResourceId(resourceId: string) {
 	return emailId
 }
 
+// No fallback. A committed default would let anyone mint valid path tokens
+// wherever the variable is unset (security desk, sec-037, 2026-11-21).
 function getPathTokenSecret() {
-	return (
-		process.env.AI_HERO_VALUE_PATH_TOKEN_SECRET ?? 'dev-value-path-token-secret'
-	)
+	const secret = process.env.AI_HERO_VALUE_PATH_TOKEN_SECRET
+	if (!secret)
+		throw new Error('AI_HERO_VALUE_PATH_TOKEN_SECRET is not configured')
+	return secret
 }

@@ -25,6 +25,11 @@ vi.mock('@/config', async (importOriginal) => {
 // This assignment runs before test-module imports and survives unstubAllEnvs.
 process.env.DATABASE_URL = 'mysql://test:test@127.0.0.1:1/mock_only'
 
+// App code has no fallback for the path-token secret (sec-037), so tests
+// supply their own. Tests that need it unset stub it empty.
+process.env.AI_HERO_VALUE_PATH_TOKEN_SECRET ??=
+	'test-only-value-path-token-secret'
+
 // Mock environment variables
 vi.mock('@/env.mjs', () => ({
 	env: {
