@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getUserAbilityForRequest } from '@/server/ability-for-request'
 import { log } from '@/server/logger'
 import { withSkill } from '@/server/with-skill'
+import {
+	redactCustomerIdentifiers,
+	REFUSED_MEMORY_CATEGORIES,
+} from '@/lib/support-memory-redact'
 import Typesense from 'typesense'
 import { v4 as uuidv4 } from 'uuid'
 
@@ -96,7 +100,8 @@ const recallHandler = async (request: NextRequest) => {
 	const q = searchParams.get('q')
 	const category = searchParams.get('category')
 	const perPage = Math.min(Number(searchParams.get('per_page') || '5'), 15)
-	const semantic = searchParams.get('semantic') === 'true'
+	// `semantic` is accepted for old callers and ignored: support_memory has no
+	// embedding field since the 2026-11-21 cluster OOM, so recall is keyword.
 
 	if (!q) {
 		return NextResponse.json(
@@ -137,14 +142,9 @@ const recallHandler = async (request: NextRequest) => {
 			.documents()
 			.search({
 				q,
-				query_by: semantic ? 'embedding,observation' : 'observation',
-				exclude_fields: 'embedding',
+				query_by: 'observation',
 				filter_by: filterParts.join(' && '),
 				per_page: perPage * 2, // fetch extra, then rank with decay
-				...(semantic && {
-					vector_query: 'embedding:([], alpha: 0.6)',
-					prefix: 'false' as unknown as boolean,
-				}),
 			})
 
 		const now = Date.now() / 1000
@@ -189,14 +189,14 @@ const recallHandler = async (request: NextRequest) => {
 				command: `memory recall "${q}"`,
 				result: {
 					query: q,
-					mode: semantic ? 'hybrid' : 'keyword',
+					mode: 'keyword',
 					found: results.found,
 					returned: ranked.length,
 					observations: ranked,
 				},
 				next_actions: [
 					{
-						command: `/api/memory?q=<query>&semantic=true&category=<category>`,
+						command: `/api/memory?q=<query>&category=<category>`,
 						description: 'Refine memory search',
 						params: {
 							query: { value: q, required: true as const },
@@ -246,8 +246,10 @@ const recallHandler = async (request: NextRequest) => {
  * Store a new support memory observation.
  * Body: { observation, category, source?, observation_type?, write_verdict?, confidence? }
  *
- * Deduplicates: if a semantically similar observation exists (vector distance < 0.15),
- * increments merged_count on the existing doc instead of inserting.
+ * Customer emails and Front conversation and message ids are redacted from
+ * `observation` and `source`, and `customer-context` notes are refused
+ * (sec-032 follow-up). No vector dedup: the collection has no embedding
+ * field, so every store inserts.
  */
 const storeHandler = async (request: NextRequest) => {
 	const refused = await refuseUnlessMemoryAdmin(request, 'memory store')
@@ -273,15 +275,31 @@ const storeHandler = async (request: NextRequest) => {
 	try {
 		const body = await request.json()
 		const {
-			observation,
+			observation: rawObservation,
 			category,
-			source = 'manual',
+			source: rawSource = 'manual',
 			observation_type = 'fact',
 			write_verdict = 'allow',
 			confidence = 0.9,
 		} = body
 
-		if (!observation || !category) {
+		if ((REFUSED_MEMORY_CATEGORIES as readonly string[]).includes(category)) {
+			return NextResponse.json(
+				{
+					ok: false,
+					command: 'memory store',
+					error: {
+						message: 'customer-context notes are not stored',
+						code: 'CATEGORY_REFUSED',
+					},
+					fix: 'Store the reusable lesson under another category, without naming the customer.',
+					next_actions: [],
+				},
+				{ status: 422, headers: corsHeaders },
+			)
+		}
+
+		if (typeof rawObservation !== 'string' || !rawObservation || !category) {
 			return NextResponse.json(
 				{
 					ok: false,
@@ -290,51 +308,18 @@ const storeHandler = async (request: NextRequest) => {
 						message: 'Missing observation or category',
 						code: 'INVALID_INPUT',
 					},
-					fix: 'Provide both "observation" (string) and "category" (product-fact|resolution-pattern|customer-context|tool-gotcha|voice-rule|process).',
+					fix: 'Provide both "observation" (string) and "category" (product-fact|resolution-pattern|tool-gotcha|voice-rule|process).',
 					next_actions: [],
 				},
 				{ status: 400, headers: corsHeaders },
 			)
 		}
 
-		// Dedup check: search for semantically similar existing observations
+		const observation = redactCustomerIdentifiers(rawObservation).text
+		const source = redactCustomerIdentifiers(String(rawSource)).text
+
 		let dedupResult: { action: string; existingId?: string } = {
 			action: 'insert',
-		}
-
-		try {
-			const similar = await client
-				.collections(COLLECTION)
-				.documents()
-				.search({
-					q: observation,
-					query_by: 'embedding',
-					exclude_fields: 'embedding',
-					per_page: 1,
-					prefix: 'false' as unknown as boolean,
-				})
-
-			const topHit = similar.hits?.[0]
-			const topHitAny = topHit as unknown as Record<string, unknown> | undefined
-			const topVecDist = topHitAny?.vector_distance as number | undefined
-			if (topHit && topVecDist != null && topVecDist < 0.15) {
-				const existingDoc = topHit.document as Record<string, unknown>
-				const existingId = existingDoc.id as string
-				const existingCount = (existingDoc.merged_count as number) || 1
-
-				// Merge: update existing doc
-				await client
-					.collections(COLLECTION)
-					.documents(existingId)
-					.update({
-						merged_count: existingCount + 1,
-						timestamp: Math.floor(Date.now() / 1000),
-					})
-
-				dedupResult = { action: 'merged', existingId }
-			}
-		} catch {
-			// Dedup check failed, proceed with insert
 		}
 
 		if (dedupResult.action === 'insert') {
