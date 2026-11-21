@@ -1,4 +1,4 @@
-import { createMongoAbility } from '@casl/ability'
+import { createMongoAbility, type AnyMongoAbility } from '@casl/ability'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
@@ -43,7 +43,7 @@ const contributor = (id: string) =>
 	createMongoAbility([
 		{ action: 'manage', subject: 'Content', conditions: { createdById: id } },
 	])
-const as = (ability: ReturnType<typeof createMongoAbility> | null) =>
+const as = (ability: AnyMongoAbility | null) =>
 	mocks.session.mockResolvedValue(
 		ability
 			? { session: { user: { id: 'u1' } }, ability }
