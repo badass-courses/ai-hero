@@ -1,6 +1,7 @@
 'use server'
 
 import { revalidatePath, revalidateTag, unstable_cache } from 'next/cache'
+import { subject } from '@casl/ability'
 import { courseBuilderAdapter, db } from '@/db'
 import {
 	contentResource,
@@ -566,6 +567,11 @@ export async function updateWorkshop(input: Partial<Workshop>) {
 
 	if (!currentWorkshop) {
 		throw new Error(`Workshop with id ${input.id} not found.`)
+	}
+	// Per-record check: contributor rules are createdById-conditioned, so the
+	// type-level check above passes for any workshop (sec-034).
+	if (ability.cannot('update', subject('Content', currentWorkshop))) {
+		throw new Error('Unauthorized')
 	}
 
 	let workshopSlug = currentWorkshop.fields.slug

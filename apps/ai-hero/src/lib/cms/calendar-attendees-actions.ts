@@ -18,9 +18,12 @@ import {
  * on who may edit a guest list or what add/remove does.
  */
 
+// Admin only: guest lists hold invitee emails and adding one sends an official
+// calendar invite. Contributor rules are per-record, so the type-level
+// update check let any contributor in (security desk, sec-034, 2026-11-21).
 async function requireContentSession() {
 	const { session, ability } = await getServerAuthSession()
-	if (!session?.user || !ability.can('update', 'Content')) {
+	if (!session?.user || !ability.can('manage', 'all')) {
 		throw new Error('Unauthorized')
 	}
 	return { session, ability }

@@ -28,7 +28,8 @@ const postProductResource = async (
         { status: 401, headers: corsHeaders },
       );
     }
-    if (!ability.can("update", "Content")) {
+    // Admin only: attaching a resource changes what a product grants (sec-034).
+    if (ability.cannot("manage", "all")) {
       return NextResponse.json(
         { error: "Forbidden", docs: "/api" },
         { status: 403, headers: corsHeaders },
