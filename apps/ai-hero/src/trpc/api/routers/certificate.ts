@@ -1,6 +1,7 @@
 import { courseBuilderAdapter } from '@/db'
 import { checkCohortCertificateEligibility } from '@/lib/certificates'
 import { checkSkillsWorkflowValuePathCertificateEligibility } from '@/lib/subscriber-marketing/value-path-certificates'
+import { readVerifiedLinkSubscriber } from '@/lib/survey-link-identity'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
 import { createTRPCRouter, publicProcedure } from '@/trpc/api/trpc'
@@ -31,16 +32,27 @@ export const certificateRouter = createTRPCRouter({
 				resourceIdOrSlug: z.literal('value-path:ai-hero-skills-workflow'),
 				kitSubscriberId: z.union([z.string(), z.number()]).optional(),
 				email: z.string().email().optional(),
+				shKit: z.string().max(128).optional(),
 			}),
 		)
 		.query(async ({ input }) => {
-			// Answers for the signed-in learner only. This is a publicProcedure, and
-			// it used to resolve a caller-chosen kitSubscriberId or email and return
-			// that contact's name and email, so anyone could walk subscriber ids and
-			// read back the list (security desk, 2026-11-20). The identity inputs are
-			// still accepted so old clients don't fail validation, but never used.
+			// Answers for the signed-in learner, or for the reader of a hash-verified
+			// email link (kitSubscriberId plus sh_kit). This is a publicProcedure,
+			// and it used to resolve a caller-chosen kitSubscriberId or email and
+			// return that contact's name and email, so anyone could walk subscriber
+			// ids and read back the list (security desk, 2026-11-20). The `email`
+			// input is still accepted so old clients don't fail validation, but it
+			// is never used, and no name or address is returned.
 			const { session } = await getServerAuthSession()
-			const email = session?.user?.email
+			const email =
+				session?.user?.email ||
+				(
+					await readVerifiedLinkSubscriber({
+						subscriberId: input.kitSubscriberId,
+						shKit: input.shKit,
+						route: '/survey',
+					})
+				)?.email_address
 			if (!email) {
 				return {
 					eligible: false as const,

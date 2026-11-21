@@ -33,9 +33,7 @@ type Subscriber = {
 	fields?: Record<string, string | null>
 }
 
-type PreferenceSource =
-	| 'preferences-page'
-	| 'unsubscribe-link'
+type PreferenceSource = 'preferences-page' | 'unsubscribe-link' | 'survey-link'
 
 type User = typeof usersTable.$inferSelect
 

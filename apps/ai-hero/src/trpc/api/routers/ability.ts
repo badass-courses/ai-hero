@@ -3,6 +3,7 @@ import { getAllPosts } from '@/lib/posts-query'
 import { resolveSkillsCtaState } from '@/lib/skills-cta-state'
 import { hasEntitlementForResource } from '@/lib/entitlements-query'
 import { getCtaGatingPayload } from '@/lib/subscriber-gate'
+import { readVerifiedLinkSubscriber } from '@/lib/survey-link-identity'
 import { createTRPCRouter, publicProcedure } from '@/trpc/api/trpc'
 import { getCurrentAbilityRules } from '@/utils/get-current-ability-rules'
 import { z } from 'zod'
@@ -43,10 +44,28 @@ export const abilityRouter = createTRPCRouter({
 	// hasIdentity, never an address. It used to return the full Kit record, so
 	// anyone could set ck_subscriber_id=N and read back N's email and name
 	// (security desk, 2026-11-20). The survey posts answers with the session
-	// email, or asks for one.
+	// email, the hash-verified link below, or asks for one.
 	getCurrentSubscriberFromCookie: publicProcedure.query(async () => {
 		return getCtaGatingPayload()
 	}),
+	// The address for a reader who arrived from an email link, only when the
+	// link's sh_kit matches. See readVerifiedLinkSubscriber.
+	getVerifiedLinkSubscriber: publicProcedure
+		.input(
+			z.object({
+				shKit: z.string().max(128),
+				subscriberId: z.string().max(32).optional(),
+			}),
+		)
+		.query(async ({ input }) => {
+			const subscriber = await readVerifiedLinkSubscriber({
+				...input,
+				route: '/survey',
+			})
+			return subscriber
+				? { id: subscriber.id, email_address: subscriber.email_address }
+				: null
+		}),
 	/**
 	 * Whether this viewer has already answered an ask, and nothing more.
 	 *

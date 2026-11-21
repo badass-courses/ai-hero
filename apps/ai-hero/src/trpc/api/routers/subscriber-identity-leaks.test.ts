@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
 	eligibility: vi.fn(),
 	gating: vi.fn(),
 	fullRecord: vi.fn(),
+	linkSubscriber: vi.fn(),
 }))
 vi.mock('@/db', () => ({ courseBuilderAdapter: {}, db: {} }))
 vi.mock('@/lib/certificates', () => ({
@@ -13,6 +14,9 @@ vi.mock('@/lib/certificates', () => ({
 }))
 vi.mock('@/lib/subscriber-marketing/value-path-certificates', () => ({
 	checkSkillsWorkflowValuePathCertificateEligibility: mocks.eligibility,
+}))
+vi.mock('@/lib/survey-link-identity', () => ({
+	readVerifiedLinkSubscriber: mocks.linkSubscriber,
 }))
 vi.mock('@/server/auth', () => ({ getServerAuthSession: mocks.session }))
 vi.mock('@/server/logger', () => ({
@@ -47,10 +51,16 @@ const ctx = {
 } as any
 
 const resourceIdOrSlug = 'value-path:ai-hero-skills-workflow' as const
+const verified = {
+	id: '12345',
+	email_address: 'reader@example.test',
+	contactId: 'contact-reader',
+}
 
 beforeEach(() => {
 	vi.clearAllMocks()
 	mocks.session.mockResolvedValue({ session: null })
+	mocks.linkSubscriber.mockResolvedValue(null)
 	mocks.eligibility.mockResolvedValue({
 		eligible: true,
 		resourceIdOrSlug,
@@ -62,10 +72,12 @@ beforeEach(() => {
 })
 
 describe('certificate.valuePathEligibility', () => {
-	it('tells an anonymous caller to sign in and looks nobody up', async () => {
-		const out = await certificateRouter
-			.createCaller(ctx)
-			.valuePathEligibility({ resourceIdOrSlug, kitSubscriberId: 12345 })
+	it('looks nobody up for an anonymous caller with a bare subscriber id', async () => {
+		const out = await certificateRouter.createCaller(ctx).valuePathEligibility({
+			resourceIdOrSlug,
+			kitSubscriberId: 12345,
+			email: 'someone@example.test',
+		})
 		expect(out).toEqual({
 			eligible: false,
 			resourceIdOrSlug,
@@ -74,26 +86,45 @@ describe('certificate.valuePathEligibility', () => {
 		expect(mocks.eligibility).not.toHaveBeenCalled()
 	})
 
-	it('answers for the session email only and returns no name or address', async () => {
+	it('answers for a hash-verified link without returning a name or address', async () => {
+		mocks.linkSubscriber.mockResolvedValue(verified)
+		const out = await certificateRouter.createCaller(ctx).valuePathEligibility({
+			resourceIdOrSlug,
+			kitSubscriberId: 12345,
+			shKit: 'a'.repeat(64),
+			email: 'someone-else@example.test',
+		})
+		expect(mocks.linkSubscriber).toHaveBeenCalledWith({
+			subscriberId: 12345,
+			shKit: 'a'.repeat(64),
+			route: '/survey',
+		})
+		expect(mocks.eligibility).toHaveBeenCalledWith({
+			email: 'reader@example.test',
+		})
+		expect(out).toMatchObject({ eligible: true })
+		expect(out).not.toHaveProperty('learnerName')
+		expect(out).not.toHaveProperty('learnerEmail')
+	})
+
+	it('uses the session email and ignores the caller-supplied one', async () => {
 		mocks.session.mockResolvedValue({
 			session: { user: { id: 'u1', email: 'self@example.test' } },
 		})
 		const out = await certificateRouter.createCaller(ctx).valuePathEligibility({
 			resourceIdOrSlug,
-			kitSubscriberId: 12345,
 			email: 'someone-else@example.test',
 		})
 		expect(mocks.eligibility).toHaveBeenCalledWith({
 			email: 'self@example.test',
 		})
 		expect(out).toMatchObject({ eligible: true, contactId: 'contact-self' })
-		expect(out).not.toHaveProperty('learnerName')
 		expect(out).not.toHaveProperty('learnerEmail')
 	})
 })
 
-describe('ability.getCurrentSubscriberFromCookie', () => {
-	it('returns the address-free gating payload, not the Kit record', async () => {
+describe('ability subscriber procedures', () => {
+	it('getCurrentSubscriberFromCookie returns the address-free gating payload', async () => {
 		const payload = { state: 'active', fields: {}, hasIdentity: true }
 		mocks.gating.mockResolvedValue(payload)
 		const out = await abilityRouter
@@ -101,5 +132,22 @@ describe('ability.getCurrentSubscriberFromCookie', () => {
 			.getCurrentSubscriberFromCookie()
 		expect(out).toEqual(payload)
 		expect(mocks.fullRecord).not.toHaveBeenCalled()
+	})
+
+	it('getVerifiedLinkSubscriber returns the address only for a verified link', async () => {
+		const caller = abilityRouter.createCaller(ctx)
+		expect(
+			await caller.getVerifiedLinkSubscriber({
+				shKit: 'b'.repeat(64),
+				subscriberId: '12345',
+			}),
+		).toBeNull()
+		mocks.linkSubscriber.mockResolvedValue(verified)
+		expect(
+			await caller.getVerifiedLinkSubscriber({
+				shKit: 'a'.repeat(64),
+				subscriberId: '12345',
+			}),
+		).toEqual({ id: '12345', email_address: 'reader@example.test' })
 	})
 })
