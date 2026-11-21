@@ -1,3 +1,4 @@
+import { getLesson } from '@/lib/lessons/lessons.service'
 import { SolutionSchema } from '@/lib/solution'
 import {
 	createSolution as createSolutionAction,
@@ -9,7 +10,37 @@ import {
 } from '@/lib/solutions-query'
 import { log, serializeError } from '@/server/logger'
 import { createTRPCRouter, protectedProcedure } from '@/trpc/api/trpc'
+import { subject, type Ability } from '@casl/ability'
+import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
+
+/**
+ * A solution is as protected as its lesson: reading one needs read access to
+ * the parent lesson (the same entitlement check the lesson page uses), and a
+ * solution that isn't published needs an editor. protectedProcedure alone
+ * only proves a login (security desk, sec-035, 2026-11-21).
+ */
+async function requireLessonRead(
+	lessonId: string | null | undefined,
+	ability: Ability,
+) {
+	if (!lessonId) throw new TRPCError({ code: 'NOT_FOUND' })
+	const lesson = await getLesson(lessonId, ability)
+	if (!lesson || ability.cannot('read', subject('Content', lesson))) {
+		throw new TRPCError({ code: 'FORBIDDEN' })
+	}
+	return lesson
+}
+
+function visibleSolution<
+	T extends { fields?: { state?: string | null } | null } | null | undefined,
+>(solution: T, ability: Ability): T | null {
+	if (!solution) return null
+	return solution.fields?.state === 'published' ||
+		ability.can('update', subject('Content', solution as object))
+		? solution
+		: null
+}
 
 /**
  * Router for solution-related operations
@@ -25,9 +56,13 @@ export const solutionsRouter = createTRPCRouter({
 				lessonId: z.string(),
 			}),
 		)
-		.query(async ({ input }) => {
+		.query(async ({ ctx, input }) => {
 			const { lessonId } = input
-			return getSolutionForLesson(lessonId)
+			await requireLessonRead(lessonId, ctx.ability as unknown as Ability)
+			return visibleSolution(
+				await getSolutionForLesson(lessonId),
+				ctx.ability as unknown as Ability,
+			)
 		}),
 
 	/**
@@ -39,9 +74,12 @@ export const solutionsRouter = createTRPCRouter({
 				lessonId: z.string(),
 			}),
 		)
-		.query(async ({ input }) => {
+		.query(async ({ ctx, input }) => {
 			const { lessonId } = input
-			return getAllSolutionsForLesson(lessonId)
+			const ability = ctx.ability as unknown as Ability
+			await requireLessonRead(lessonId, ability)
+			const solutions = await getAllSolutionsForLesson(lessonId)
+			return solutions.filter((solution) => visibleSolution(solution, ability))
 		}),
 
 	/**
@@ -53,9 +91,14 @@ export const solutionsRouter = createTRPCRouter({
 				solutionSlugOrId: z.string(),
 			}),
 		)
-		.query(async ({ input }) => {
+		.query(async ({ ctx, input }) => {
 			const { solutionSlugOrId } = input
-			return getSolution(solutionSlugOrId)
+			const ability = ctx.ability as unknown as Ability
+			const solution = await getSolution(solutionSlugOrId)
+			if (!solution) return null
+			const lesson = await getLessonForSolution(solution.id)
+			await requireLessonRead(lesson?.id, ability)
+			return visibleSolution(solution, ability)
 		}),
 
 	/**
@@ -114,10 +157,13 @@ export const solutionsRouter = createTRPCRouter({
 				solutionId: z.string(),
 			}),
 		)
-		.query(async ({ input }) => {
+		.query(async ({ ctx, input }) => {
 			try {
 				const { solutionId } = input
-				return getLessonForSolution(solutionId)
+				const lesson = await getLessonForSolution(solutionId)
+				if (!lesson) return null
+				await requireLessonRead(lesson.id, ctx.ability as unknown as Ability)
+				return lesson
 			} catch (error) {
 				void log.error('solution.getParentLesson.trpc.error', {
 					error: serializeError(error),
