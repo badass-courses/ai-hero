@@ -83,10 +83,14 @@ function isStatic(node: unknown, allowed: ReadonlySet<string>): boolean {
 				}
 				for (const attr of opening.attributes as Estree[]) {
 					if (attr.type !== 'JSXAttribute') return false
-					if (isUnsafeAttributeName(jsxNameText(attr.name as Estree))) {
-						return false
-					}
+					const attrName = jsxNameText(attr.name as Estree)
+					if (isUnsafeAttributeName(attrName)) return false
 					const v = attr.value as Estree | null
+					const text =
+						v?.type === 'JSXExpressionContainer'
+							? literalText(v.expression)
+							: literalText(v)
+					if (isUnsafeUrlAttribute(attrName, text)) return false
 					if (v === null || v.type === 'Literal') continue
 					if (v.type === 'JSXExpressionContainer') {
 						if (!isStatic(v.expression, allowed)) return false
@@ -175,6 +179,11 @@ export const UNSAFE_ELEMENTS: ReadonlySet<string> = new Set([
 	'form',
 	'noscript',
 	'template',
+	// SVG animation can set a link target at runtime, past React's URL guard.
+	'animate',
+	'set',
+	'animatemotion',
+	'animatetransform',
 ])
 
 /** Member segments that reach constructors, e.g. `<Probe.constructor>`. */
@@ -207,6 +216,41 @@ export function isUnsafeAttributeName(
 }
 
 const UNSAFE_URL = /^[\s\u0000-\u001f]*(javascript|vbscript|data):/i
+
+/** A `javascript:`-style value on an attribute that names a URL target. */
+export function isUnsafeUrlAttribute(
+	name: string | null | undefined,
+	value: unknown,
+): boolean {
+	return (
+		/^(href|src|xlink:href|poster|background)$/i.test(name ?? '') &&
+		typeof value === 'string' &&
+		UNSAFE_URL.test(value)
+	)
+}
+
+/** The string a literal or expression-free template evaluates to, else null. */
+function literalText(node: unknown): string | null {
+	if (!node || typeof node !== 'object') return null
+	const n = node as Estree
+	if (n.type === 'Literal') return typeof n.value === 'string' ? n.value : null
+	if (n.type === 'TemplateLiteral') {
+		const quasis = n.quasis as { value?: { cooked?: string } }[]
+		return (n.expressions as unknown[]).length === 0
+			? (quasis[0]?.value?.cooked ?? null)
+			: null
+	}
+	return null
+}
+
+/** The literal string an MDX attribute expression program holds, else null. */
+function programLiteralText(program: Estree | undefined): string | null {
+	const body = program?.body as Estree[] | undefined
+	if (!body || body.length !== 1 || body[0]!.type !== 'ExpressionStatement') {
+		return null
+	}
+	return literalText(body[0]!.expression)
+}
 
 /** True when a whole MDX expression program is data only. */
 export function isStaticProgram(
@@ -261,11 +305,13 @@ export function remarkStaticMdxExpressions(
 					options.onRemoved?.(`attribute ${attr.name}`)
 					return false
 				}
-				if (
-					/^(href|src|xlink:href|poster|background)$/i.test(attr.name ?? '') &&
-					typeof attr.value === 'string' &&
-					UNSAFE_URL.test(attr.value)
-				) {
+				const text =
+					typeof attr.value === 'string'
+						? attr.value
+						: attr.value && typeof attr.value === 'object'
+							? programLiteralText(attr.value.data?.estree)
+							: null
+				if (isUnsafeUrlAttribute(attr.name, text)) {
 					options.onRemoved?.(`attribute ${attr.name}`)
 					return false
 				}

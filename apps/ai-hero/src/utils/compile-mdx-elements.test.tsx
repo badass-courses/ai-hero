@@ -43,6 +43,12 @@ describe('CMS MDX cannot plant script or documents (sec-040)', () => {
 		`<img src="x.png" onError="${CANARY}" />`,
 		`<button formAction="https://example.com/${CANARY}">go</button>`,
 		`<a href="data:text/html,${CANARY}">x</a>`,
+		`<a href={'data:text/html,${CANARY}'}>x</a>`,
+		'<a href={`data:text/html,' + CANARY + '`}>x</a>',
+		`<svg><a><animate attributeName="href" values="javascript:${CANARY}" /><text>t</text></a></svg>`,
+		`<svg><a><set attributeName="href" to="javascript:${CANARY}" /><text>t</text></a></svg>`,
+		`<svg><animateMotion path="${CANARY}" /></svg>`,
+		`<svg><animateTransform type="${CANARY}" /></svg>`,
 	])('drops it: %s', async (source) => {
 		const html = await render(`# Hi\n\nBefore\n\n${source}\n\nAfter`)
 		expect(html).toContain('After')
@@ -53,6 +59,15 @@ describe('CMS MDX cannot plant script or documents (sec-040)', () => {
 		const Probe = (props: { icon?: React.ReactNode }) => <div>{props.icon}</div>
 		const html = await render(
 			`<Probe icon={<script>{'${CANARY}'}</script>} />`,
+			{ Probe },
+		)
+		expect(html).not.toContain(CANARY)
+	})
+
+	it('drops a literal unsafe URL in JSX inside a data prop', async () => {
+		const Probe = (props: { icon?: React.ReactNode }) => <div>{props.icon}</div>
+		const html = await render(
+			`<Probe icon={<a href={'data:text/html,${CANARY}'}>x</a>} />`,
 			{ Probe },
 		)
 		expect(html).not.toContain(CANARY)
