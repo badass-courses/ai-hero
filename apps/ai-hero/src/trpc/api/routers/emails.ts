@@ -7,6 +7,7 @@ import { addResourceToWorkshop } from '@/lib/workshops-query'
 import { createTRPCRouter, protectedProcedure } from '@/trpc/api/trpc'
 import { TRPCError } from '@trpc/server'
 import { and, eq } from 'drizzle-orm'
+import { requireContentEditor } from '@/trpc/api/require-content-editor'
 import { z } from 'zod'
 
 export const emailsRouter = createTRPCRouter({
@@ -20,7 +21,8 @@ export const emailsRouter = createTRPCRouter({
 
 	createEmail: protectedProcedure
 		.input(NewEmailSchema)
-		.mutation(async ({ input }) => {
+		.mutation(async ({ ctx, input }) => {
+			requireContentEditor(ctx)
 			const email = await createEmail(input)
 			revalidateTag('emails', 'max')
 			return email
@@ -42,7 +44,8 @@ export const emailsRouter = createTRPCRouter({
 				emailId: z.string(),
 			}),
 		)
-		.mutation(async ({ input }) => {
+		.mutation(async ({ ctx, input }) => {
+			requireContentEditor(ctx)
 			const email = await getEmail(input.emailId)
 			if (!email) {
 				throw new Error('Email not found')
@@ -67,7 +70,8 @@ export const emailsRouter = createTRPCRouter({
 				emailId: z.string(),
 			}),
 		)
-		.mutation(async ({ input }) => {
+		.mutation(async ({ ctx, input }) => {
+			requireContentEditor(ctx)
 			const result = await db
 				.delete(contentResourceResource)
 				.where(

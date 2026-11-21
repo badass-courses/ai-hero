@@ -21,6 +21,7 @@ import {
 } from '@/trpc/api/trpc'
 import { sendAnEmail } from '@coursebuilder/utils/send-an-email'
 import { Liquid } from 'liquidjs'
+import { requireContentEditor } from '@/trpc/api/require-content-editor'
 import { z } from 'zod'
 
 const CohortReminderScheduleSchema = z.object({
@@ -59,7 +60,8 @@ export const cohortsRouter = createTRPCRouter({
 	}),
 	attachReminderEmailToCohort: protectedProcedure
 		.input(CohortReminderMutationSchema)
-		.mutation(async ({ input }) => {
+		.mutation(async ({ ctx, input }) => {
+			requireContentEditor(ctx)
 			return await attachReminderEmailToCohort(
 				input.cohortId,
 				input.emailId,
@@ -73,7 +75,8 @@ export const cohortsRouter = createTRPCRouter({
 				emailId: z.string(),
 			}),
 		)
-		.mutation(async ({ input }) => {
+		.mutation(async ({ ctx, input }) => {
+			requireContentEditor(ctx)
 			return await detachReminderEmailFromCohort(input.cohortId, input.emailId)
 		}),
 	createAndAttachReminderEmailToCohort: protectedProcedure
@@ -84,7 +87,8 @@ export const cohortsRouter = createTRPCRouter({
 				schedule: CohortReminderScheduleSchema.optional(),
 			}),
 		)
-		.mutation(async ({ input }) => {
+		.mutation(async ({ ctx, input }) => {
+			requireContentEditor(ctx)
 			return await createAndAttachReminderEmailToCohort(
 				input.cohortId,
 				input.input,
@@ -93,7 +97,8 @@ export const cohortsRouter = createTRPCRouter({
 		}),
 	updateReminderEmailScheduleForCohort: protectedProcedure
 		.input(CohortReminderMutationSchema)
-		.mutation(async ({ input }) => {
+		.mutation(async ({ ctx, input }) => {
+			requireContentEditor(ctx)
 			return await updateReminderEmailScheduleForCohort(
 				input.cohortId,
 				input.emailId,
@@ -102,7 +107,8 @@ export const cohortsRouter = createTRPCRouter({
 		}),
 	updateReminderEmailForCohort: protectedProcedure
 		.input(CohortReminderFormSchema)
-		.mutation(async ({ input }) => {
+		.mutation(async ({ ctx, input }) => {
+			requireContentEditor(ctx)
 			const email = await getEmailSimple(input.emailId)
 			if (!email) {
 				throw new Error('Email not found')
@@ -125,7 +131,8 @@ export const cohortsRouter = createTRPCRouter({
 		}),
 	previewReminderEmailForCohort: protectedProcedure
 		.input(z.object({ cohortId: z.string(), emailId: z.string() }))
-		.query(async ({ input }) => {
+		.query(async ({ ctx, input }) => {
+			requireContentEditor(ctx)
 			const cohort = await getCohort(input.cohortId)
 			if (!cohort) throw new Error('Cohort not found')
 
@@ -175,7 +182,8 @@ export const cohortsRouter = createTRPCRouter({
 		}),
 	sendReminderEmailNowForCohort: protectedProcedure
 		.input(z.object({ cohortId: z.string(), emailId: z.string() }))
-		.mutation(async ({ input }) => {
+		.mutation(async ({ ctx, input }) => {
+			requireContentEditor(ctx)
 			const cohort = await getCohort(input.cohortId)
 			if (!cohort) throw new Error('Cohort not found')
 

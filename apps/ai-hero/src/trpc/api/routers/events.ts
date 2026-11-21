@@ -25,6 +25,7 @@ import {
 import { sendAnEmail } from '@coursebuilder/utils/send-an-email'
 import { count, desc, eq } from 'drizzle-orm'
 import { Liquid } from 'liquidjs'
+import { requireContentEditor } from '@/trpc/api/require-content-editor'
 import { z } from 'zod'
 
 export const eventsRouter = createTRPCRouter({
@@ -138,7 +139,8 @@ export const eventsRouter = createTRPCRouter({
 				hoursInAdvance: z.number().optional().default(24),
 			}),
 		)
-		.mutation(async ({ input }) => {
+		.mutation(async ({ ctx, input }) => {
+			requireContentEditor(ctx)
 			return await attachReminderEmailToEvent(
 				input.eventId,
 				input.emailId,
@@ -152,7 +154,8 @@ export const eventsRouter = createTRPCRouter({
 				emailId: z.string(),
 			}),
 		)
-		.mutation(async ({ input }) => {
+		.mutation(async ({ ctx, input }) => {
+			requireContentEditor(ctx)
 			return await detachReminderEmailFromEvent(input.eventId, input.emailId)
 		}),
 	createAndAttachReminderEmailToEvent: protectedProcedure
@@ -163,7 +166,8 @@ export const eventsRouter = createTRPCRouter({
 				hoursInAdvance: z.number().optional().default(24),
 			}),
 		)
-		.mutation(async ({ input }) => {
+		.mutation(async ({ ctx, input }) => {
+			requireContentEditor(ctx)
 			return await createAndAttachReminderEmailToEvent(
 				input.eventId,
 				input.input,
@@ -178,7 +182,8 @@ export const eventsRouter = createTRPCRouter({
 				hoursInAdvance: z.number().min(1).max(168),
 			}),
 		)
-		.mutation(async ({ input }) => {
+		.mutation(async ({ ctx, input }) => {
+			requireContentEditor(ctx)
 			return await updateReminderEmailHours(
 				input.eventId,
 				input.emailId,
@@ -194,7 +199,8 @@ export const eventsRouter = createTRPCRouter({
 				fields: NewEmailSchema.shape.fields,
 			}),
 		)
-		.mutation(async ({ input }) => {
+		.mutation(async ({ ctx, input }) => {
+			requireContentEditor(ctx)
 			const email = await getEmailSimple(input.emailId)
 			if (!email) {
 				throw new Error('Email not found')
@@ -217,7 +223,8 @@ export const eventsRouter = createTRPCRouter({
 		}),
 	previewReminderEmail: protectedProcedure
 		.input(z.object({ eventId: z.string(), emailId: z.string() }))
-		.query(async ({ input }) => {
+		.query(async ({ ctx, input }) => {
+			requireContentEditor(ctx)
 			const event = await getEvent(input.eventId)
 			if (!event) throw new Error('Event not found')
 
@@ -263,7 +270,8 @@ export const eventsRouter = createTRPCRouter({
 		}),
 	sendReminderEmailNow: protectedProcedure
 		.input(z.object({ eventId: z.string(), emailId: z.string() }))
-		.mutation(async ({ input }) => {
+		.mutation(async ({ ctx, input }) => {
+			requireContentEditor(ctx)
 			const event = await getEvent(input.eventId)
 			if (!event) throw new Error('Event not found')
 
