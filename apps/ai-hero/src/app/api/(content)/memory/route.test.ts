@@ -109,3 +109,51 @@ describe('/api/memory', () => {
 		expect(mocks.logError).toHaveBeenCalled()
 	})
 })
+
+const storeBody = (body: Record<string, unknown>) =>
+	(POST as any)(
+		new NextRequest('https://www.aihero.dev/api/memory', {
+			method: 'POST',
+			body: JSON.stringify(body),
+		}),
+	)
+
+describe('/api/memory store, keyword-only collection', () => {
+	beforeEach(() => mocks.auth.mockResolvedValue(admin))
+
+	it('redacts customer emails and Front ids, keeps our own domains', async () => {
+		const res = await storeBody({
+			observation:
+				'Buyer jane.doe@example.com in cnv_1abc23 (msg_9xyz8) was helped by support@aihero.dev',
+			category: 'resolution-pattern',
+			source: 'front cnv_1abc23 from jane.doe@example.com',
+		})
+		expect(res.status).toBe(200)
+		const doc = mocks.create.mock.calls[0]![0]
+		expect(doc.observation).toBe(
+			'Buyer [customer email] in [conversation] ([message]) was helped by support@aihero.dev',
+		)
+		expect(doc.source).toBe('front [conversation] from [customer email]')
+		expect(JSON.stringify(doc)).not.toMatch(/example\.com|cnv_|msg_/)
+	})
+
+	it('refuses customer-context notes without writing', async () => {
+		const res = await storeBody({
+			observation: 'Jane prefers invoices in EUR',
+			category: 'customer-context',
+		})
+		expect(res.status).toBe(422)
+		expect(mocks.create).not.toHaveBeenCalled()
+	})
+
+	it('never queries the dropped embedding field', async () => {
+		await storeBody({ observation: 'x', category: 'process' })
+		await (GET as any)(
+			new NextRequest('https://www.aihero.dev/api/memory?q=x&semantic=true'),
+		)
+		for (const [params] of mocks.search.mock.calls) {
+			expect(JSON.stringify(params)).not.toContain('embedding')
+		}
+		expect(mocks.create).toHaveBeenCalledTimes(1)
+	})
+})
