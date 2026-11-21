@@ -15,10 +15,14 @@ jobs:
     name: Sync production Inngest functions
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # Only Vercel's own production deployments. The bypass secret goes to
+    # target_url, so a deployment status from anyone else (any token or app
+    # with deployments permission) must never reach the step (sec-044).
     if: >-
       github.event.deployment_status.state == 'success' &&
       github.event.deployment.environment == 'Production' &&
-      contains(github.event.deployment_status.target_url, 'ai-hero')
+      github.event.deployment.creator.login == 'vercel[bot]' &&
+      github.event.deployment_status.creator.login == 'vercel[bot]'
     env:
       DEPLOYMENT_URL: ${{ github.event.deployment_status.target_url }}
       VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
@@ -37,6 +41,14 @@ jobs:
           # reaches the Next.js handler. The project's Protection Bypass for
           # Automation secret is sent as x-vercel-protection-bypass to get through.
           # www.aihero.dev is not protected, but it is the alias we cannot trust here.
+          # The secret is only ever sent to this project's own immutable
+          # deployment host. A contains('ai-hero') check also passed
+          # https://ai-hero.evil.example (sec-044).
+          if [[ ! "$DEPLOYMENT_URL" =~ ^https://ai-hero-[a-z0-9]+-skillrecordings\.vercel\.app/?$ ]]; then
+            echo "::error::Refusing to sync: target_url is not an ai-hero skillrecordings.vercel.app deployment host"
+            exit 1
+          fi
+
           if [[ -z "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]]; then
             echo "::error::VERCEL_AUTOMATION_BYPASS_SECRET is empty. Vercel Deployment Protection will reject this sync. Generate the project's Protection Bypass for Automation secret (Vercel project settings -> Deployment Protection) and store it as the VERCEL_AUTOMATION_BYPASS_SECRET repository secret."
             exit 1
@@ -58,16 +70,15 @@ jobs:
               --request PUT "$endpoint" \
               --header "Content-Type: application/json" \
               --header "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}"); then
-              response="$(cat "$response_file")"
-              echo "Inngest response (HTTP ${http_status}): ${response}"
+              # Status only: the response body is not echoed to the log.
+              echo "Inngest response: HTTP ${http_status}"
 
               if [[ "$http_status" =~ ^2[0-9][0-9]$ ]]; then
                 synced=true
                 break
               fi
             else
-              response="$(cat "$response_file")"
-              echo "Inngest sync attempt ${attempt} failed (HTTP ${http_status}): ${response}" >&2
+              echo "Inngest sync attempt ${attempt} failed (HTTP ${http_status})" >&2
             fi
 
             if (( attempt < 5 )); then
