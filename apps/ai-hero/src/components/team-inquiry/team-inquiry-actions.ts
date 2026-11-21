@@ -10,6 +10,7 @@ import { sendAnEmail } from '@coursebuilder/utils/send-an-email'
 import { Ratelimit } from '@upstash/ratelimit'
 import sanitizeHtml from 'sanitize-html'
 
+import { suggestRoute } from './training-route'
 import {
 	getTeamInquirySchema,
 	type TeamInquiryContext,
@@ -28,6 +29,14 @@ export async function sendTeamInquiry({
 	message,
 	country,
 	trainingType,
+	trainingLocation,
+	trainingCountry,
+	engineersToTrain,
+	format,
+	topics,
+	timing,
+	partnerPreference,
+	specificPartner,
 	website,
 	timestamp,
 	context,
@@ -96,6 +105,8 @@ export async function sendTeamInquiry({
 		}
 
 		let partnerDetails = ''
+		let trainingSubject = ''
+		let routingLog = {}
 		if (context?.source === 'training-partners') {
 			const validation = getTeamInquirySchema(context.source).safeParse({
 				name,
@@ -105,6 +116,14 @@ export async function sendTeamInquiry({
 				message,
 				country,
 				trainingType,
+				trainingLocation,
+				trainingCountry,
+				engineersToTrain,
+				format,
+				topics,
+				timing,
+				partnerPreference,
+				specificPartner,
 				website,
 				timestamp,
 			})
@@ -113,8 +132,45 @@ export async function sendTeamInquiry({
 					error: validation.error.issues[0]?.message || 'Invalid submission',
 				}
 			}
-			partnerDetails = `Country: ${sanitizeHtml(validation.data.country || '')}
-      Training type: ${validation.data.trainingType}`
+			const data = validation.data
+			const route = suggestRoute(data)
+			const live = data.trainingType === 'live'
+			const clean = (value: string) =>
+				sanitizeHtml(value, { allowedTags: [], allowedAttributes: {} })
+			trainingSubject = `Training request: ${clean(companyName).replace(/[\r\n]/g, ' ')}, ${data.country}, route ${route.route} (${route.reason})`
+			const details = {
+				country: data.country,
+				trainingType: data.trainingType,
+				trainingLocation: data.trainingLocation || 'same',
+				trainingCountry:
+					data.trainingLocation === 'elsewhere'
+						? data.trainingCountry
+						: data.country,
+				engineersToTrain: live ? data.engineersToTrain : undefined,
+				format: live ? data.format : undefined,
+				topics: live ? data.topics : undefined,
+				timing: live ? data.timing : undefined,
+				partnerPreference: live ? data.partnerPreference || 'none' : 'none',
+				specificPartner:
+					live && data.partnerPreference === 'specific'
+						? data.specificPartner?.trim()
+						: undefined,
+				suggestedRoute: route.route,
+				routeReason: route.reason,
+			}
+			routingLog = details
+			partnerDetails = [
+				`Country: ${details.country}`,
+				`Training type: ${details.trainingType}`,
+				`Training location: ${details.trainingLocation}`,
+				`Training country: ${details.trainingCountry}`,
+				`Engineers to train: ${details.engineersToTrain || 'Not applicable'}`,
+				`Format: ${details.format || 'Not applicable'}`,
+				`Topics: ${details.topics?.join(', ') || 'Not applicable'}`,
+				`Timing: ${details.timing || 'Not applicable'}`,
+				`Partner preference: ${clean(route.partnerPreference)}`,
+				`Suggested route: ${route.route} (${route.reason})`,
+			].join('\n      ')
 		}
 
 		// Only send email if we pass all spam checks
@@ -142,16 +198,24 @@ export async function sendTeamInquiry({
 			},
 			Subject:
 				context?.source === 'training-partners'
-					? `Training partners inquiry from ${companyName} (${teamSize} employees)`
+					? trainingSubject
 					: `Team Inquiry from ${companyName} (${teamSize} employees)`,
 			To: env.NEXT_PUBLIC_SUPPORT_EMAIL,
 			ReplyTo: email,
 			type: 'transactional',
 		})
 
-		scheduleProductEvents(async () => email, [{
-			_tag: 'TeamIntent', intent: 'seats', sourceId: 'team-inquiry', at: Date.now(),
-		}])
+		scheduleProductEvents(
+			async () => email,
+			[
+				{
+					_tag: 'TeamIntent',
+					intent: 'seats',
+					sourceId: 'team-inquiry',
+					at: Date.now(),
+				},
+			],
+		)
 
 		// Log successful submission
 		await log.info('team_inquiry.submitted', {
@@ -162,6 +226,7 @@ export async function sendTeamInquiry({
 			teamSize,
 			country,
 			trainingType,
+			...routingLog,
 			source: context?.source || 'Direct',
 			url: context?.url,
 		})
