@@ -19,6 +19,7 @@ import {
 	type CreateWorkshopWithLessonsInput,
 	type Workshop,
 } from '@/lib/workshops'
+import { requireContentUpdate } from '@/lib/content-edit-guard'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
 import { measureIfSlow } from '@/server/perf'
@@ -537,6 +538,7 @@ export const updateResourcePosition = async ({
 	resourceId: string
 	position: number
 }) => {
+	await requireContentUpdate([currentParentResourceId, parentResourceId])
 	const result = await db
 		.update(contentResourceResource)
 		.set({ position, resourceOfId: parentResourceId })

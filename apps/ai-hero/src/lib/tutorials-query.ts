@@ -3,6 +3,7 @@
 import { revalidatePath, revalidateTag } from 'next/cache'
 import { courseBuilderAdapter, db } from '@/db'
 import { contentResource, contentResourceResource } from '@/db/schema'
+import { requireContentUpdate } from '@/lib/content-edit-guard'
 import { ModuleSchema, type Module } from '@/lib/module'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
@@ -159,6 +160,7 @@ export const addResourceToTutorial = async ({
 	if (!tutorial) {
 		throw new Error(`Tutorial with id ${tutorialId} not found`)
 	}
+	await requireContentUpdate([tutorial.id])
 	await db.insert(contentResourceResource).values({
 		resourceOfId: tutorial.id,
 		resourceId: resource.id,
@@ -185,6 +187,16 @@ type positionInputIten = {
 }
 
 export const updateResourcePositions = async (input: positionInputIten[]) => {
+	await requireContentUpdate(
+		input.flatMap((item) => [
+			item.currentParentResourceId,
+			item.parentResourceId,
+			...(item.children ?? []).flatMap((child) => [
+				child.currentParentResourceId,
+				child.parentResourceId,
+			]),
+		]),
+	)
 	const result = await db.transaction(async (trx) => {
 		for (const {
 			currentParentResourceId,
@@ -235,6 +247,14 @@ export const batchUpdateResourcePositions = async (
 	}[],
 ) => {
 	if (!updates.length) return
+	// Before anything else: this action writes positions, parents and tier
+	// metadata, so the caller must be able to edit every parent it touches.
+	await requireContentUpdate(
+		updates.flatMap((update) => [
+			update.currentParentResourceId,
+			update.resourceOfId,
+		]),
+	)
 
 	try {
 		await log.info('tutorial.batch-update.start', {
@@ -298,6 +318,7 @@ export const updateResourcePosition = async ({
 	metadata?: any
 }) => {
 	const parentIdToLookup = currentParentResourceId ?? parentResourceId
+	await requireContentUpdate([parentIdToLookup, parentResourceId])
 	const result = await db
 		.update(contentResourceResource)
 		.set({ position, resourceOfId: parentResourceId, metadata })
