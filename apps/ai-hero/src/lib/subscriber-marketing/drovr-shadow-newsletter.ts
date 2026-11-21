@@ -72,6 +72,33 @@ export const SHADOW_NEWSLETTER_KIT_SEQUENCES = [
 	},
 ] as const satisfies readonly ShadowNewsletterKitSequence[]
 
+/**
+ * Issues drovr renders and sends itself, with no Kit sequence. Kit sequence
+ * 2625552 never carried them, so a reader cannot get one twice and the
+ * old-newsletter exit gate does not apply. The Kit executor still refuses
+ * them: they never touch Kit.
+ */
+export const SHADOW_NEWSLETTER_DROVR_MESSAGES = ['ship_21k_v1'] as const
+
+export type ShadowNewsletterCatalogEntry =
+	| { readonly kind: 'kit'; readonly sequence: ShadowNewsletterKitSequence }
+	| { readonly kind: 'drovr'; readonly messageId: string }
+
+/** What personalize may serve for one catalog message, or undefined. */
+export function shadowNewsletterCatalogEntry(
+	catalogRevision: string,
+	messageId: string,
+): ShadowNewsletterCatalogEntry | undefined {
+	if (catalogRevision !== SHADOW_NEWSLETTER_CATALOG_REVISION) return undefined
+	const sequence = shadowNewsletterSequenceForMessage(catalogRevision, messageId)
+	if (sequence) return { kind: 'kit', sequence }
+	return (SHADOW_NEWSLETTER_DROVR_MESSAGES as readonly string[]).includes(
+		messageId,
+	)
+		? { kind: 'drovr', messageId }
+		: undefined
+}
+
 export const ShadowNewsletterSendPayload = z.object({
 	newsletter: z.literal(SHADOW_NEWSLETTER_LIST),
 	catalogRevision: z.string().min(1),
