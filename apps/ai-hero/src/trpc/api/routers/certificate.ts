@@ -1,4 +1,6 @@
 import { courseBuilderAdapter } from '@/db'
+import { env } from '@/env.mjs'
+import { certificateRenderUrl } from '@/lib/certificate-render-url'
 import { checkCohortCertificateEligibility } from '@/lib/certificates'
 import { checkSkillsWorkflowValuePathCertificateEligibility } from '@/lib/subscriber-marketing/value-path-certificates'
 import { readVerifiedLinkSubscriber } from '@/lib/survey-link-identity'
@@ -74,11 +76,12 @@ export const certificateRouter = createTRPCRouter({
 	upload: publicProcedure
 		.input(
 			z.object({
-				imagePath: z.string(),
-				resourceIdOrSlug: z.string(),
+				// Still accepted so older clients validate; never fetched (sec-043).
+				imagePath: z.string().optional(),
+				resourceIdOrSlug: z.string().min(1).max(200),
 			}),
 		)
-		.mutation(async ({ ctx, input }) => {
+		.mutation(async ({ input }) => {
 			const { session } = await getServerAuthSession()
 			if (!session)
 				return {
@@ -92,19 +95,17 @@ export const certificateRouter = createTRPCRouter({
 				return {
 					error: 'User not found',
 				}
+			const imagePath = certificateRenderUrl(
+				env.NEXT_PUBLIC_URL,
+				input.resourceIdOrSlug,
+				user.id,
+			)
 			try {
-				const res = await fetch(input.imagePath)
-				if (!res.ok) {
-					const errorData = await res.json()
-					return {
-						error: errorData.error || 'Failed to download certificate',
-					}
-				}
-				return await uploadImage(
-					input.imagePath,
-					user.id,
-					input.resourceIdOrSlug,
-				)
+				// Our own route: ineligible learners get a non-OK answer, and its
+				// body is never passed back to the caller.
+				const res = await fetch(imagePath, { redirect: 'error' })
+				if (!res.ok) return { error: 'Failed to download certificate' }
+				return await uploadImage(imagePath, user.id, input.resourceIdOrSlug)
 			} catch {
 				return { error: 'Something went wrong' }
 			}
