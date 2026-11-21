@@ -58,6 +58,10 @@ import { WorkshopInterestCta } from '../_components/workshop-interest-cta'
 import { WorkshopNotifyButton } from '../_components/workshop-notify-button'
 import { WorkshopSidebar } from '../_components/workshop-sidebar'
 import { Certificate } from '../../_components/module-certificate-container'
+import {
+	isWithheldFromPublicRoute,
+	publicRouteRobots,
+} from '@/lib/public-content-visibility'
 
 type Props = {
 	params: Promise<{ module: string }>
@@ -81,11 +85,12 @@ export async function generateMetadata(
 	const params = await props.params
 	const workshop = await getCachedMinimalWorkshop(params.module)
 
-	if (!workshop) {
+	if (!workshop || isWithheldFromPublicRoute(workshop.fields)) {
 		return parent as Metadata
 	}
 
 	return {
+		robots: publicRouteRobots(workshop.fields),
 		title: workshop.fields?.title,
 		description: metaDescription(workshop.fields?.description),
 		alternates: {
@@ -110,7 +115,7 @@ export default async function ModulePage(props: Props) {
 	const params = await props.params
 	const workshop = await getCachedMinimalWorkshop(params.module)
 
-	if (!workshop) {
+	if (!workshop || isWithheldFromPublicRoute(workshop.fields)) {
 		notFound()
 	}
 
