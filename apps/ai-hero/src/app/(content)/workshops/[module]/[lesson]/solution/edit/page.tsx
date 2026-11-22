@@ -1,3 +1,4 @@
+import { subject } from '@casl/ability'
 import { notFound } from 'next/navigation'
 import LayoutClient from '@/components/layout-client'
 import { env } from '@/env.mjs'
@@ -45,6 +46,10 @@ export default async function SolutionEditPage({
 	// Get the lesson first to ensure it exists
 	const lessonData = await getLesson(lesson)
 	if (!lessonData) {
+		notFound()
+	}
+	// Per record, not per type: a contributor may open only their own (sec-050).
+	if (ability.cannot('update', subject('Content', lessonData))) {
 		notFound()
 	}
 

@@ -1,5 +1,7 @@
 'use server'
 
+import { requireContentUpdate } from '@/lib/content-edit-guard'
+
 import { revalidatePath } from 'next/cache'
 import { db } from '@/db'
 import {
@@ -105,6 +107,8 @@ export async function updateSurvey(input: {
 		})
 		throw new Error('Unauthorized')
 	}
+	// Per record, not per type (security desk sec-050).
+	await requireContentUpdate([input.id])
 
 	const existing = await db.query.contentResource.findFirst({
 		where: and(
@@ -328,6 +332,8 @@ export async function updateQuestion(input: {
 		})
 		throw new Error('Unauthorized')
 	}
+	// Per record, not per type (security desk sec-050).
+	await requireContentUpdate([input.id])
 
 	const existing = await db.query.contentResource.findFirst({
 		where: and(
@@ -404,6 +410,8 @@ export async function addQuestionToSurvey(input: {
 	if (!session?.user || !ability.can('update', 'Content')) {
 		throw new Error('Unauthorized')
 	}
+	// Per record, not per type (security desk sec-050).
+	await requireContentUpdate([input.surveyId])
 
 	// Get current questions count to set position
 	const currentQuestions = await db.query.contentResourceResource.findMany({
@@ -444,6 +452,8 @@ export async function removeQuestionFromSurvey(input: {
 	if (!session?.user || !ability.can('update', 'Content')) {
 		throw new Error('Unauthorized')
 	}
+	// Per record, not per type (security desk sec-050).
+	await requireContentUpdate([input.surveyId])
 
 	await db
 		.delete(contentResourceResource)
@@ -474,6 +484,8 @@ export async function updateQuestionPositions(input: {
 	if (!session?.user || !ability.can('update', 'Content')) {
 		throw new Error('Unauthorized')
 	}
+	// Per record, not per type (security desk sec-050).
+	await requireContentUpdate([input.surveyId])
 
 	await db.transaction(async (trx) => {
 		for (const { questionId, position } of input.questions) {

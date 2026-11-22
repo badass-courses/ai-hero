@@ -1,3 +1,4 @@
+import { subject } from '@casl/ability'
 import * as React from 'react'
 import { headers } from 'next/headers'
 import { notFound } from 'next/navigation'
@@ -27,7 +28,8 @@ export default async function PromptEditPage(props: Props) {
 	const { ability } = await getServerAuthSession()
 	const prompt = await getPrompt(params.slug)
 
-	if (!prompt || !ability.can('create', 'Content')) {
+	// Per record, not per type: a contributor may open only their own (sec-050).
+	if (!prompt || ability.cannot('update', subject('Content', prompt))) {
 		notFound()
 	}
 

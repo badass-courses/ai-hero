@@ -1,5 +1,7 @@
 'use server'
 
+import { requireContentUpdate } from '@/lib/content-edit-guard'
+
 import { courseBuilderAdapter, db } from '@/db'
 import { contentResource, contentResourceResource } from '@/db/schema'
 import { env } from '@/env.mjs'
@@ -207,6 +209,8 @@ export async function attachVideoResourceToPost(
 	if (!session?.user || !ability.can('update', 'Content')) {
 		throw new Error('Unauthorized')
 	}
+	// Per record, not per type (security desk sec-050).
+	await requireContentUpdate([postId])
 
 	try {
 		// First, check if the post already has a video resource attached
@@ -444,6 +448,8 @@ export async function renameVideoResource(
 	if (!session?.user || !ability.can('update', 'Content')) {
 		throw new Error('Unauthorized')
 	}
+	// Per record, not per type (security desk sec-050).
+	await requireContentUpdate([videoResourceId])
 
 	const trimmed = title.trim()
 	await courseBuilderAdapter.updateContentResourceFields({

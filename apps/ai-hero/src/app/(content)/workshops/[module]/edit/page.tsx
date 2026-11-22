@@ -1,3 +1,4 @@
+import { subject } from '@casl/ability'
 import * as React from 'react'
 import type { Metadata, ResolvingMetadata } from 'next'
 import { notFound, redirect } from 'next/navigation'
@@ -48,6 +49,10 @@ export default async function EditWorkshopPage(props: {
 	const workshop = await getWorkshop(params.module)
 
 	if (!workshop) {
+		notFound()
+	}
+	// Per record, not per type: a contributor may open only their own (sec-050).
+	if (ability.cannot('update', subject('Content', workshop))) {
 		notFound()
 	}
 

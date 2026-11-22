@@ -1,3 +1,4 @@
+import { subject } from '@casl/ability'
 import { headers } from 'next/headers'
 import { notFound } from 'next/navigation'
 import LayoutClient from '@/components/layout-client'
@@ -32,10 +33,11 @@ export default async function EventEditPage(props: Props) {
 	// event-series has NO edit route (getEvent returned null for series).
 	const resource = await getEventOrEventSeries(params.slug)
 
+	// Per record, not per type: a contributor may open only their own (sec-050).
 	if (
 		!resource ||
 		resource.type !== 'event' ||
-		!ability.can('create', 'Content')
+		ability.cannot('update', subject('Content', resource))
 	) {
 		notFound()
 	}

@@ -1,3 +1,4 @@
+import { subject } from '@casl/ability'
 import * as React from 'react'
 import { headers } from 'next/headers'
 import { notFound } from 'next/navigation'
@@ -26,7 +27,8 @@ export default async function ArticleEditPage(props: Props) {
 	const { ability } = await getServerAuthSession()
 	const page = await getPage(params.slug)
 
-	if (!page || !ability.can('create', 'Content')) {
+	// Per record, not per type: a contributor may open only their own (sec-050).
+	if (!page || ability.cannot('update', subject('Content', page))) {
 		notFound()
 	}
 

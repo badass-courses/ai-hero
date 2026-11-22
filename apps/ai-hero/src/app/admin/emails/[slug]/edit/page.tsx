@@ -1,3 +1,4 @@
+import { subject } from '@casl/ability'
 import * as React from 'react'
 import { headers } from 'next/headers'
 import { notFound } from 'next/navigation'
@@ -26,7 +27,8 @@ export default async function ArticleEditEmail(props: Props) {
 	const { ability } = await getServerAuthSession()
 	const email = await getEmail(params.slug)
 
-	if (!email || !ability.can('create', 'Content')) {
+	// Per record, not per type: a contributor may open only their own (sec-050).
+	if (!email || ability.cannot('update', subject('Content', email))) {
 		notFound()
 	}
 

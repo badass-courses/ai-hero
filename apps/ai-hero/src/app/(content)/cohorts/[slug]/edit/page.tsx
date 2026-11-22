@@ -1,3 +1,4 @@
+import { subject } from '@casl/ability'
 import { headers } from 'next/headers'
 import { notFound } from 'next/navigation'
 import LayoutClient from '@/components/layout-client'
@@ -26,7 +27,8 @@ export default async function CohortEditPage(props: Props) {
 	const { ability } = await getServerAuthSession()
 	const cohort = await getCohort(params.slug)
 
-	if (!cohort || !ability.can('create', 'Content')) {
+	// Per record, not per type: a contributor may open only their own (sec-050).
+	if (!cohort || ability.cannot('update', subject('Content', cohort))) {
 		notFound()
 	}
 
