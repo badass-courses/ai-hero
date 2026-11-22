@@ -1,5 +1,7 @@
 'use server'
 
+import { requireContentUpdate } from '@/lib/content-edit-guard'
+
 import { revalidatePath, revalidateTag } from 'next/cache'
 import { courseBuilderAdapter, db } from '@/db'
 import {
@@ -51,6 +53,8 @@ export async function updateResource(input: {
 		})
 		throw new Error('Unauthorized')
 	}
+	// Per record, not per type (security desk sec-050).
+	await requireContentUpdate([input.id])
 
 	const currentResource = await courseBuilderAdapter.getContentResource(
 		input.id,

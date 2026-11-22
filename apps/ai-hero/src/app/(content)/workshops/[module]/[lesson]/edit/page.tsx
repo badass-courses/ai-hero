@@ -1,3 +1,4 @@
+import { subject } from '@casl/ability'
 import * as React from 'react'
 import type { Metadata, ResolvingMetadata } from 'next'
 import { notFound } from 'next/navigation'
@@ -51,7 +52,8 @@ export default async function LessonEditPage(props: {
 	const { ability } = await getServerAuthSession()
 	const lesson = await getLesson(params.lesson)
 
-	if (!lesson || !ability.can('create', 'Content')) {
+	// Per record, not per type: a contributor may open only their own (sec-050).
+	if (!lesson || ability.cannot('update', subject('Content', lesson))) {
 		notFound()
 	}
 

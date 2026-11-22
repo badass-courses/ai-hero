@@ -1,5 +1,7 @@
 'use server'
 
+import { requireContentUpdate } from '@/lib/content-edit-guard'
+
 import { revalidateTag, unstable_cache } from 'next/cache'
 import { courseBuilderAdapter, db } from '@/db'
 import {
@@ -242,6 +244,8 @@ export async function createSolution({
 	if (!user || !ability.can('create', 'Content')) {
 		throw new Error('Unauthorized')
 	}
+	// Per record, not per type (security desk sec-050).
+	await requireContentUpdate([lessonId])
 
 	try {
 		// Create the solution resource with required fields
@@ -308,6 +312,8 @@ export async function updateSolution(input: Partial<Solution>) {
 	if (!user || !ability.can('update', 'Content')) {
 		throw new Error('Unauthorized')
 	}
+	// Per record, not per type (security desk sec-050).
+	await requireContentUpdate([input.id])
 
 	// Ensure we have an ID to look up
 	const id = input.id
@@ -393,6 +399,8 @@ export async function deleteSolution(solutionId: string) {
 	if (!user || !ability.can('delete', 'Content')) {
 		throw new Error('Unauthorized')
 	}
+	// Per record, not per type (security desk sec-050).
+	await requireContentUpdate([solutionId])
 
 	try {
 		// Find the resource join first to get the lesson ID for logging

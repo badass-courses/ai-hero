@@ -1,5 +1,7 @@
 "use server";
 
+import { requireContentUpdate } from "@/lib/content-edit-guard";
+
 import { revalidateTag, unstable_cache } from "next/cache";
 import { courseBuilderAdapter, db } from "@/db";
 import { contentResource, contentResourceResource } from "@/db/schema";
@@ -80,6 +82,8 @@ export async function updatePage(input: Page) {
   if (!user || !ability.can("update", "Content")) {
     throw new Error("Unauthorized");
   }
+  // Per record, not per type (security desk sec-050).
+  await requireContentUpdate([input.id]);
 
   const currentPage = await getPage(input.id);
 

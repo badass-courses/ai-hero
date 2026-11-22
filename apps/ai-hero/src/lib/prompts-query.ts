@@ -1,5 +1,7 @@
 'use server'
 
+import { requireContentUpdate } from '@/lib/content-edit-guard'
+
 import { revalidateTag } from 'next/cache'
 import { courseBuilderAdapter, db } from '@/db'
 import { contentResource } from '@/db/schema'
@@ -65,6 +67,8 @@ export async function updatePrompt(input: Prompt) {
 	if (!user || !ability.can('update', 'Content')) {
 		throw new Error('Unauthorized')
 	}
+	// Per record, not per type (security desk sec-050).
+	await requireContentUpdate([input.id])
 
 	const currentPrompt = await getPrompt(input.id)
 
