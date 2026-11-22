@@ -25,6 +25,10 @@ import { buyPathIdSchema } from '@/lib/buy-path/schema'
 import { log } from '@/server/logger'
 import { withCheckoutTelemetry } from '@/lib/buy-path/checkout-context'
 import { installBuyPathLegacyAliases } from '@/lib/buy-path/legacy-logger'
+import {
+	isTranscriptionCallback,
+	verifyTranscriptionCallback,
+} from '@/lib/transcription-callback-signature'
 
 import { StripePaymentAdapter } from '@coursebuilder/commerce/stripe-provider'
 import type { NextRequest } from 'next/server'
@@ -165,6 +169,12 @@ const courseBuilderGETWithCouponAuthorization = async (
 const courseBuilderPOSTWithCashBalanceReconciliation = async (
 	request: NextRequest,
 ) => {
+	// sec-059: an unsigned transcript callback could overwrite any video's transcript.
+	if (
+		isTranscriptionCallback(request.nextUrl) &&
+		!verifyTranscriptionCallback(env.NEXTAUTH_SECRET, request.nextUrl)
+	)
+		return Response.json('invalid signature', { status: 401 })
 	const startedAt = Date.now()
 	const webhookRequest = request.clone()
 	const { request: protectedRequest, userId } =
