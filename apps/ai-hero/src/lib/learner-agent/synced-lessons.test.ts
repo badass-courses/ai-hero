@@ -1,4 +1,5 @@
 import type { WorkshopAccessTree } from '@/lib/workshop-access-tree'
+import type { Workshop } from '@/lib/workshops'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
@@ -119,7 +120,9 @@ const workshop = {
 	})),
 }
 
-function arrangeWorkshop(fixture: typeof workshop) {
+function arrangeWorkshop(
+	fixture: Omit<typeof workshop, 'fields'> & Pick<Workshop, 'fields'>,
+) {
 	mocks.getWorkshop.mockResolvedValue(fixture)
 	mocks.getWorkshopAccessTree.mockResolvedValue({
 		id: fixture.id,
