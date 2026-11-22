@@ -11,7 +11,8 @@ const DICTIONARY_FRONTMATTER_TIMEOUT_MS = 5000
 const DICTIONARY_COMMIT_FEED_TIMEOUT_MS = 3000
 const DICTIONARY_COMMIT_API_TIMEOUT_MS = 3000
 const DICTIONARY_SOURCE_REF_MEMO_MS = 5 * 60 * 1000
-const DICTIONARY_CACHE_TAG = 'ai-coding-dictionary'
+const DICTIONARY_MEMO_MS = Math.min(60, DICTIONARY_REVALIDATE_SECONDS) * 1000
+export const DICTIONARY_CACHE_TAG = 'ai-coding-dictionary'
 
 export type DictionarySection = {
 	title: string
@@ -475,7 +476,7 @@ async function loadDictionary(): Promise<DictionaryData> {
 	return parseDictionaryReadme(readme, frontmatterByPath, sourceRef.updatedAt)
 }
 
-export const getAiCodingDictionary = unstable_cache(
+const getCachedAiCodingDictionary = unstable_cache(
 	loadDictionary,
 	['ai-coding-dictionary-github-readme-v2'],
 	{
@@ -483,6 +484,45 @@ export const getAiCodingDictionary = unstable_cache(
 		tags: [DICTIONARY_CACHE_TAG],
 	},
 )
+
+// The tag still revalidates the Data Cache. This memo adds at most its TTL
+// of staleness per instance; explicit revalidations also clear it locally.
+let dictionaryMemo:
+	| { promise: Promise<DictionaryData> }
+	| { value: DictionaryData; resolvedAt: number }
+	| undefined
+
+export function clearAiCodingDictionaryMemo() {
+	dictionaryMemo = undefined
+}
+
+/** Returns a shared snapshot. Callers must not mutate it. */
+export function getAiCodingDictionary(): Promise<DictionaryData> {
+	if (dictionaryMemo) {
+		if ('promise' in dictionaryMemo) return dictionaryMemo.promise
+		if (Date.now() - dictionaryMemo.resolvedAt < DICTIONARY_MEMO_MS) {
+			return Promise.resolve(dictionaryMemo.value)
+		}
+	}
+
+	const pending: { promise: Promise<DictionaryData> } = {
+		promise: getCachedAiCodingDictionary().then(
+			(value) => {
+				// A load started before invalidation must not refill the memo.
+				if (dictionaryMemo === pending) {
+					dictionaryMemo = { value, resolvedAt: Date.now() }
+				}
+				return value
+			},
+			(error: unknown) => {
+				if (dictionaryMemo === pending) clearAiCodingDictionaryMemo()
+				throw error
+			},
+		),
+	}
+	dictionaryMemo = pending
+	return pending.promise
+}
 
 export async function getAiCodingDictionaryEntry(slug: string) {
 	const dictionary = await getAiCodingDictionary()

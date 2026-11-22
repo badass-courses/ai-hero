@@ -1,4 +1,8 @@
 import { revalidateTag } from 'next/cache'
+import {
+	DICTIONARY_CACHE_TAG,
+	clearAiCodingDictionaryMemo,
+} from '@/lib/ai-coding-dictionary'
 import { indexAiCodingDictionaryToTypesense } from '@/lib/ai-coding-dictionary-typesense'
 
 import { AI_CODING_DICTIONARY_SOURCE_CHANGED_EVENT } from '../events/ai-coding-dictionary'
@@ -13,11 +17,14 @@ export const aiCodingDictionaryIndex = inngest.createFunction(
 	{ event: AI_CODING_DICTIONARY_SOURCE_CHANGED_EVENT },
 	async ({ event, step }) => {
 		await step.run('revalidate dictionary cache', async () => {
-			revalidateTag('ai-coding-dictionary', 'max')
+			revalidateTag(DICTIONARY_CACHE_TAG, 'max')
+			clearAiCodingDictionaryMemo()
 			return { revalidated: true }
 		})
 
 		const result = await step.run('index dictionary to typesense', async () => {
+			// This step can run on a different instance than revalidation.
+			clearAiCodingDictionaryMemo()
 			return indexAiCodingDictionaryToTypesense({ deleteFirst: true })
 		})
 
