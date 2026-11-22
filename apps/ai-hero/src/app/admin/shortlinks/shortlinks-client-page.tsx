@@ -3,10 +3,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import {
-	createShortlink,
-	deleteShortlink,
-	updateShortlink,
-} from '@/lib/shortlinks-query'
+	createShortlinkAction as createShortlink,
+	deleteShortlinkAction as deleteShortlink,
+	updateShortlinkAction as updateShortlink,
+} from '@/lib/shortlinks-actions'
 import {
 	RecentClickStats,
 	type ShortlinkMetadata,

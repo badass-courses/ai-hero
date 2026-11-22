@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { env } from '@/env.mjs'
-import { isSlugAvailable } from '@/lib/shortlinks-query'
+import { isSlugAvailableAction as isSlugAvailable } from '@/lib/shortlinks-actions'
 import {
 	CreateShortlinkSchema,
 	Shortlink,
