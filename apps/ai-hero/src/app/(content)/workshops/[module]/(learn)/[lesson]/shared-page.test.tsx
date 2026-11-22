@@ -224,6 +224,11 @@ describe('LessonPage office-hours authorization context', () => {
 			expect(mocks.getLessonVideoPlaybackResource).not.toHaveBeenCalled()
 		}
 
+		expect(mocks.getAbilityForResource).toHaveBeenCalledWith(
+			'lesson-1',
+			'workshop-1',
+			timings,
+		)
 		expect(mocks.info).toHaveBeenCalledOnce()
 		expect(mocks.info).toHaveBeenCalledWith('perf.lesson.timings', {
 			lessonType: 'lesson',

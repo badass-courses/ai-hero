@@ -26,6 +26,7 @@ import { noTimings, type Timings } from '@/server/perf'
 import { compileMDX } from '@/utils/compile-mdx'
 import {
 	getAbilityForResource,
+	type AbilityTimingPart,
 	type AbilityForResource,
 } from '@/utils/get-current-ability-rules'
 
@@ -49,6 +50,7 @@ export type LessonTimingPart =
 	| 'videoPlaybackResource'
 	| 'videoSavedPosition'
 	| 'videoSessionExtract'
+	| AbilityTimingPart
 
 type LessonTimings = Timings<LessonTimingPart>
 
@@ -74,7 +76,7 @@ export async function LessonPage({
 	}
 
 	const abilityLoader = timings.measure('ability', () =>
-		getAbilityForResource(params.lesson, params.module),
+		getAbilityForResource(params.lesson, params.module, timings),
 	)
 
 	const ability = await abilityLoader

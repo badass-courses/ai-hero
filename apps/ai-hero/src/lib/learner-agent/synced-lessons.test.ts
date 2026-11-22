@@ -26,7 +26,8 @@ vi.mock('@/db', () => ({
 	},
 }))
 vi.mock('@/server/auth', () => ({ getServerAuthSession: mocks.getSession }))
-vi.mock('@/server/perf', () => ({
+vi.mock('@/server/perf', async (original) => ({
+	...(await original<typeof import('@/server/perf')>()),
 	measureIfSlow: ({ operation }: { operation: () => unknown }) => operation(),
 }))
 vi.mock('@/lib/entitlements-query', () => ({
@@ -39,7 +40,7 @@ vi.mock('@/lib/workshops-query', () => ({
 	getWorkshop: mocks.getWorkshop,
 	getCachedMinimalWorkshop: mocks.getWorkshop,
 	getCachedWorkshopNavigation: mocks.getNavigation,
-	getWorkshopsForLesson: async () => [module],
+	getWorkshopsForLesson: async () => [workshop],
 }))
 vi.mock('@/lib/lessons-query', () => ({
 	getLesson: mocks.getLesson,
@@ -97,7 +98,7 @@ const lessons = titles.map((title, index) => ({
 		visibility: 'unlisted' as const,
 	},
 }))
-const module = {
+const workshop = {
 	...base.module,
 	id: WORKSHOP_ID,
 	fields: {
@@ -145,8 +146,8 @@ function agent() {
 
 beforeEach(() => {
 	vi.clearAllMocks()
-	mocks.getWorkshop.mockResolvedValue(module)
-	mocks.getNavigation.mockResolvedValue(module)
+	mocks.getWorkshop.mockResolvedValue(workshop)
+	mocks.getNavigation.mockResolvedValue(workshop)
 	mocks.getLesson.mockImplementation(
 		async (id: string) =>
 			lessons.find((lesson) => lesson.id === id || lesson.fields.slug === id) ??
@@ -166,7 +167,7 @@ beforeEach(() => {
 		slug: SLUG,
 		title: 'Domain Language',
 		state: 'published',
-		startsAt: module.fields.startsAt,
+		startsAt: workshop.fields.startsAt,
 	})
 	mocks.getPurchasedResources.mockResolvedValue([{ resourceId: WORKSHOP_ID }])
 })
@@ -214,11 +215,11 @@ describe('course-synced lessons through the learner MCP capabilities', () => {
 			fields: { ...lessons[0]!.fields, slug: 'ordinary-draft' },
 		}
 		const withOrdinaryDraft = {
-			...module,
+			...workshop,
 			resources: [
-				...module.resources,
+				...workshop.resources,
 				{
-					...module.resources[0]!,
+					...workshop.resources[0]!,
 					resourceId: ordinaryDraft.id,
 					resource: ordinaryDraft,
 				},
@@ -285,8 +286,8 @@ describe('course-synced lessons through the learner MCP capabilities', () => {
 
 	it('hides lessons under an unpublished workshop from outline, read and search', async () => {
 		mocks.getWorkshop.mockResolvedValue({
-			...module,
-			fields: { ...module.fields, state: 'draft' },
+			...workshop,
+			fields: { ...workshop.fields, state: 'draft' },
 		})
 		const { agent: api } = agent()
 		expect(await api.invoke('course_outline', { course: SLUG })).toMatchObject({
