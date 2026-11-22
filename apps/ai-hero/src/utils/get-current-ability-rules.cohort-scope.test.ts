@@ -57,7 +57,8 @@ vi.mock('@/lib/workshops-query', () => ({
 	getCachedMinimalWorkshop: mocks.getWorkshop,
 }))
 vi.mock('@/server/auth', () => ({ getServerAuthSession: mocks.getSession }))
-vi.mock('@/server/perf', () => ({
+vi.mock('@/server/perf', async (original) => ({
+	...(await original<typeof import('@/server/perf')>()),
 	measureIfSlow: ({ operation }: { operation: () => Promise<unknown> }) =>
 		operation(),
 }))

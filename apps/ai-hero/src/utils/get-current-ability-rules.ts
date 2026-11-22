@@ -1,4 +1,5 @@
 // App-specific implementation for coursebuilder
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { cache } from 'react'
 import { unstable_cache } from 'next/cache'
 import { headers } from 'next/headers'
@@ -8,7 +9,7 @@ import { getAllUserEntitlements } from '@/lib/entitlements-query'
 import { getCachedLesson, getLesson } from '@/lib/lessons-query'
 import { getCachedMinimalWorkshop, getWorkshop } from '@/lib/workshops-query'
 import { getServerAuthSession } from '@/server/auth'
-import { measureIfSlow } from '@/server/perf'
+import { measureIfSlow, noTimings, type Timings } from '@/server/perf'
 import { subject } from '@casl/ability'
 
 // Import type without implementation
@@ -31,6 +32,42 @@ const getCachedEntitlementTypes = unstable_cache(
 	['entitlement-types'],
 	{ revalidate: 300, tags: ['entitlements'] },
 )
+
+export type AbilityTimingPart =
+	| 'abilityWave1'
+	| 'abilityWorkshop'
+	| 'abilityWave2'
+	| 'abilityPurchases'
+	| 'abilityEntitlements'
+	| 'abilityRules'
+	| 'abilityWrapperExtras'
+
+// The caller that starts the cached work owns its sub-timings. A cache hit
+// may omit them; never split or rerun a lookup to fill an optional sample.
+const abilityTimings = new AsyncLocalStorage<Timings<AbilityTimingPart>>()
+
+function startAbilityTiming(part: AbilityTimingPart) {
+	try {
+		const stop = abilityTimings.getStore()?.start(part)
+		if (!stop) return
+		return () => {
+			try {
+				stop()
+			} catch {
+				// Telemetry must not affect the access result.
+			}
+		}
+	} catch {
+		// A failed clock must not prevent the lookup from starting.
+	}
+}
+
+function timeAbilityLookup<T>(part: AbilityTimingPart, lookup: () => Promise<T>) {
+	const stop = startAbilityTiming(part)
+	const result = lookup()
+	if (stop) void result.then(stop, stop)
+	return result
+}
 
 const getCurrentAbilityRulesCached = cache(
 	async (lessonId?: string, moduleId?: string, orgId?: string) => {
@@ -61,30 +98,42 @@ const getCurrentAbilityRulesCached = cache(
 				// No Kit subscriber lookup here: `defineRulesForPurchases` grants
 				// nothing from a subscriber, and the cookie re-fetch made this the
 				// busiest Kit reader on the site for a value nothing read.
+				const stopWave1 = startAbilityTiming('abilityWave1')
 				const [{ session }, lessonResource, moduleResource, entitlementTypes] =
 					await Promise.all([
 						getServerAuthSession(),
 						lessonId ? getCachedLesson(lessonId) : null,
-						moduleId ? getWorkshop(moduleId) : null,
+						moduleId
+							? timeAbilityLookup('abilityWorkshop', () => getWorkshop(moduleId))
+							: null,
 						getCachedEntitlementTypes(),
 					])
+				stopWave1?.()
 
+				const stopWave2 = startAbilityTiming('abilityWave2')
+				const userId = session?.user?.id
 				const [sectionResource, purchases, activeEntitlements] =
 					await Promise.all([
 						lessonResource && moduleResource
 							? getResourceSection(lessonResource.id, moduleResource)
 							: null,
-						courseBuilderAdapter.getPurchasesForUser(session?.user?.id),
-						session?.user?.id
-							? getAllUserEntitlements(session.user.id)
+						timeAbilityLookup('abilityPurchases', () =>
+							courseBuilderAdapter.getPurchasesForUser(userId),
+						),
+						userId
+							? timeAbilityLookup('abilityEntitlements', () =>
+									getAllUserEntitlements(userId),
+								)
 							: ([] as Awaited<ReturnType<typeof getAllUserEntitlements>>),
 					])
+				stopWave2?.()
 
 				const allModuleResourceIds = moduleResource
 					? getWorkshopResourceIds(moduleResource)
 					: []
 
-				return defineRulesForPurchases({
+				const stopRules = startAbilityTiming('abilityRules')
+				const rules = defineRulesForPurchases({
 					user: {
 						...session?.user,
 						id: session?.user?.id || '',
@@ -103,6 +152,8 @@ const getCurrentAbilityRulesCached = cache(
 					...(purchases && { purchases }),
 					allModuleResourceIds,
 				})
+				stopRules?.()
+				return rules
 			},
 		})
 	},
@@ -125,10 +176,18 @@ const getAbilityForResourceCached = cache(
 	async (lessonId: string | undefined, moduleId: string) => {
 		// Independent of each other — same two-wave reasoning as the rules
 		// resolution above.
+		const rulesLoader = getCurrentAbilityRulesCached(lessonId, moduleId)
+		const stopExtras = startAbilityTiming('abilityWrapperExtras')
+		const workshopLoader = getCachedMinimalWorkshop(moduleId)
+		const lessonLoader = lessonId ? getLesson(lessonId) : null
+		// Observe the extras without putting a new promise on the access path.
+		if (stopExtras) {
+			void Promise.all([workshopLoader, lessonLoader]).then(stopExtras, stopExtras)
+		}
 		const [abilityRules, workshop, lesson] = await Promise.all([
-			getCurrentAbilityRulesCached(lessonId, moduleId),
-			getCachedMinimalWorkshop(moduleId),
-			lessonId ? getLesson(lessonId) : null,
+			rulesLoader,
+			workshopLoader,
+			lessonLoader,
 		])
 
 		const ability = createAppAbility(abilityRules || [])
@@ -159,6 +218,7 @@ const getAbilityForResourceCached = cache(
 export async function getAbilityForResource(
 	lessonId: string | undefined,
 	moduleId: string,
+	timings: Timings<AbilityTimingPart> = noTimings,
 ): Promise<
 	Omit<AbilityForResource, 'canView'> & {
 		canViewWorkshop: boolean
@@ -166,7 +226,15 @@ export async function getAbilityForResource(
 		isPendingOpenAccess: boolean
 	}
 > {
-	return getAbilityForResourceCached(lessonId, moduleId)
+	if (timings === noTimings) {
+		return getAbilityForResourceCached(lessonId, moduleId)
+	}
+	return abilityTimings.run(
+		timings,
+		getAbilityForResourceCached,
+		lessonId,
+		moduleId,
+	)
 }
 
 // Re-export the type for compatibility

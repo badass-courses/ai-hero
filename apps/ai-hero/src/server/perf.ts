@@ -21,11 +21,15 @@ const DEFAULT_SAMPLE_RATE = 0.02
 type TimingData = Record<string, string | boolean | number>
 
 export type Timings<Part extends string> = {
+	start(part: Part): () => void
 	measure<T>(part: Part, operation: () => Promise<T>): Promise<T>
 	finish(data: TimingData, required: readonly Part[]): void
 }
 
+const stopNoTiming = () => {}
+
 export const noTimings: Timings<string> = {
+	start: () => stopNoTiming,
 	measure: (_part, operation) => operation(),
 	finish: () => {},
 }
@@ -63,27 +67,32 @@ export function sampleTimings<Part extends string>(
 		}
 	}
 
-	return {
-		measure<T>(part: Part, operation: () => Promise<T>): Promise<T> {
-			if (closed) return operation()
-			let start: number
+	function start(part: Part) {
+		if (closed) return stopNoTiming
+		let startedAt: number
+		try {
+			startedAt = performance.now()
+		} catch {
+			closed = true
+			return stopNoTiming
+		}
+
+		return () => {
+			if (closed) return
 			try {
-				start = performance.now()
+				durations.set(part, performance.now() - startedAt)
+				void emitIfReady()
 			} catch {
 				closed = true
-				return operation()
 			}
+		}
+	}
 
-			function stop() {
-				if (closed) return
-				try {
-					durations.set(part, performance.now() - start)
-					void emitIfReady()
-				} catch {
-					closed = true
-				}
-			}
-
+	return {
+		start,
+		measure<T>(part: Part, operation: () => Promise<T>): Promise<T> {
+			const stop = start(part)
+			if (stop === stopNoTiming) return operation()
 			try {
 				return operation().finally(stop)
 			} catch (error) {
