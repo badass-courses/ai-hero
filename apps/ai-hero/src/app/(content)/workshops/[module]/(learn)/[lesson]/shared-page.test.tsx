@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
 	getAiCodingDictionary: vi.fn(),
 	redirect: vi.fn(),
 	notFound: vi.fn(),
+	info: vi.fn(),
 	warn: vi.fn(),
 	debug: vi.fn(),
 	getLessonVideoPlaybackResource: vi.fn(),
@@ -38,7 +39,7 @@ vi.mock('@/lib/ai-coding-dictionary', () => ({
 
 vi.mock('@/lib/lessons-query', () => ({
 	getLessonVideoPlaybackResource: mocks.getLessonVideoPlaybackResource,
-	getLessonVideoTranscript: vi.fn(),
+	getLessonVideoTranscript: vi.fn().mockResolvedValue(null),
 }))
 
 vi.mock('@/lib/session-extract-query', () => ({
@@ -61,7 +62,7 @@ vi.mock('@/env.mjs', () => ({
 }))
 
 vi.mock('@/server/logger', () => ({
-	log: { warn: mocks.warn, debug: mocks.debug },
+	log: { info: mocks.info, warn: mocks.warn, debug: mocks.debug },
 }))
 
 vi.mock('@/server/auth', () => ({
@@ -110,7 +111,8 @@ vi.mock('../../../_components/lesson-body', () => ({
 	LessonBody: () => null,
 }))
 
-import { LessonPage } from './shared-page'
+import { LessonPage, type LessonTimingPart } from './shared-page'
+import { sampleTimings } from '@/server/perf'
 import { createAppAbility, defineRulesForPurchases } from '@/ability'
 import { cohortAbilityFixture } from '@/ability/test-fixtures/cohort-content-scope'
 import { subject } from '@casl/ability'
@@ -161,8 +163,9 @@ async function resolveServerTree(node: ReactNode): Promise<void> {
 	}
 }
 
-function renderLessonPage() {
+function renderLessonPage(timings?: Parameters<typeof LessonPage>[0]['timings']) {
 	return LessonPage({
+		timings,
 		lesson,
 		workshop,
 		params: { module: 'workshop-1', lesson: 'lesson-1' },
@@ -190,6 +193,47 @@ describe('LessonPage office-hours authorization context', () => {
 		mocks.getSignedLessonPlayback.mockResolvedValue({ muxPlaybackId: 'playback-1' })
 		mocks.source.mockReturnValue(null)
 		mocks.controls.mockReturnValue(null)
+	})
+
+	it.each([true, false])('logs one sample for canViewLesson=%s', async (canViewLesson) => {
+		vi.mocked(getServerAuthSession).mockResolvedValueOnce({
+			session: null,
+			ability: createAppAbility(),
+		})
+		mocks.getAbilityForResource.mockResolvedValue({ ...baseAbility, canViewLesson })
+		const timings = sampleTimings<LessonTimingPart>('perf.lesson.timings', 1)
+		await timings.measure('wrapperTotal', async () => null)
+
+		const elapsed = expect.any(Number)
+		let renderParts = {}
+		if (canViewLesson) {
+			await resolveServerTree(await renderLessonPage(timings))
+			renderParts = {
+				dictionary: elapsed,
+				compileMdx: elapsed,
+				videoRegistration: elapsed,
+				videoPlaybackResource: elapsed,
+				videoSavedPosition: elapsed,
+				videoSessionExtract: elapsed,
+				videoPlaybackSetup: elapsed,
+				transcript: elapsed,
+			}
+		} else {
+			await expect(renderLessonPage(timings)).rejects.toThrow('NEXT_REDIRECT')
+			expect(mocks.compileMDX).not.toHaveBeenCalled()
+			expect(mocks.getLessonVideoPlaybackResource).not.toHaveBeenCalled()
+		}
+
+		expect(mocks.info).toHaveBeenCalledOnce()
+		expect(mocks.info).toHaveBeenCalledWith('perf.lesson.timings', {
+			lessonType: 'lesson',
+			signedIn: false,
+			canViewLesson,
+			wrapperTotal: elapsed,
+			ability: elapsed,
+			session: elapsed,
+			...renderParts,
+		})
 	})
 
 	it.each([
