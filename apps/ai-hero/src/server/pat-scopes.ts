@@ -141,10 +141,14 @@ export function canCreateShortlink(ability: ScopeAbility) {
 	return ability.can('create', 'Content') || ability.can('manage', 'Shortlink')
 }
 
+// Repointing or deleting an existing link is a manager action. A type-level
+// Content update/delete check let any contributor or content-scoped token
+// rewrite every campaign link (security desk sec-047). Creating new links
+// stays contributor-level above.
 export function canUpdateShortlink(ability: ScopeAbility) {
-	return ability.can('update', 'Content') || ability.can('manage', 'Shortlink')
+	return canManageShortlinks(ability)
 }
 
 export function canDeleteShortlink(ability: ScopeAbility) {
-	return ability.can('delete', 'Content') || ability.can('manage', 'Shortlink')
+	return canManageShortlinks(ability)
 }

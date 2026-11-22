@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
 	createShortlink,
 	createShortlinkAttribution,
+	deleteShortlink,
 	getShortlinkBySlug,
 	recordClick,
 	updateShortlink,
@@ -254,7 +255,26 @@ describe('shortlink metadata persistence', () => {
 		).resolves.toEqual(created)
 	})
 
-	it('returns the updated shortlink to an update-Content-only ability', async () => {
+	it('refuses to repoint or delete a link for an update/delete-Content-only ability (sec-047)', async () => {
+		await expect(
+			updateShortlink(
+				{ id: 'shortlink_123', url: 'https://www.aihero.dev/new' },
+				updateContentOnlyAuth,
+			),
+		).rejects.toThrow('Unauthorized')
+		await expect(
+			deleteShortlink('shortlink_123', {
+				ability: {
+					can: (action: string, subj: unknown) =>
+						action === 'delete' && subj === 'Content',
+				} as any,
+				userId: 'user_1',
+			}),
+		).rejects.toThrow('Unauthorized')
+		expect(mocks.findFirst).not.toHaveBeenCalled()
+	})
+
+	it('lets a shortlinks:manage token repoint a link', async () => {
 		const updated = {
 			id: 'shortlink_123',
 			slug: 'cc004-warmup-01',
@@ -275,7 +295,7 @@ describe('shortlink metadata persistence', () => {
 		await expect(
 			updateShortlink(
 				{ id: 'shortlink_123', url: 'https://www.aihero.dev/new' },
-				updateContentOnlyAuth,
+				scopedShortlinkAuth,
 			),
 		).resolves.toEqual(updated)
 	})
