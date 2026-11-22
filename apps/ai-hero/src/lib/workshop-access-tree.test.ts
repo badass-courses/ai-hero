@@ -169,6 +169,7 @@ describe('workshop access tree', () => {
 			const [original, projected] = mocks.findFirst.mock.calls.map(([query]) =>
 				new MySqlDialect().sqlToQuery(query.where),
 			)
+			if (!projected) throw new Error('Expected a projected query')
 			expect(projected).toEqual(original)
 			expect(projected.sql).toContain('$.slug')
 			expect(projected.sql).toContain('$.visibility')

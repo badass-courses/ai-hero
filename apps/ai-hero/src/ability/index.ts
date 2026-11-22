@@ -1,9 +1,6 @@
 import { Lesson } from '@/lib/lessons'
 import { BILLING_ADMIN_ROLE } from '@/lib/team-roles'
-import type {
-	WorkshopAccessBranch,
-	WorkshopAccessTree,
-} from '@/lib/workshop-access-tree'
+import type { WorkshopAccessTree } from '@/lib/workshop-access-tree'
 import {
 	AbilityBuilder,
 	createMongoAbility,
@@ -258,7 +255,7 @@ type ViewerAbilityInput = {
 	subscriber?: any
 	lesson?: Lesson
 	module?: WorkshopAccessTree
-	section?: Pick<WorkshopAccessBranch, 'resources'>
+	section?: { resources: readonly { resourceId: string }[] | null }
 	isSolution?: boolean
 	country?: string
 	purchases?: Purchase[]
