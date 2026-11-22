@@ -1,4 +1,7 @@
-'use server'
+// Server-only, and deliberately not 'use server': these functions trust the
+// `auth` argument, so they must never be callable from a browser. Client code
+// uses shortlinks-actions.ts, which takes auth from the session (sec-047).
+import 'server-only'
 
 import { revalidateTag } from 'next/cache'
 import { randomUUID } from 'node:crypto'

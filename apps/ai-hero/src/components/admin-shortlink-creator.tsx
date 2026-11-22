@@ -3,7 +3,7 @@
 import * as React from 'react'
 import { createAppAbility } from '@/ability'
 import { env } from '@/env.mjs'
-import { getOrCreateShortlinkForPage } from '@/lib/shortlinks-query'
+import { getOrCreateShortlinkForPageAction as getOrCreateShortlinkForPage } from '@/lib/shortlinks-actions'
 import { api } from '@/trpc/react'
 import { Link2, Loader2 } from 'lucide-react'
 
