@@ -1,25 +1,26 @@
-import { Module } from '@/lib/module'
-import type { Workshop } from '@/lib/workshops'
-
-import type { ContentResource } from '@coursebuilder/core/schemas'
+import type {
+	WorkshopAccessBranch,
+	WorkshopAccessTree,
+} from '@/lib/workshop-access-tree'
 
 export async function getResourceSection(
 	resourceId: string,
-	moduleResource?: Workshop | null,
-): Promise<ContentResource | null> {
+	moduleResource?: WorkshopAccessTree | null,
+): Promise<WorkshopAccessBranch | null> {
 	if (!moduleResource?.resources) return null
-	let sectionData = null
+	let sectionData: WorkshopAccessBranch | null = null
 
 	moduleResource.resources.forEach((section) => {
-		if (section?.resource?.type !== 'section') return
+		const resource = section?.resource
+		if (resource?.type !== 'section') return
 
 		if (section.resourceId === resourceId) {
-			sectionData = section.resource
+			sectionData = resource
 		}
 
-		section.resource.resources.forEach((lesson: { resourceId: string }) => {
+		resource.resources.forEach((lesson) => {
 			if (lesson.resourceId === resourceId) {
-				sectionData = section.resource
+				sectionData = resource
 			}
 		})
 	})
