@@ -1,7 +1,9 @@
+import type { WorkshopAccessTree } from '@/lib/workshop-access-tree'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
 	getWorkshop: vi.fn(),
+	getWorkshopAccessTree: vi.fn<[], Promise<WorkshopAccessTree>>(),
 	getLesson: vi.fn(),
 	getEntitlements: vi.fn(),
 	getNavigation: vi.fn(),
@@ -38,6 +40,7 @@ vi.mock('@/lib/library-query', () => ({
 }))
 vi.mock('@/lib/workshops-query', () => ({
 	getWorkshop: mocks.getWorkshop,
+	getWorkshopAccessTree: mocks.getWorkshopAccessTree,
 	getCachedMinimalWorkshop: mocks.getWorkshop,
 	getCachedWorkshopNavigation: mocks.getNavigation,
 	getWorkshopsForLesson: async () => [workshop],
@@ -116,6 +119,20 @@ const workshop = {
 	})),
 }
 
+function arrangeWorkshop(fixture: typeof workshop) {
+	mocks.getWorkshop.mockResolvedValue(fixture)
+	mocks.getWorkshopAccessTree.mockResolvedValue({
+		id: fixture.id,
+		type: fixture.type,
+		fields: { startsAt: fixture.fields.startsAt },
+		resources: fixture.resources.map(({ resource, ...join }) => ({
+			...join,
+			resource: { id: resource.id, type: resource.type, resources: [] },
+		})),
+		resourceProducts: fixture.resourceProducts,
+	})
+}
+
 function agent() {
 	const entitlements = makeEntitlementsPort({ baseUrl: BASE, country: 'US' })
 	const content = makeContentPort({
@@ -146,7 +163,7 @@ function agent() {
 
 beforeEach(() => {
 	vi.clearAllMocks()
-	mocks.getWorkshop.mockResolvedValue(workshop)
+	arrangeWorkshop(workshop)
 	mocks.getNavigation.mockResolvedValue(workshop)
 	mocks.getLesson.mockImplementation(
 		async (id: string) =>
@@ -225,7 +242,7 @@ describe('course-synced lessons through the learner MCP capabilities', () => {
 				},
 			],
 		}
-		mocks.getWorkshop.mockResolvedValue(withOrdinaryDraft)
+		arrangeWorkshop(withOrdinaryDraft)
 		mocks.getLesson.mockImplementation(
 			async (id: string) =>
 				[...lessons, ordinaryDraft].find((lesson) => lesson.id === id) ?? null,
@@ -285,7 +302,7 @@ describe('course-synced lessons through the learner MCP capabilities', () => {
 	})
 
 	it('hides lessons under an unpublished workshop from outline, read and search', async () => {
-		mocks.getWorkshop.mockResolvedValue({
+		arrangeWorkshop({
 			...workshop,
 			fields: { ...workshop.fields, state: 'draft' },
 		})
