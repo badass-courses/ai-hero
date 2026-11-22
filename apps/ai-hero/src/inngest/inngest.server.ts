@@ -186,6 +186,8 @@ import {
 	StripeCheckoutSessionCompleted,
 } from '@coursebuilder/core/events/stripe'
 import DeepgramProvider from '@coursebuilder/core/providers/deepgram'
+
+import { signedTranscriptionCallbackUrl } from '@/lib/transcription-callback-signature'
 import { MockOpenAIProvider } from '@coursebuilder/core/providers/openai'
 
 import {
@@ -355,6 +357,7 @@ const middleware = createInngestMiddleware({
 	transcriptProvider: DeepgramProvider({
 		apiKey: env.DEEPGRAM_API_KEY,
 		callbackUrl: `${callbackBase}/api/coursebuilder/webhook/deepgram`,
+		getCallbackUrl: signedTranscriptionCallbackUrl(env.NEXTAUTH_SECRET),
 	}),
 	paymentProvider: stripeProvider,
 	emailProvider,
