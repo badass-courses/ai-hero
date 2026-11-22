@@ -1,9 +1,12 @@
 import type { Metadata, ResolvingMetadata } from 'next'
 import { metaDescription } from '@/lib/meta-description'
-import { LessonPage } from '@/app/(content)/workshops/[module]/(learn)/[lesson]/shared-page'
+import {
+	LessonPage,
+	type LessonTimingPart,
+} from '@/app/(content)/workshops/[module]/(learn)/[lesson]/shared-page'
 import { getCachedLesson } from '@/lib/lessons-query'
 import { getCachedMinimalWorkshop } from '@/lib/workshops-query'
-import { measureIfSlow } from '@/server/perf'
+import { measureIfSlow, sampleTimings } from '@/server/perf'
 import { getOGImageUrlForResource } from '@/utils/get-og-image-url-for-resource'
 
 // Lesson bodies and playback IDs are paid data. Keep this route request-bound
@@ -46,24 +49,30 @@ type Props = {
 }
 
 export default async function LessonPageWrapper(props: Props) {
+	const timings = sampleTimings<LessonTimingPart>(
+		'perf.lesson.timings',
+		Number(process.env.LESSON_TIMING_SAMPLE_RATE?.trim() || NaN),
+	)
 	return measureIfSlow({
 		event: 'perf.lesson.page-wrapper.slow',
 		spanName: 'lesson.page-wrapper.render',
 		thresholdMs: 150,
-		operation: async () => {
-			const searchParams = await props.searchParams
-			const params = await props.params
-			const lesson = await getCachedLesson(params.lesson)
-			const workshop = await getCachedMinimalWorkshop(params.module)
+		operation: () =>
+			timings.measure('wrapperTotal', async () => {
+				const searchParams = await props.searchParams
+				const params = await props.params
+				const lesson = await getCachedLesson(params.lesson)
+				const workshop = await getCachedMinimalWorkshop(params.module)
 
-			return (
-				<LessonPage
-					searchParams={searchParams}
-					lesson={lesson}
-					params={params}
-					workshop={workshop}
-				/>
-			)
-		},
+				return (
+					<LessonPage
+						searchParams={searchParams}
+						lesson={lesson}
+						params={params}
+						workshop={workshop}
+						timings={timings}
+					/>
+				)
+			}),
 	})
 }

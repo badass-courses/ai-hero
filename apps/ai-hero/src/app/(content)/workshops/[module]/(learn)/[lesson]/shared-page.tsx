@@ -22,6 +22,7 @@ import { getPlaybackPositionForResource } from '@/lib/progress'
 import { deniedRedirectPath, lessonDenialReason } from '@/lib/lesson-denial'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
+import { noTimings, type Timings } from '@/server/perf'
 import { compileMDX } from '@/utils/compile-mdx'
 import {
 	getAbilityForResource,
@@ -33,12 +34,31 @@ import { cn } from '@coursebuilder/utils/cn'
 
 import { LessonBody } from '../../../_components/lesson-body'
 
+const accessTimingParts = ['wrapperTotal', 'ability', 'session'] as const
+const renderTimingParts = [
+	...accessTimingParts,
+	'dictionary',
+	'compileMdx',
+	'videoRegistration',
+	'videoPlaybackSetup',
+	'transcript',
+] as const
+
+export type LessonTimingPart =
+	| (typeof renderTimingParts)[number]
+	| 'videoPlaybackResource'
+	| 'videoSavedPosition'
+	| 'videoSessionExtract'
+
+type LessonTimings = Timings<LessonTimingPart>
+
 export async function LessonPage({
 	lesson,
 	problem,
 	params,
 	lessonType = 'lesson',
 	workshop,
+	timings = noTimings,
 }: {
 	params: { module: string; lesson: string }
 	exerciseLoader?: Promise<Lesson | null> | null | undefined
@@ -47,17 +67,25 @@ export async function LessonPage({
 	searchParams: { [key: string]: string | string[] | undefined }
 	lessonType?: 'lesson' | 'exercise' | 'solution'
 	workshop: MinimalWorkshop | null
+	timings?: LessonTimings
 }) {
 	if (!lesson) {
 		notFound()
 	}
 
-	const abilityLoader = getAbilityForResource(params.lesson, params.module)
+	const abilityLoader = timings.measure('ability', () =>
+		getAbilityForResource(params.lesson, params.module),
+	)
 
 	const ability = await abilityLoader
 	// `getServerAuthSession` is request-cached, and the ability above already
 	// read it, so this is not a second lookup.
-	const signedIn = Boolean((await getServerAuthSession())?.session?.user?.id)
+	const session = await timings.measure('session', getServerAuthSession)
+	const signedIn = Boolean(session?.session?.user?.id)
+	timings.finish(
+		{ lessonType, signedIn, canViewLesson: ability.canViewLesson },
+		ability.canViewLesson ? renderTimingParts : accessTimingParts,
+	)
 
 	if (!ability.canViewLesson) {
 		redirect(
@@ -86,7 +114,7 @@ export async function LessonPage({
 	// is strictly best-effort: hover cards are a nicety, and paid course material
 	// must never fail to render because a third-party read timed out. On failure
 	// the links stay plain links.
-	const mdxContentPromise = getAiCodingDictionary()
+	const mdxContentPromise = timings.measure('dictionary', getAiCodingDictionary)
 		.then(({ entries }) => entries)
 		.catch(async (error) => {
 			await log.warn('lesson.dictionary.unavailable', {
@@ -96,22 +124,24 @@ export async function LessonPage({
 			return null
 		})
 		.then((entries) =>
-			compileMDX(
-				lesson?.fields?.body || '',
-				{},
-				{},
-				{
-					lessonId: lesson.id,
-					// Request-bound route: the prerequisites block may render its
-					// remembered collapse state from the cookie.
-					prerequisitesStateCookie: true,
-					...(workshop && ability.canViewWorkshop
-						? { officeHoursWorkshopId: workshop.id }
-						: {}),
-					// Without the dictionary the auto-linker still links the pages
-					// it knows (Sandcastle's docs), which need no fetch.
-					dictionaryAutoLink: { entries: entries ?? [], maxLinks: 3 },
-				},
+			timings.measure('compileMdx', () =>
+				compileMDX(
+					lesson?.fields?.body || '',
+					{},
+					{},
+					{
+						lessonId: lesson.id,
+						// Request-bound route: the prerequisites block may render its
+						// remembered collapse state from the cookie.
+						prerequisitesStateCookie: true,
+						...(workshop && ability.canViewWorkshop
+							? { officeHoursWorkshopId: workshop.id }
+							: {}),
+						// Without the dictionary the auto-linker still links the pages
+						// it knows (Sandcastle's docs), which need no fetch.
+						dictionaryAutoLink: { entries: entries ?? [], maxLinks: 3 },
+					},
+				),
 			),
 		)
 
@@ -139,6 +169,7 @@ export async function LessonPage({
 				lesson={lesson}
 				params={params}
 				lessonType={lessonType}
+				timings={timings}
 			/>
 			{/* Clips full-width rules drawn from inside the prose (the quiz's) at
 			    the column's edges. */}
@@ -190,6 +221,7 @@ export async function LessonPage({
 							<TranscriptContainer
 								lessonId={lesson?.id}
 								abilityLoader={abilityLoader}
+								timings={timings}
 							/>
 						</article>
 					</div>
@@ -210,9 +242,11 @@ async function TranscriptContainer({
 	lessonId,
 	className,
 	abilityLoader,
+	timings,
 }: {
 	lessonId: string
 	className?: string
+	timings: LessonTimings
 	abilityLoader: Promise<
 		Omit<AbilityForResource, 'canView'> & {
 			canViewWorkshop: boolean
@@ -221,7 +255,9 @@ async function TranscriptContainer({
 		}
 	>
 }) {
-	const transcriptLoader = getLessonVideoTranscript(lessonId)
+	const transcriptLoader = timings.measure('transcript', () =>
+		getLessonVideoTranscript(lessonId),
+	)
 
 	return (
 		<div className={cn('pt-4', className)}>
@@ -246,30 +282,44 @@ async function LessonVideoRegistration({
 	lessonType,
 	params,
 	workshopId,
+	timings,
 }: {
 	workshopId?: string
 	lesson: Lesson
 	lessonType: 'lesson' | 'exercise' | 'solution'
 	params: { module: string; lesson: string }
+	timings: LessonTimings
 }) {
 	const [videoPlaybackResource, savedPosition, sessionExtract] =
-		await Promise.all([
-			getLessonVideoPlaybackResource(lesson.id),
-			getPlaybackPositionForResource(lesson.id),
-			getLessonSessionExtract(lesson.id),
-		])
-	const [playback, sessionSkillLinks] = await Promise.all([
-		videoPlaybackResource
-			? getSignedLessonPlayback({
-					lessonId: lesson.id,
-					workshopId,
-					moduleSlug: params.module,
-					lessonSlug: params.lesson,
-					video: videoPlaybackResource,
-				})
-			: null,
-		getSessionSkillLinks(sessionExtract),
-	])
+		await timings.measure('videoRegistration', () =>
+			Promise.all([
+				timings.measure('videoPlaybackResource', () =>
+					getLessonVideoPlaybackResource(lesson.id),
+				),
+				timings.measure('videoSavedPosition', () =>
+					getPlaybackPositionForResource(lesson.id),
+				),
+				timings.measure('videoSessionExtract', () =>
+					getLessonSessionExtract(lesson.id),
+				),
+			]),
+		)
+	const [playback, sessionSkillLinks] = await timings.measure(
+		'videoPlaybackSetup',
+		() =>
+			Promise.all([
+				videoPlaybackResource
+					? getSignedLessonPlayback({
+							lessonId: lesson.id,
+							workshopId,
+							moduleSlug: params.module,
+							lessonSlug: params.lesson,
+							video: videoPlaybackResource,
+						})
+					: null,
+				getSessionSkillLinks(sessionExtract),
+			]),
+	)
 	const muxPlaybackId = playback?.muxPlaybackId ?? null
 	const videoResourceReference = lesson.resources?.find(({ resource }) => {
 		return resource.type === 'videoResource'
