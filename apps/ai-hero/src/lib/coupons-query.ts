@@ -15,6 +15,8 @@ import { and, eq } from 'drizzle-orm'
 import { v4 as uuidv4 } from 'uuid'
 import { z } from 'zod'
 
+import { CreateCouponInputSchema } from './coupon-create-input'
+
 const CouponInputSchema = z.object({
 	quantity: z.string(),
 	maxUses: z.coerce.number(),
@@ -115,9 +117,11 @@ export async function createOrFindFixedMerchantCoupon(
 	}
 }
 
-export async function createCoupon(input: CouponInput) {
+export async function createCoupon(rawInput: CouponInput) {
 	const { ability } = await getServerAuthSession()
-	if (ability.can('create', 'Content')) {
+	// Same gate as the /admin/coupons page.
+	if (ability.can('manage', 'all')) {
+		const input = CreateCouponInputSchema.parse(rawInput)
 		let merchantCouponId: string | null = null
 
 		const isSpecialCredit =
