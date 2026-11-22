@@ -7,7 +7,10 @@ import { createAppAbility, defineRulesForPurchases } from '@/ability'
 import { courseBuilderAdapter, db } from '@/db'
 import { getAllUserEntitlements } from '@/lib/entitlements-query'
 import { getCachedLesson, getLesson } from '@/lib/lessons-query'
-import { getCachedMinimalWorkshop, getWorkshop } from '@/lib/workshops-query'
+import {
+	getCachedMinimalWorkshop,
+	getWorkshopAccessTree,
+} from '@/lib/workshops-query'
 import { getServerAuthSession } from '@/server/auth'
 import { measureIfSlow, noTimings, type Timings } from '@/server/perf'
 import { subject } from '@casl/ability'
@@ -104,7 +107,9 @@ const getCurrentAbilityRulesCached = cache(
 						getServerAuthSession(),
 						lessonId ? getCachedLesson(lessonId) : null,
 						moduleId
-							? timeAbilityLookup('abilityWorkshop', () => getWorkshop(moduleId))
+							? timeAbilityLookup('abilityWorkshop', () =>
+									getWorkshopAccessTree(moduleId),
+								)
 							: null,
 						getCachedEntitlementTypes(),
 					])

@@ -53,7 +53,7 @@ vi.mock('@/lib/lessons-query', () => ({
 	getLesson: mocks.getLesson,
 }))
 vi.mock('@/lib/workshops-query', () => ({
-	getWorkshop: mocks.getWorkshop,
+	getWorkshopAccessTree: mocks.getWorkshop,
 	getCachedMinimalWorkshop: mocks.getWorkshop,
 }))
 vi.mock('@/server/auth', () => ({ getServerAuthSession: mocks.getSession }))

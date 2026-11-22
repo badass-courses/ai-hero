@@ -1,4 +1,7 @@
-import type { Workshop } from '@/lib/workshops'
+type ResourceEdge = {
+	resourceId: string
+	resource?: { id: string; resources?: readonly ResourceEdge[] | null } | null
+}
 
 /**
  * Recursively collects **all** `resource.id`s contained within a `Workshop`.
@@ -10,17 +13,17 @@ import type { Workshop } from '@/lib/workshops'
  *
  * NOTE: The returned list **does not** include the workshop id itself, only the child resources.
  *
- * @param workshop – Fully-hydrated workshop object returned from `getWorkshop()`
+ * @param workshop – Workshop membership tree (full or projected)
  * @returns A flat array of **unique** resource ids contained in the workshop.
  */
 export function getWorkshopResourceIds(
-	workshop: Workshop | null | undefined,
+	workshop: { resources: readonly ResourceEdge[] | null } | null | undefined,
 ): string[] {
 	if (!workshop?.resources) return []
 
 	const ids = new Set<string>()
 
-	function traverse(resources: any[]) {
+	function traverse(resources: readonly ResourceEdge[]) {
 		for (const mapping of resources) {
 			// `mapping.resourceId` is the id of the child resource in the join table
 			if (typeof mapping.resourceId === 'string') {

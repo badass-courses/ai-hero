@@ -21,6 +21,7 @@ import {
 	type Workshop,
 } from '@/lib/workshops'
 import { requireContentUpdate } from '@/lib/content-edit-guard'
+import type { WorkshopAccessTree } from '@/lib/workshop-access-tree'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
 import { measureIfSlow } from '@/server/perf'
@@ -384,6 +385,83 @@ export async function getWorkshop(moduleSlugOrId: string) {
 			}
 
 			return parsedWorkshop.data
+		},
+	})
+}
+
+/** Fresh membership read for the lesson ability check. Do not cache. */
+export async function getWorkshopAccessTree(
+	moduleSlugOrId: string,
+): Promise<WorkshopAccessTree | null> {
+	return measureIfSlow({
+		event: 'perf.workshop.fetch.slow',
+		spanName: 'workshop.fetch',
+		thresholdMs: 150,
+		data: { moduleSlugOrId },
+		operation: async () => {
+			const { ability } = await getServerAuthSession()
+			const visibility = ability.can('update', 'Content')
+				? ['public', 'private', 'unlisted']
+				: ['public', 'unlisted']
+
+			const workshop = await db.query.contentResource.findFirst({
+				where: and(
+					or(
+						eq(
+							sql`JSON_EXTRACT (${contentResource.fields}, "$.slug")`,
+							moduleSlugOrId,
+						),
+						eq(contentResource.id, moduleSlugOrId),
+					),
+					eq(contentResource.type, 'workshop'),
+					inArray(
+						sql`JSON_EXTRACT (${contentResource.fields}, "$.visibility")`,
+						visibility,
+					),
+				),
+				with: {
+					resources: {
+						with: {
+							resource: {
+								columns: { id: true, type: true },
+								with: {
+									resources: {
+										with: { resource: { columns: { id: true, type: true } } },
+										orderBy: asc(contentResourceResource.position),
+									},
+								},
+							},
+						},
+						orderBy: asc(contentResourceResource.position),
+					},
+					resourceProducts: true,
+				},
+			})
+
+			if (!workshop) return null
+
+			// The full root row keeps the legacy validation gate (e.g. an invalid
+			// title or startsAt must not make a previously rejected workshop grant
+			// access). The schema does not validate the joined resource payloads.
+			const parsed = WorkshopSchema.safeParse(workshop)
+			if (!parsed.success) {
+				void log.error('workshop.parse.error', {
+					scope: 'single',
+					moduleSlugOrId,
+					workshopId: workshop.id,
+					error: parsed.error.message,
+				})
+				return null
+			}
+
+			return {
+				id: parsed.data.id,
+				type: parsed.data.type,
+				fields: { startsAt: parsed.data.fields.startsAt },
+				// Keep the typed join rows intact, without Zod stripping extra columns.
+				resources: workshop.resources,
+				resourceProducts: workshop.resourceProducts,
+			}
 		},
 	})
 }

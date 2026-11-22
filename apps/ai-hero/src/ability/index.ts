@@ -1,6 +1,9 @@
 import { Lesson } from '@/lib/lessons'
 import { BILLING_ADMIN_ROLE } from '@/lib/team-roles'
-import type { Workshop } from '@/lib/workshops'
+import type {
+	WorkshopAccessBranch,
+	WorkshopAccessTree,
+} from '@/lib/workshop-access-tree'
 import {
 	AbilityBuilder,
 	createMongoAbility,
@@ -12,7 +15,6 @@ import z from 'zod'
 import {
 	ContentResource,
 	userSchema,
-	type ContentResourceResource,
 	type Purchase,
 } from '@coursebuilder/core/schemas'
 
@@ -255,8 +257,8 @@ type ViewerAbilityInput = {
 	user?: User | null
 	subscriber?: any
 	lesson?: Lesson
-	module?: Workshop
-	section?: ContentResource
+	module?: WorkshopAccessTree
+	section?: Pick<WorkshopAccessBranch, 'resources'>
 	isSolution?: boolean
 	country?: string
 	purchases?: Purchase[]
@@ -456,7 +458,7 @@ export function defineRulesForPurchases(
 			) {
 				// Add all lessons in this free section
 				moduleResource.resource.resources?.forEach(
-					(sectionResource: ContentResourceResource) => {
+					(sectionResource) => {
 						if (
 							sectionResource.resource?.type === 'lesson' ||
 							sectionResource.resource?.type === 'exercise' ||
