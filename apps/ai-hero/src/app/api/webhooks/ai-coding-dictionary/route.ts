@@ -2,13 +2,16 @@ import { revalidateTag } from 'next/cache'
 import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'node:crypto'
 import { env } from '@/env.mjs'
+import {
+	DICTIONARY_CACHE_TAG,
+	clearAiCodingDictionaryMemo,
+} from '@/lib/ai-coding-dictionary'
 
 const DICTIONARY_REPOS = [
 	'mattpocock/dictionary-of-ai-coding',
 	'mattpocock/ai-coding-dictionary',
 ]
 const DICTIONARY_REF = 'refs/heads/main'
-const DICTIONARY_CACHE_TAG = 'ai-coding-dictionary'
 
 function timingSafeEqual(a: string, b: string) {
 	const aBuffer = Buffer.from(a)
@@ -86,6 +89,7 @@ export async function POST(request: NextRequest) {
 	}
 
 	revalidateTag(DICTIONARY_CACHE_TAG, 'max')
+	clearAiCodingDictionaryMemo()
 
 	return NextResponse.json({
 		ok: true,

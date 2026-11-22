@@ -3,6 +3,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { env } from '@/env.mjs'
 import { AI_CODING_DICTIONARY_SOURCE_CHANGED_EVENT } from '@/inngest/events/ai-coding-dictionary'
 import { inngest } from '@/inngest/inngest.server'
+import {
+	DICTIONARY_CACHE_TAG,
+	clearAiCodingDictionaryMemo,
+} from '@/lib/ai-coding-dictionary'
 
 import { checkRevalidateAuth } from './revalidate-auth'
 
@@ -23,7 +27,8 @@ async function handle(request: NextRequest) {
 
 	revalidateTag(tag, 'max')
 
-	if (tag === 'ai-coding-dictionary') {
+	if (tag === DICTIONARY_CACHE_TAG) {
+		clearAiCodingDictionaryMemo()
 		await inngest.send({
 			name: AI_CODING_DICTIONARY_SOURCE_CHANGED_EVENT,
 			data: { source: 'revalidate' },

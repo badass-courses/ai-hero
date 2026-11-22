@@ -25,6 +25,7 @@ vi.mock('@octokit/rest', () => ({
 }))
 
 let getAiCodingDictionary: typeof import('./ai-coding-dictionary').getAiCodingDictionary
+let clearAiCodingDictionaryMemo: typeof import('./ai-coding-dictionary').clearAiCodingDictionaryMemo
 
 const COMMIT_SHA = '251fec7ec3b08059e4203863024e6123090a54e3'
 const UPDATED_AT = '2026-07-01T08:46:18.000Z'
@@ -99,6 +100,7 @@ describe('AI Coding Dictionary GitHub source', () => {
 		vi.resetModules()
 		const dictionaryModule = await import('./ai-coding-dictionary')
 		getAiCodingDictionary = dictionaryModule.getAiCodingDictionary
+		clearAiCodingDictionaryMemo = dictionaryModule.clearAiCodingDictionaryMemo
 		githubMocks.getBranch.mockReset().mockRejectedValue({ status: 403 })
 		githubMocks.getCommit.mockReset().mockResolvedValue({ data: commitData })
 		githubMocks.getContent.mockReset().mockRejectedValue({ status: 403 })
@@ -109,6 +111,54 @@ describe('AI Coding Dictionary GitHub source', () => {
 		vi.useRealTimers()
 		vi.unstubAllGlobals()
 		vi.restoreAllMocks()
+	})
+
+	it('shares an in-flight load and reuses the snapshot until 60 seconds after resolution', async () => {
+		vi.useFakeTimers()
+		vi.setSystemTime(0)
+		const fetchMock = mockRawFetch()
+		const pending = getAiCodingDictionary()
+		expect(getAiCodingDictionary()).toBe(pending)
+		vi.advanceTimersByTime(10_000)
+		const first = await pending
+		const fetchCount = fetchMock.mock.calls.length
+
+		vi.advanceTimersByTime(59_999)
+		await expect(getAiCodingDictionary()).resolves.toBe(first)
+		expect(fetchMock).toHaveBeenCalledTimes(fetchCount)
+
+		vi.advanceTimersByTime(1)
+		await expect(getAiCodingDictionary()).resolves.not.toBe(first)
+		expect(fetchMock).toHaveBeenCalledTimes(2 * fetchCount)
+	})
+
+	it('retries on the next call when a shared load rejects', async () => {
+		const error = new Error('GitHub is unavailable')
+		githubMocks.getCommit.mockRejectedValueOnce(error)
+		vi.stubGlobal('fetch', vi.fn().mockRejectedValue(error))
+		const pending = getAiCodingDictionary()
+		expect(getAiCodingDictionary()).toBe(pending)
+		await expect(pending).rejects.toBe(error)
+
+		mockRawFetch()
+		await expect(getAiCodingDictionary()).resolves.toMatchObject({
+			updatedAt: UPDATED_AT,
+		})
+	})
+
+	it('clears a resolved snapshot on invalidation', async () => {
+		mockRawFetch()
+		const first = await getAiCodingDictionary()
+		clearAiCodingDictionaryMemo()
+		await expect(getAiCodingDictionary()).resolves.not.toBe(first)
+	})
+
+	it('does not refill the memo from a load that was in flight at invalidation', async () => {
+		mockRawFetch()
+		const pending = getAiCodingDictionary()
+		clearAiCodingDictionaryMemo()
+		const first = await pending
+		await expect(getAiCodingDictionary()).resolves.not.toBe(first)
 	})
 
 	it('stores full SEO text separately without changing main UI/RSS descriptions', async () => {
@@ -245,6 +295,7 @@ describe('AI Coding Dictionary GitHub source', () => {
 			next: { revalidate: 3600, tags: ['ai-coding-dictionary'] },
 		})
 		expect(timeoutSpy.mock.calls.slice(0, 2)).toEqual([[3000], [3000]])
+		clearAiCodingDictionaryMemo()
 		await getAiCodingDictionary()
 		expect(githubMocks.getCommit).toHaveBeenCalledTimes(1)
 		expect(feedCalls(fetchMock)).toHaveLength(1)
@@ -267,6 +318,7 @@ describe('AI Coding Dictionary GitHub source', () => {
 			},
 		})
 		vi.advanceTimersByTime(1)
+		clearAiCodingDictionaryMemo()
 		await expect(getAiCodingDictionary()).resolves.toMatchObject({
 			updatedAt: '2026-07-02T08:46:18.000Z',
 		})
@@ -300,9 +352,12 @@ describe('AI Coding Dictionary GitHub source', () => {
 				return new Response('', { status: 503 })
 			})
 			vi.advanceTimersByTime(MEMO_MS)
+			const pending = getAiCodingDictionary()
+			clearAiCodingDictionaryMemo()
 			await expect(
-				Promise.all([getAiCodingDictionary(), getAiCodingDictionary()]),
+				Promise.all([pending, getAiCodingDictionary()]),
 			).resolves.toEqual([first, first])
+			clearAiCodingDictionaryMemo()
 			await expect(getAiCodingDictionary()).resolves.toEqual(first)
 			expect(githubMocks.getCommit).toHaveBeenCalledTimes(2)
 			expect(feedCalls(fetchMock)).toHaveLength(1)
@@ -311,6 +366,7 @@ describe('AI Coding Dictionary GitHub source', () => {
 			await getAiCodingDictionary()
 			expect(githubMocks.getCommit).toHaveBeenCalledTimes(2)
 			vi.advanceTimersByTime(1)
+			clearAiCodingDictionaryMemo()
 			await getAiCodingDictionary()
 			expect(warnSpy).toHaveBeenCalledTimes(2)
 			expect(githubMocks.getCommit).toHaveBeenCalledTimes(3)
