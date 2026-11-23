@@ -14,6 +14,7 @@ export function C5SaleSecondaryLink() {
 				Looking for a live cohort?{' '}
 				<Link
 					href="/s/c5-site-cta"
+					prefetch={false}
 					className="text-foreground underline underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
 				>
 					{C5_TITLE} is open now.

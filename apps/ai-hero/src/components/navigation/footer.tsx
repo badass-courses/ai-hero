@@ -115,6 +115,7 @@ function LearnColumn() {
 						href={
 							c5Active ? '/s/c5-site-cta' : '/workshops/ai-coding-crash-course'
 						}
+						prefetch={c5Active ? false : undefined}
 						className={linkClass}
 						onClick={() =>
 							trackFooterClick(
@@ -141,6 +142,9 @@ function LearnColumn() {
 					<li key={tutorial.href}>
 						<Link
 							href={tutorial.href}
+							prefetch={
+								tutorial.href === '/ai-coding-dictionary' ? false : undefined
+							}
 							className={linkClass}
 							onClick={() => trackFooterClick(tutorial.title, 'tutorial')}
 						>
@@ -181,6 +185,7 @@ function CohortsColumn() {
 					</p>
 					<Link
 						href="/newsletter"
+						prefetch={false}
 						className={cn(linkClass, 'group inline-flex items-center gap-1')}
 						onClick={() => trackFooterClick('/newsletter', 'newsletter')}
 					>
@@ -196,6 +201,7 @@ function CohortsColumn() {
 						<li key={cohort.href}>
 							<Link
 								href={cohort.href}
+								prefetch={false}
 								className={linkClass}
 								onClick={() => trackFooterClick(cohort.title, 'cohort')}
 							>
@@ -240,6 +246,7 @@ function AccountColumn() {
 					<li>
 						<Link
 							href="/login"
+							prefetch={false}
 							className={linkClass}
 							onClick={() => trackFooterClick('/login', 'account')}
 						>
@@ -252,6 +259,7 @@ function AccountColumn() {
 						<li>
 							<Link
 								href="/profile#my-courses"
+								prefetch={false}
 								className={linkClass}
 								onClick={() =>
 									trackFooterClick('/profile#my-courses', 'account')
@@ -264,6 +272,7 @@ function AccountColumn() {
 							<li>
 								<Link
 									href="/invoices"
+									prefetch={false}
 									className={linkClass}
 									onClick={() => trackFooterClick('/invoices', 'account')}
 								>
@@ -299,6 +308,8 @@ function AgentsColumn() {
 					<li key={link.href}>
 						<Link
 							href={link.href}
+							// Raw documents and API responses have no page payload to warm.
+							prefetch={link.href === '/developers' ? undefined : false}
 							className={monoLinkClass}
 							target="_blank"
 							rel="noopener"
@@ -317,6 +328,7 @@ type UtilityLink = {
 	href: string
 	label: string
 	type: FooterLinkType
+	prefetch?: false
 }
 
 function UtilityRow() {
@@ -336,8 +348,14 @@ function UtilityRow() {
 			href: '/skills/subscribe',
 			label: 'Free course',
 			type: 'skills_newsletter',
+			prefetch: false,
 		},
-		{ href: '/ai-coding-dictionary', label: 'Dictionary', type: 'dictionary' },
+		{
+			href: '/ai-coding-dictionary',
+			label: 'Dictionary',
+			type: 'dictionary',
+			prefetch: false,
+		},
 		{ href: '/faq', label: 'FAQ', type: 'legal' },
 		// No About link: /about has never had a page, so the link 404'd on every
 		// page footer. Add it back when an About page ships.
@@ -366,6 +384,7 @@ function UtilityRow() {
 					<Link
 						key={link.href}
 						href={link.href}
+						prefetch={link.prefetch}
 						className={cn(
 							TYPE.metaSm,
 							focusRing,

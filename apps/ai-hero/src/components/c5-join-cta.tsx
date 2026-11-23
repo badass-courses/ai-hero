@@ -50,7 +50,7 @@ export function C5JoinCta({
 	const link = c5JoinLink(data?.owned, href)
 
 	return (
-		<Link href={link.href} className={className}>
+		<Link href={link.href} prefetch={false} className={className}>
 			{link.label}
 		</Link>
 	)

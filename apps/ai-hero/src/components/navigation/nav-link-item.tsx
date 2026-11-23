@@ -12,6 +12,7 @@ import { NavPill } from './nav-pill'
 
 const NavLinkItemSchema = z.object({
 	href: z.string().optional(),
+	prefetch: z.boolean().optional(),
 	label: z.union([z.string(), z.any()]),
 	onClick: z.function().optional(),
 	className: z.string().optional(),
@@ -28,6 +29,7 @@ export type NavLinkItem = z.infer<typeof NavLinkItemSchema>
  */
 export const NavLinkItem: React.FC<NavLinkItem> = ({
 	href,
+	prefetch = true,
 	label,
 	onClick,
 	className,
@@ -89,7 +91,7 @@ export const NavLinkItem: React.FC<NavLinkItem> = ({
 					content
 				) : (
 					<Link
-						prefetch
+						prefetch={prefetch}
 						href={href!}
 						onClick={handleClick}
 						// The pill and the mobile underline are the only "you are

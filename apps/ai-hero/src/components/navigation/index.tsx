@@ -98,7 +98,7 @@ const SessionDependentNavItems = ({
 			{!isOnEmailList(subscriber) && (
 				<li className="hidden items-center lg:flex">
 					<Link
-						prefetch
+						prefetch={false}
 						href="/newsletter"
 						onClick={() => {
 							track('nav_link_clicked', {
@@ -133,7 +133,7 @@ const PrimaryEntryLink = ({
 }) => (
 	<li className="flex items-center">
 		<Link
-			prefetch
+			prefetch={false}
 			href={PRIMARY_LEARNING_ENTRY.href}
 			onClick={() => {
 				track('nav_link_clicked', {
@@ -333,7 +333,9 @@ const FreeCourseCta = ({
 	return (
 		<li className="hidden items-center lg:flex">
 			<Link
-				prefetch
+				// Workshop landings are ISR; request-specific offers and redirects
+				// should wait for a click.
+				prefetch={offer.href.startsWith('/workshops/')}
 				href={offer.href}
 				onClick={() => {
 					track('nav_link_clicked', {
@@ -484,6 +486,7 @@ const Navigation = () => {
 										<NavLinkItem
 											key={item.href}
 											href={item.href}
+											prefetch={item.href !== COURSES_NAV_ITEM.href}
 											label={item.label}
 											textLabel={item.label}
 										/>
@@ -495,6 +498,7 @@ const Navigation = () => {
 								// persistent revenue path.
 								<NavLinkItem
 									href={COURSES_NAV_ITEM.href}
+									prefetch={false}
 									label={COURSES_NAV_ITEM.label}
 									textLabel={COURSES_NAV_ITEM.label}
 								/>

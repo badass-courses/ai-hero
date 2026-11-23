@@ -23,6 +23,7 @@ export function C5PastCohortCallout({ slug }: { slug: string }) {
 					Enrollment for this cohort has closed. The new cohort,{' '}
 					<Link
 						href="/s/c5-site-cta"
+						prefetch={false}
 						className="text-primary underline underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
 					>
 						{C5_TITLE}
