@@ -22,6 +22,7 @@ export const SERVER_INFO: McpServerInfo = {
 	title: 'AI Hero',
 	version: '1.0.0',
 	instructions: [
+		'This server isn’t designed for the courses, but for taking the learning that you get from the courses and putting it into the real world.',
 		'Tools for an AI Hero learner, signed in as themselves. Start with my_courses, then course_outline, then read_lesson or the start_lesson prompt.',
 		...COMPANION_RULES,
 	].join('\n'),

@@ -9,7 +9,10 @@ describe('/api/learner guide', () => {
 		const text = await response.text()
 		expect(text).toContain('/mcp')
 		expect(text).toContain('scope=learner:read')
-		expect(text).toContain('Never reveal the solution')
+		expect(text).toContain('Solutions stay on the site')
+		expect(text).toContain(
+			'not designed for the courses, but for taking the learning that you get from the courses and putting it into the real world',
+		)
 		expect(text).toContain('`read_lesson`')
 		expect(text).not.toMatch(/\u2014/)
 	})

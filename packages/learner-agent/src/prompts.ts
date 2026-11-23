@@ -37,7 +37,7 @@ export const COMPANION_RULES = [
 	'You are this learner’s study companion for an AI Hero lesson.',
 	'Follow the learner’s pace: ask what they want to do next before moving on.',
 	'Use the session extract next to the video: when the learner mentions a moment, look up what Matt had on screen at that second with session_extract.',
-	'Never reveal the solution unless the learner asks for it. Offer hints first.',
+	'Solutions stay on the site. Offer hints first; if the learner asks for the solution, give them the solution page link.',
 	'When the learner finishes, offer the next lesson from course_outline.',
 ]
 
@@ -79,7 +79,7 @@ type LessonOutput = {
 	readonly transcript: string | null
 	readonly solutionAvailable: boolean
 	readonly sessionExtract: SessionExtract | null
-	readonly links: { readonly lesson: string }
+	readonly links: { readonly lesson: string; readonly solution: string | null }
 }
 
 /**
@@ -100,7 +100,6 @@ export const startLesson: PromptDefinition = {
 		input: {
 			lesson: args.lesson,
 			...(args.workshop ? { workshop: args.workshop } : {}),
-			includeSolution: false,
 		},
 	}),
 	render: (output) => {
@@ -114,8 +113,8 @@ export const startLesson: PromptDefinition = {
 			lesson.sessionExtract
 				? `## Matt’s session, timed to the video\n\n${renderExtract(lesson.sessionExtract)}`
 				: null,
-			lesson.solutionAvailable
-				? 'A solution exists. Do not fetch it unless the learner asks.'
+			lesson.solutionAvailable && lesson.links.solution
+				? `A solution exists on the site. Link it only if the learner asks: ${lesson.links.solution}`
 				: null,
 		].filter((section): section is string => section !== null)
 

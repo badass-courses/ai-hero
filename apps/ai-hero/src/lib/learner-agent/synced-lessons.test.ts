@@ -265,7 +265,7 @@ describe('course-synced lessons through the learner MCP capabilities', () => {
 		}
 	})
 
-	it('reads a synced draft but keeps its solution hidden unless requested', async () => {
+	it('reads a synced draft but never returns its solution, even when asked', async () => {
 		const { agent: api } = agent()
 		const result = await api.invoke('read_lesson', {
 			lesson: lessons[0]!.id,
@@ -279,7 +279,9 @@ describe('course-synced lessons through the learner MCP capabilities', () => {
 			workshop: WORKSHOP_ID,
 			includeSolution: true,
 		})
-		expect(JSON.stringify(withSolution)).toContain('Synthetic answer')
+		expect(withSolution).toMatchObject({ _tag: 'Success' })
+		expect(JSON.stringify(withSolution)).not.toContain('Synthetic answer')
+		expect(JSON.stringify(withSolution)).toContain('/solution')
 	})
 
 	it('refuses the outline and lesson for a non-entitled learner and returns no owned search hits', async () => {

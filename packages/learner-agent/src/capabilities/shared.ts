@@ -68,6 +68,6 @@ export const instructionsAction = (
 	LearnerSite.useSync((site) =>
 		nextHref(
 			courseUrl ? `${courseUrl}.md` : site.instructionsUrl,
-			'How to work this course as a study companion: follow the learner’s pace, use the session extract next to the video, never spoil solutions unless asked.',
+			'How to work this course as a study companion: follow the learner’s pace, use the session extract next to the video, link the solution page only when asked.',
 		),
 	)

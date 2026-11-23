@@ -72,6 +72,8 @@ export function buildLearnerAgentGuide(site: SiteUrls) {
 	return [
 		'# AI Hero learner agent surface',
 		'',
+		'It’s not designed for the courses, but for taking the learning that you get from the courses and putting it into the real world.',
+		'',
 		'Tools for an enrolled learner’s own agent: see what they own, read the outline and lessons, read Matt’s session extract at a timestamp, search, and see office hours. Every response carries `next_actions`.',
 		'',
 		'## Connect',
