@@ -82,6 +82,18 @@ function parseDevice(userAgent: string | null): string | null {
 }
 
 /**
+ * A speculative fetch the browser or Next router makes before any click:
+ * a `<Link>` prefetch (`Next-Router-Prefetch: 1`) or a browser prefetch or
+ * prerender (`Sec-Purpose` / `Purpose`). A real client-side click also sends
+ * `RSC: 1`, but without these, so it still counts.
+ */
+export function isPrefetchRequest(request: Request): boolean {
+	if (request.headers.get('next-router-prefetch') === '1') return true
+	const purpose = `${request.headers.get('sec-purpose') ?? ''} ${request.headers.get('purpose') ?? ''}`
+	return /\b(prefetch|prerender)\b/i.test(purpose)
+}
+
+/**
  * Route handler for shortlink redirects
  * Matches URLs like /s/[slug] and redirects to the corresponding URL
  * Records click analytics asynchronously
@@ -97,6 +109,16 @@ export async function GET(
 
 		if (!link) {
 			return new NextResponse('Shortlink not found', { status: 404 })
+		}
+
+		// A prefetch is not a click: it must not count, and its Set-Cookie would
+		// rewrite the visitor's attribution (sl_ref, the gift cookie) for a link
+		// they never followed. Same redirect target, no side effects.
+		if (isPrefetchRequest(request)) {
+			const prefetchUrl = buildShortlinkRedirectUrl(link.url, request.url)
+			if (link.metadata?.campaign === 'legend-gift')
+				prefetchUrl.searchParams.set('via', slug)
+			return NextResponse.redirect(prefetchUrl)
 		}
 
 		// Extract analytics metadata from request headers

@@ -132,3 +132,57 @@ describe('/s/[slug] redirect', () => {
 		)
 	})
 })
+
+describe('/s/[slug] prefetch', () => {
+	const link = {
+		id: 'shortlink_site',
+		slug: 'c5-site-nav',
+		metadata: null,
+		url: 'https://www.aihero.dev/cohorts/synthetic-cohort',
+	}
+	const get = (headers: Record<string, string>) =>
+		GET(
+			new NextRequest('https://www.aihero.dev/s/c5-site-nav?_rsc=abc', {
+				headers,
+			}),
+			{ params: Promise.resolve({ slug: 'c5-site-nav' }) },
+		)
+
+	it.each([
+		['a Next <Link> prefetch', { 'next-router-prefetch': '1', rsc: '1' }],
+		['a browser prefetch', { 'sec-purpose': 'prefetch' }],
+		['a browser prerender', { 'sec-purpose': 'prefetch;prerender' }],
+		['a legacy Purpose prefetch', { purpose: 'prefetch' }],
+	])('%s redirects without counting a click or setting cookies', async (_, headers) => {
+		mocks.getShortlinkBySlug.mockResolvedValueOnce(link)
+		const response = await get(headers)
+		expect(response.status).toBe(307)
+		expect(new URL(response.headers.get('location') ?? '').pathname).toBe(
+			'/cohorts/synthetic-cohort',
+		)
+		expect(response.cookies.get('sl_ref')).toBeUndefined()
+		expect(response.headers.get('set-cookie')).toBeNull()
+		expect(mocks.after).not.toHaveBeenCalled()
+		expect(mocks.recordClick).not.toHaveBeenCalled()
+	})
+
+	it('a legend-gift prefetch sets no gift cookie and keeps the via param', async () => {
+		mocks.getShortlinkBySlug.mockResolvedValueOnce({
+			...link,
+			metadata: { campaign: 'legend-gift' },
+		})
+		const response = await get({ 'next-router-prefetch': '1' })
+		expect(response.headers.get('set-cookie')).toBeNull()
+		expect(
+			new URL(response.headers.get('location') ?? '').searchParams.get('via'),
+		).toBe('c5-site-nav')
+	})
+
+	it('a real client-side click (RSC without a prefetch header) still counts and sets sl_ref', async () => {
+		mocks.getShortlinkBySlug.mockResolvedValueOnce(link)
+		const response = await get({ rsc: '1' })
+		expect(response.status).toBe(307)
+		expect(response.cookies.get('sl_ref')?.value).toBe('c5-site-nav')
+		expect(mocks.after).toHaveBeenCalledOnce()
+	})
+})
