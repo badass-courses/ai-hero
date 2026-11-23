@@ -107,6 +107,9 @@ on:
       - "apps/ai-hero/src/lib/checkout-reconcile/**"
       - "apps/ai-hero/src/lib/certificates*"
 
+permissions:
+  contents: read
+
 jobs:
   mysql-contract:
     name: MySQL contract
