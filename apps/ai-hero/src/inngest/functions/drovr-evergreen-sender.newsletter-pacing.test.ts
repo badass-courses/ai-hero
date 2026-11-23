@@ -21,6 +21,7 @@ const control = vi.hoisted(() => {
 	const failures: { storage?: 'read' | 'write'; unexpected?: boolean } = {}
 	return { sends, posts, fields, couponLimits, reads, steps, events, failures,
 		storageCalls: 0, profileSync: false, stopped: false, evergreenUnready: false, evidenceFails: false,
+		listsUnready: false, listKitWrites: 0, listArgs: undefined as SendArgs | undefined,
 		setHandler: (next: Handler) => { handler = next }, handler: () => handler }
 })
 vi.mock('@/inngest/inngest.server', () => ({ inngest: { createFunction: (_options: unknown, _trigger: unknown, handler: Handler) => { control.setHandler(handler); return handler } } }))
@@ -34,9 +35,9 @@ vi.mock('@/lib/subscriber-marketing/drovr-evergreen', () => ({
 	SUBSCRIBE_EVERGREEN_LIST_INTENT_TYPE: 'subscribe-evergreen-list',
 	EVERGREEN_LIST_SEQUENCES: { 'shadow-newsletter': { backfillTagId: 'synthetic-tag' } },
 	parseDrovrEvergreenConfig: () => ({ enabled: true }),
-	readbackEvergreenListSequences: async () => { control.reads.push('lists'); return { ready: true } },
+	readbackEvergreenListSequences: async () => { control.reads.push('lists'); return control.listsUnready ? { ready: false, problems: ['shadow-newsletter: sequence is not active'] } : { ready: true } },
 	readbackEvergreenSequences: async () => { control.reads.push('evergreen'); return control.evergreenUnready ? { ready: false, problems: ['P1: fetch failed'] } : { ready: true } },
-	subscribeToEvergreenList: async () => 'added',
+	subscribeToEvergreenList: async () => { control.listKitWrites += 1; return 'added' },
 	addSubscriberToKitSequence: async (args: Parameters<typeof addSubscriberToKitSequence>[0]) => { control.posts.push(args); return 'added' },
 	updateKitSubscriberFields: async (args: Parameters<typeof updateKitSubscriberFields>[0]) => { control.fields.push(args) },
 }))
@@ -47,6 +48,12 @@ vi.mock('@/lib/subscriber-marketing/drovr-shadow-newsletter', () => ({
 vi.mock('@/lib/subscriber-marketing/drovr-evergreen-sender', () => ({
 	executePendingEvergreenSends: async (args: SendArgs) => {
 		control.sends.push(args)
+		if (args.type === 'subscribe-evergreen-list' && control.listsUnready) {
+			// The real sender completes shadow-newsletter handoffs without calling
+			// subscribe; keep the port so the test can prove it refuses Kit writes.
+			control.listArgs = args
+			return []
+		}
 		if (args.type === 'send-shadow-newsletter-email') {
 			if (control.failures.unexpected) throw new Error('synthetic sender failure')
 			if (control.failures.storage) {
@@ -92,6 +99,7 @@ beforeEach(() => {
 	control.couponLimits.length = 0; control.reads.length = 0; control.stopped = false
 	control.steps.length = 0; control.events.length = 0; control.storageCalls = 0; control.profileSync = false
 	control.evergreenUnready = false; control.evidenceFails = false
+	control.listsUnready = false; control.listKitWrites = 0; control.listArgs = undefined
 	delete control.failures.storage; delete control.failures.unexpected
 	vi.stubEnv('AIH_DROVR_EVERGREEN_SENDER_LIMIT', '25')
 	vi.stubEnv('AIH_DROVR_EVERGREEN_SENDER_PACING_MS', '3000')
@@ -189,6 +197,22 @@ describe('combined cron, fake import closure: newsletter-only config/result inje
 		expect(control.couponLimits).toEqual([])
 		expect(control.steps).toContain('send-pending-evergreen-emails')
 		expect(control.sends).toHaveLength(3); expect(control.posts).toHaveLength(2)
+	})
+	it('a retired Kit list sequence still runs the list handoff, so buyers complete', async () => {
+		control.listsUnready = true
+		await invoke()
+		expect(control.steps).toContain('subscribe-pending-evergreen-lists')
+		expect(control.sends[0]?.type).toBe('subscribe-evergreen-list')
+		expect(control.reads).toEqual(['lists', 'shadow', 'evergreen'])
+	})
+	it('with the Kit list readback unready, the handoff port refuses a Kit write', async () => {
+		control.listsUnready = true
+		await invoke()
+		const subscribe = control.listArgs?.subscribe
+		expect(subscribe).toBeDefined()
+		await expect(subscribe!({ listId: 'synthetic-sequence', listType: 'sequence', user: { email: 'synthetic@aih.test.invalid' } }))
+			.rejects.toThrow('evergreen list Kit write refused: shadow-newsletter: sequence is not active')
+		expect(control.listKitWrites).toBe(0)
 	})
 	it('a fake durable-step checkpoint preserves stopped result on replay, without reexecuting sends', async () => {
 		vi.stubEnv('AIH_DROVR_NEWSLETTER_LIMIT', '120'); control.stopped = true

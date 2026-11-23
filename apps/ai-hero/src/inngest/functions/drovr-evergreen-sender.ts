@@ -60,37 +60,44 @@ export const drovrEvergreenSender = inngest.createFunction(
 		if (!config.enabled) {
 			return { status: 'off', reason: config.reason }
 		}
-		// The list handoff has its own gate and runs first: the newsletter
-		// sequence must be active and non-repeating (a re-add to a repeating
-		// sequence would replay the newsletter; a held one falls back to the
-		// backfill tag like the entry path), and a
-		// problem with the eight bridge/pitch sequences must not hold a journey
-		// that is only waiting to close on its handoff.
+		// The list handoff runs first, so a problem with the eight bridge/pitch
+		// sequences never holds a journey that is only waiting to close on its
+		// handoff. It runs whatever Kit says: the shadow-newsletter handoff
+		// completes without a Kit write (kitSkipped), and Kit's old newsletter
+		// sequence 2625552 has been off since 2026-11-18. Gating the whole step on
+		// that readback left every buyer's handoff pending until drovr gave up.
+		// The readback now guards only a real Kit write: the sequence must be
+		// active and non-repeating (a re-add to a repeating sequence would replay
+		// the newsletter; a held one falls back to the backfill tag).
 		const listReadback = await step.run('readback-kit-list-sequences', () =>
 			readbackEvergreenListSequences({
 				apiKey: process.env.KIT_V4_API_KEY,
 				fetch,
 			}),
 		)
-		const lists = listReadback.ready
-			? await step.run('subscribe-pending-evergreen-lists', () =>
-					executePendingEvergreenSends({
-						repository: new DrizzleCaptureMarketingRepository(db),
-						type: SUBSCRIBE_EVERGREEN_LIST_INTENT_TYPE,
-						subscribe: (input) =>
-							subscribeToEvergreenList({
-								apiKey: process.env.KIT_V4_API_KEY,
-								fetch,
-								sequenceId: input.listId,
-								backfillTagId:
-									EVERGREEN_LIST_SEQUENCES['shadow-newsletter'].backfillTagId,
-								email: input.user.email,
-							}),
-						limit: senderLimit(process.env.AIH_DROVR_EVERGREEN_SENDER_LIMIT),
-						pacingMs: evergreenSenderPacingMs(process.env),
-					}),
-				)
-			: []
+		const lists = await step.run('subscribe-pending-evergreen-lists', () =>
+			executePendingEvergreenSends({
+				repository: new DrizzleCaptureMarketingRepository(db),
+				type: SUBSCRIBE_EVERGREEN_LIST_INTENT_TYPE,
+				subscribe: async (input) => {
+					if (!listReadback.ready) {
+						throw new Error(
+							`evergreen list Kit write refused: ${listReadback.problems.join('; ')}`,
+						)
+					}
+					return subscribeToEvergreenList({
+						apiKey: process.env.KIT_V4_API_KEY,
+						fetch,
+						sequenceId: input.listId,
+						backfillTagId:
+							EVERGREEN_LIST_SEQUENCES['shadow-newsletter'].backfillTagId,
+						email: input.user.email,
+					})
+				},
+				limit: senderLimit(process.env.AIH_DROVR_EVERGREEN_SENDER_LIMIT),
+				pacingMs: evergreenSenderPacingMs(process.env),
+			}),
+		)
 		if (!listReadback.ready) {
 			await log.warn('drovr.evergreen.lists_not_ready', {
 				problems: listReadback.problems,
