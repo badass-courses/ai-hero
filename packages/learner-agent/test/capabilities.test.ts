@@ -252,52 +252,41 @@ describe('course_outline', () => {
 
 describe('read_lesson', () => {
 	it.effect(
-		'returns the lesson, transcript and session extract, hides the solution, and logs the read',
+		'returns the lesson, transcript and session extract, links the solution page, and logs the read',
 		() =>
 			Effect.gen(function* () {
 				const recorder = newRecorder()
 				const result = yield* readLesson
-					.handler({
-						lesson: 'first-lesson',
-						workshop: 'week-one',
-						includeSolution: false,
-					})
+					.handler({ lesson: 'first-lesson', workshop: 'week-one' })
 					.pipe(as(learner, recorder))
 				expect(result.body).toBe('Build the thing.')
 				expect(result.transcript).toBe('Today we build the thing.')
 				expect(result.sessionExtract?.sessions[0]?.entries).toHaveLength(4)
 				expect(result.solutionAvailable).toBe(true)
-				expect(result.solution).toBeNull()
+				expect(result).not.toHaveProperty('solution')
 				expect(
-					result.next_actions.find((a) => a.arguments?.includeSolution === true)
-						?.description,
+					result.next_actions.find(
+						(a) => a.href === result.links.solution,
+					)?.description,
 				).toMatch(/only if the learner asks/i)
 				expect(recorder.reads).toEqual([
 					{
 						userId: 'user-owner',
 						capability: 'read_lesson',
 						resourceId: 'lesson-1',
-						includeSolution: false,
 					},
 				])
 			}),
 	)
 
-	it.effect('returns and logs the solution only when asked', () =>
+	it.effect('never returns solution text, even when a caller asks for it', () =>
 		Effect.gen(function* () {
 			const recorder = newRecorder()
 			const result = yield* readLesson
-				.handler({ lesson: 'first-lesson', includeSolution: true })
+				// An old client may still send includeSolution; it is ignored.
+				.handler({ lesson: 'first-lesson', includeSolution: true } as never)
 				.pipe(as(learner, recorder))
-			expect(result.solution?.body).toBe('Here is the answer.')
-			expect(recorder.reads).toEqual([
-				{
-					userId: 'user-owner',
-					capability: 'read_lesson',
-					resourceId: 'lesson-1',
-					includeSolution: true,
-				},
-			])
+			expect(JSON.stringify(result)).not.toContain('Here is the answer.')
 		}),
 	)
 
@@ -307,7 +296,7 @@ describe('read_lesson', () => {
 			Effect.gen(function* () {
 				const recorder = newRecorder()
 				const error = yield* readLesson
-					.handler({ lesson: 'locked-lesson', includeSolution: false })
+					.handler({ lesson: 'locked-lesson' })
 					.pipe(Effect.flip, as(learner, recorder))
 				expect(error).toMatchObject({
 					_tag: 'NotYetOpen',
@@ -325,7 +314,7 @@ describe('read_lesson', () => {
 		Effect.gen(function* () {
 			const recorder = newRecorder()
 			const error = yield* readLesson
-				.handler({ lesson: 'first-lesson', includeSolution: false })
+				.handler({ lesson: 'first-lesson' })
 				.pipe(Effect.flip, as(caller, recorder))
 			expect(error._tag).toBe('NotEntitled')
 			expect(recorder.reads).toEqual([])
@@ -335,7 +324,7 @@ describe('read_lesson', () => {
 	it.effect('refuses an anonymous caller', () =>
 		Effect.gen(function* () {
 			const error = yield* readLesson
-				.handler({ lesson: 'first-lesson', includeSolution: false })
+				.handler({ lesson: 'first-lesson' })
 				.pipe(Effect.flip, as(null))
 			expect(error._tag).toBe('SignInRequired')
 		}),

@@ -62,6 +62,9 @@ describe('MCP projection', () => {
 			serverInfo: { name: 'ai-hero-learner' },
 		})
 		expect(known.body.result.instructions).toMatch(/my_courses/)
+		expect(known.body.result.instructions).toContain(
+			'for taking the learning that you get from the courses and putting it into the real world',
+		)
 
 		const unknown = await mcp(null, {
 			jsonrpc: '2.0',
@@ -84,8 +87,8 @@ describe('MCP projection', () => {
 		expect(read.inputSchema).toMatchObject({
 			type: 'object',
 			required: ['lesson'],
-			properties: { includeSolution: { type: 'boolean' } },
 		})
+		expect(read.inputSchema.properties).not.toHaveProperty('includeSolution')
 		expect(read.annotations).toEqual({
 			title: 'Read lesson',
 			readOnlyHint: true,
@@ -128,13 +131,26 @@ describe('MCP projection', () => {
 		expect(body.result.isError).toBeUndefined()
 		expect(body.result.structuredContent).toMatchObject({
 			lesson: { slug: 'first-lesson' },
-			solution: null,
 			solutionAvailable: true,
 		})
+		expect(body.result.structuredContent).not.toHaveProperty('solution')
 		expect(body.result.structuredContent.next_actions.length).toBeGreaterThan(0)
 		expect(JSON.parse(body.result.content[0].text)).toEqual(
 			body.result.structuredContent,
 		)
+	})
+
+	it('ignores includeSolution from an old client and never returns solution text', async () => {
+		const { body } = await mcp(learner, {
+			jsonrpc: '2.0',
+			id: 8,
+			method: 'tools/call',
+			params: {
+				name: 'read_lesson',
+				arguments: { lesson: 'first-lesson', workshop: 'week-one', includeSolution: true },
+			},
+		})
+		expect(JSON.stringify(body)).not.toContain('Here is the answer.')
 	})
 
 	it('never returns Mux ids, even when an adapter over-returns them', async () => {
@@ -263,7 +279,7 @@ describe('MCP projection', () => {
 		expect(text).toContain('Build the thing.')
 		expect(text).toContain('Today we build the thing.')
 		expect(text).toContain('[10s] Matt: Add a test')
-		expect(text).toContain('Never reveal the solution')
+		expect(text).toContain('Solutions stay on the site')
 		expect(text).not.toContain('Here is the answer.')
 	})
 
@@ -483,7 +499,6 @@ describe('OpenAPI projection', () => {
 		).toEqual([
 			['lesson', true],
 			['workshop', false],
-			['includeSolution', false],
 		])
 	})
 

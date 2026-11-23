@@ -1,7 +1,7 @@
 import { Effect, Schema } from 'effect'
 
 import { defineContract, implement } from '../contract.js'
-import { LessonLinks, LessonRef, SolutionText, WorkshopRef } from '../domain.js'
+import { LessonLinks, LessonRef, WorkshopRef } from '../domain.js'
 import {
 	NotEntitled,
 	NotFound,
@@ -37,21 +37,14 @@ export const lessonFailure = Schema.Union([
 export const readLessonContract = defineContract('read_lesson', {
 	title: 'Read lesson',
 	description:
-		'One lesson the learner owns: its text (the exercise), the video transcript, the session extract (the coding-agent session Matt shows on screen, timed to the video), and links to the lesson page. The solution stays hidden unless includeSolution is true; set it only when the learner asks for the solution.',
-	input: Schema.Struct({
-		...lessonInputFields,
-		includeSolution: Schema.Boolean.annotate({
-			description:
-				'Include the solution text. Only when the learner asks for it.',
-		}).pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
-	}),
+		'One lesson the learner owns: its text (the exercise), the video transcript, the session extract (the coding-agent session Matt shows on screen, timed to the video), and links to the lesson page. Solutions are not served here: when the learner asks for one, give them the solution page link.',
+	input: Schema.Struct(lessonInputFields),
 	output: Schema.Struct({
 		lesson: LessonRef,
 		workshop: WorkshopRef,
 		body: Schema.NullOr(Schema.String),
 		transcript: Schema.NullOr(Schema.String),
 		solutionAvailable: Schema.Boolean,
-		solution: Schema.NullOr(SolutionText),
 		sessionExtract: Schema.NullOr(SessionExtract),
 		links: LessonLinks,
 		next_actions: NextActions,
@@ -62,7 +55,7 @@ export const readLessonContract = defineContract('read_lesson', {
 
 export const readLesson = implement(
 	readLessonContract,
-	({ lesson, workshop, includeSolution }) =>
+	({ lesson, workshop }) =>
 		Effect.gen(function* () {
 			const learner = yield* requireLearner
 			const audit = yield* LearnerAudit
@@ -72,7 +65,6 @@ export const readLesson = implement(
 				userId: learner.userId,
 				capability: 'read_lesson',
 				resourceId: content.lesson.id,
-				includeSolution,
 			})
 
 			const locator = {
@@ -86,7 +78,6 @@ export const readLesson = implement(
 				body: content.body,
 				transcript: content.transcript,
 				solutionAvailable: content.solution !== null,
-				solution: includeSolution ? content.solution : null,
 				sessionExtract: content.sessionExtract,
 				links: content.links,
 				next_actions: [
@@ -99,12 +90,11 @@ export const readLesson = implement(
 								),
 							]
 						: []),
-					...(content.solution && !includeSolution
+					...(content.solution && content.links.solution
 						? [
-								nextTool(
-									'read_lesson',
-									'Only if the learner asks for it: read the solution.',
-									{ ...locator, includeSolution: true },
+								nextHref(
+									content.links.solution,
+									'Only if the learner asks for it: the solution page on the site.',
 								),
 							]
 						: []),
