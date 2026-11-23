@@ -56,6 +56,7 @@ import { drovrEvergreenSender } from './functions/drovr-evergreen-sender'
 import { drovrSignupDeliver } from './functions/drovr-signup-deliver'
 import { drovrOutboxReplay } from './functions/drovr-outbox-replay'
 import { kitDirectoryIngest } from './functions/kit-directory-ingest'
+import { lessonTranscriptReady } from './functions/lesson-transcript-ready'
 import { newsletterVeteransAssign } from './functions/newsletter-veterans'
 import { newsletterExitReplay } from './functions/newsletter-exit-replay'
 import { newsletterPurchaseExitProof } from './functions/newsletter-purchase-exit-proof'
@@ -141,6 +142,7 @@ const allFunctions = [
 	userCreated,
 	userSignupAdminEmail,
 	aiCodingDictionaryIndex,
+	lessonTranscriptReady,
 	postmarkWebhook,
 	archivePurchaseReconciliation,
 	emailSendBroadcast,

@@ -9,11 +9,9 @@ import { ContentReadTracker } from '@/components/content-read-tracker'
 import { env } from '@/env.mjs'
 import { ActiveHeadingProvider } from '@/hooks/use-active-heading'
 import { getAiCodingDictionary } from '@/lib/ai-coding-dictionary'
+import { getCachedLessonVideoTranscript } from '@/lib/lesson-transcript-cache'
 import type { Lesson } from '@/lib/lessons'
-import {
-	getLessonVideoPlaybackResource,
-	getLessonVideoTranscript,
-} from '@/lib/lessons-query'
+import { getLessonVideoPlaybackResource } from '@/lib/lessons-query'
 import { getLessonSessionExtract } from '@/lib/session-extract-query'
 import { getSessionSkillLinks } from '@/lib/session-skill-links'
 import { MinimalWorkshop } from '@/lib/workshops'
@@ -258,7 +256,7 @@ async function TranscriptContainer({
 	>
 }) {
 	const transcriptLoader = timings.measure('transcript', () =>
-		getLessonVideoTranscript(lessonId),
+		getCachedLessonVideoTranscript(lessonId),
 	)
 
 	return (

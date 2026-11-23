@@ -1,5 +1,9 @@
 import { env } from '@/env.mjs'
 import { getIntegrationRefreshToken } from '@/lib/integration-token-store'
+import {
+	invalidateLessonTranscript,
+	LESSON_TRANSCRIPT_TAG,
+} from '@/lib/lesson-transcript-cache'
 
 import { createCourseSyncControlPlane } from './control-plane'
 import { dropboxSyncConfigFor } from './dropbox-binding-config'
@@ -46,7 +50,7 @@ const muxSourceResolver = createBindingScopedMuxSourceResolver((binding) => {
 	}
 })
 
-export const courseSyncControlPlane = createCourseSyncControlPlane({
+const controlPlane = createCourseSyncControlPlane({
 	persistence: drizzleCourseSyncPersistence,
 	muxSourceResolver,
 	muxClient: createCourseSyncMuxClient({
@@ -55,3 +59,14 @@ export const courseSyncControlPlane = createCourseSyncControlPlane({
 	}),
 	createdById: 'course-sync-worker',
 })
+
+export const courseSyncControlPlane = {
+	...controlPlane,
+	async apply(input: Parameters<typeof controlPlane.apply>[0]) {
+		const run = await controlPlane.apply(input)
+		if (run.state === 'applied' && !run.noOp) {
+			invalidateLessonTranscript(LESSON_TRANSCRIPT_TAG)
+		}
+		return run
+	},
+}
