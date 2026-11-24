@@ -22,6 +22,7 @@ vi.mock('next-auth/react', () => ({
 vi.mock('next/navigation', () => ({
 	useParams: () => ({ module: 'parent', lesson: 'opening' }),
 	usePathname: () => '/workshops/parent/opening',
+	useRouter: () => ({ prefetch: vi.fn() }),
 }))
 vi.mock('@/trpc/react', () => ({
 	api: {
@@ -94,11 +95,12 @@ beforeEach(() => {
 
 const controls = () => [
 	<StartLearningWorkshopButton
+		key="start"
 		moduleSlug="parent"
 		workshop={mocks.navigation}
 	/>,
-	<WorkshopImage imageUrl="https://example.test/cover.png" />,
-	<WorkshopSidebarMobile workshop={mocks.navigation} purchased />,
+	<WorkshopImage key="cover" imageUrl="https://example.test/cover.png" />,
+	<WorkshopSidebarMobile key="mobile" workshop={mocks.navigation} purchased />,
 ]
 
 describe('workshop start and resume links', () => {

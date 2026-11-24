@@ -2,6 +2,7 @@
 
 import React, { useRef } from 'react'
 import Link from 'next/link'
+import { LessonIntentLink } from '@/app/(content)/_components/lesson-intent-link'
 import { useModuleProgress } from '@/app/(content)/_components/module-progress-provider'
 import { Contributor } from '@/components/contributor'
 import { TYPE } from '@/components/landing/type'
@@ -160,9 +161,7 @@ const ContinueLearningButton = () => {
 			variant="outline"
 			className="border-border h-11 shrink-0 rounded-[9px] border bg-transparent px-4 text-sm font-medium"
 		>
-			<Link prefetch href={href}>
-				{label}
-			</Link>
+			<LessonIntentLink href={href}>{label}</LessonIntentLink>
 		</Button>
 	)
 }

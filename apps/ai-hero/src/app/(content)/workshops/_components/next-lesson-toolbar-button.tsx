@@ -1,6 +1,6 @@
 'use client'
 
-import Link from 'next/link'
+import { LessonIntentLink } from '@/app/(content)/_components/lesson-intent-link'
 import {
 	getNextCohortWorkshop,
 	isWorkshopAvailable,
@@ -82,10 +82,10 @@ export function NextLessonToolbarButton({
 			variant="ghost"
 			className="hover:bg-hover border-l-border h-10 rounded-none border-0 border-l sm:h-12"
 		>
-			<Link href={target.href} prefetch>
+			<LessonIntentLink href={target.href}>
 				{target.label}
 				<ArrowRight className="text-muted-foreground ml-2 h-4 w-4" />
-			</Link>
+			</LessonIntentLink>
 		</Button>
 	)
 }

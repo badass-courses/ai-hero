@@ -12,6 +12,10 @@ const mocks = vi.hoisted(() => ({
 	parentLessonForSolution: null as any,
 }))
 
+vi.mock('next/navigation', () => ({
+	useRouter: () => ({ prefetch: vi.fn() }),
+}))
+
 vi.mock('./cohort-navigation-provider', () => ({
 	useCohortNavigation: () => mocks.cohortNavigation,
 }))
