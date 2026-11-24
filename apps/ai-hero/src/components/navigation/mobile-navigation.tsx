@@ -68,6 +68,7 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
 			{subscriberResolved && !subscriber ? (
 				<Link
 					href="/newsletter"
+					prefetch={false}
 					aria-label="Subscribe to the newsletter"
 					onClick={() =>
 						track('nav_link_clicked', {

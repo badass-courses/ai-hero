@@ -20,6 +20,7 @@ export function PromoBarContent({ promo }: { promo: Promo }) {
 				)}
 				<Link
 					href={promo.href}
+					prefetch={promo.href.startsWith('/s/') ? false : undefined}
 					className="group focus-visible:ring-ring inline-flex min-w-0 items-center gap-1.5 font-medium tracking-tight underline-offset-4 transition hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
 				>
 					{promo.shortMessage ? (

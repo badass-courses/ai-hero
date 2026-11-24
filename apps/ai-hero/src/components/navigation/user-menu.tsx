@@ -63,7 +63,7 @@ function AccountMenuLink({ href, label }: { href: string; label: string }) {
 		<DropdownMenuItem asChild className={accountMenuRow}>
 			<Link
 				href={href}
-				prefetch
+				prefetch={false}
 				onClick={() => track('nav_link_clicked', { label, href })}
 			>
 				{label}
@@ -118,7 +118,7 @@ export const UserMenu = () => {
 		// reader had to decode.
 		return (
 			<li className="flex items-center">
-				<Link href="/login" className={navTextLink}>
+				<Link href="/login" prefetch={false} className={navTextLink}>
 					Log in
 				</Link>
 			</li>
@@ -144,7 +144,12 @@ export const UserMenu = () => {
 	return (
 		<>
 			{canViewTeam && !isAdmin && (
-				<NavLinkItem label="Invite Team" className="" href="/team" />
+				<NavLinkItem
+					label="Invite Team"
+					className=""
+					href="/team"
+					prefetch={false}
+				/>
 			)}
 			<li className="flex items-center">
 				<DropdownMenu modal={false}>

@@ -498,6 +498,7 @@ function PalettePromoRow({
 	return (
 		<Link
 			href={promo.href}
+			prefetch={promo.href.startsWith('/s/') ? false : undefined}
 			onClick={() =>
 				onSelect(
 					{ title: promo.message, href: promo.href, type: 'cohort' },

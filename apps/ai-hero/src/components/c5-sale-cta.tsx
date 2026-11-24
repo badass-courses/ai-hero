@@ -21,7 +21,13 @@ export function C5SaleCta({ forTeams = false }: { forTeams?: boolean }) {
 			<div className="grid gap-6 px-[18px] py-10 sm:grid-cols-[minmax(0,300px)_1fr] sm:items-center sm:gap-10 sm:px-11">
 				{/* The artwork repeats the button's link, so it stays out of the tab
 				    order and the accessibility tree. */}
-				<Link href={href} tabIndex={-1} aria-hidden="true" className="block">
+				<Link
+					href={href}
+					prefetch={false}
+					tabIndex={-1}
+					aria-hidden="true"
+					className="block"
+				>
 					<CldImage
 						src={C5_IMAGE}
 						width={600}
@@ -42,6 +48,7 @@ export function C5SaleCta({ forTeams = false }: { forTeams?: boolean }) {
 					</p>
 					<Link
 						href={href}
+						prefetch={false}
 						className={cn(
 							TYPE.meta,
 							'bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover group mt-2 inline-flex h-[46px] items-center gap-2 whitespace-nowrap rounded-[9px] px-6 font-bold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2',

@@ -30,6 +30,7 @@ export function CohortTeamCta() {
 				<div className="mt-8 flex flex-wrap gap-3">
 					<Link
 						href={C5_TEAM_HREF}
+						prefetch={false}
 						className={cn(WORKSHOP_CTA_BUTTON, 'inline-flex items-center')}
 					>
 						See the cohort
