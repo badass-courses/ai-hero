@@ -19,23 +19,30 @@ function request(body?: BodyInit) {
 }
 
 describe('POST /api/content/progress', () => {
-	beforeEach(() => vi.resetAllMocks())
-
-	it.each([undefined, '', '{'])('rejects unreadable JSON (%s) as 400', async (body) => {
-		const response = await POST(request(body))
-
-		expect(response.status).toBe(400)
-		expect(await response.json()).toEqual({
-			ok: false,
-			error: 'Invalid content progress payload',
-		})
-		expect(captureContentProgress).not.toHaveBeenCalled()
-		expect(logError).not.toHaveBeenCalled()
+	beforeEach(() => {
+		vi.resetAllMocks()
 	})
+
+	it.each([undefined, '', '{'])(
+		'rejects unreadable JSON (%s) as 400',
+		async (body) => {
+			const response = await POST(request(body))
+
+			expect(response.status).toBe(400)
+			expect(await response.json()).toEqual({
+				ok: false,
+				error: 'Invalid content progress payload',
+			})
+			expect(captureContentProgress).not.toHaveBeenCalled()
+			expect(logError).not.toHaveBeenCalled()
+		},
+	)
 
 	it('returns 400 when reading the request body aborts', async () => {
 		const req = request()
-		vi.spyOn(req, 'json').mockRejectedValueOnce(new DOMException('Aborted', 'AbortError'))
+		vi.spyOn(req, 'json').mockRejectedValueOnce(
+			new DOMException('Aborted', 'AbortError'),
+		)
 
 		expect((await POST(req)).status).toBe(400)
 		expect(captureContentProgress).not.toHaveBeenCalled()
