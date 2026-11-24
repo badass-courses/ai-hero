@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
 	warn: vi.fn(),
 	debug: vi.fn(),
 	getLessonVideoPlaybackResource: vi.fn(),
+	getCachedLessonVideoTranscript: vi.fn(),
 	getPlaybackPositionForResource: vi.fn(),
 	getSignedLessonPlayback: vi.fn(),
 	source: vi.fn(),
@@ -39,7 +40,10 @@ vi.mock('@/lib/ai-coding-dictionary', () => ({
 
 vi.mock('@/lib/lessons-query', () => ({
 	getLessonVideoPlaybackResource: mocks.getLessonVideoPlaybackResource,
-	getLessonVideoTranscript: vi.fn().mockResolvedValue(null),
+}))
+
+vi.mock('@/lib/lesson-transcript-cache', () => ({
+	getCachedLessonVideoTranscript: mocks.getCachedLessonVideoTranscript,
 }))
 
 vi.mock('@/lib/session-extract-query', () => ({
@@ -189,6 +193,7 @@ describe('LessonPage office-hours authorization context', () => {
 			muxPlaybackId: 'playback-1',
 			chapters: [],
 		})
+		mocks.getCachedLessonVideoTranscript.mockResolvedValue(null)
 		mocks.getPlaybackPositionForResource.mockResolvedValue(42)
 		mocks.getSignedLessonPlayback.mockResolvedValue({ muxPlaybackId: 'playback-1' })
 		mocks.source.mockReturnValue(null)
@@ -208,6 +213,7 @@ describe('LessonPage office-hours authorization context', () => {
 		let renderParts = {}
 		if (canViewLesson) {
 			await resolveServerTree(await renderLessonPage(timings))
+			expect(mocks.getCachedLessonVideoTranscript).toHaveBeenCalledWith(lesson.id)
 			renderParts = {
 				dictionary: elapsed,
 				compileMdx: elapsed,
@@ -298,6 +304,7 @@ describe('LessonPage office-hours authorization context', () => {
 		expect(mocks.getAiCodingDictionary).not.toHaveBeenCalled()
 		expect(mocks.compileMDX).not.toHaveBeenCalled()
 		expect(mocks.getLessonVideoPlaybackResource).not.toHaveBeenCalled()
+		expect(mocks.getCachedLessonVideoTranscript).not.toHaveBeenCalled()
 		expect(mocks.getPlaybackPositionForResource).not.toHaveBeenCalled()
 		expect(mocks.getSignedLessonPlayback).not.toHaveBeenCalled()
 		expect(mocks.commerce).not.toHaveBeenCalled()

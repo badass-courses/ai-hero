@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
 		NEXT_PUBLIC_URL: 'https://example.test',
 	},
 	limit: vi.fn(),
+	apply: vi.fn(),
+	invalidateLessonTranscript: vi.fn(),
 	credentials: vi.fn(),
 	mux: vi.fn(),
 	asset: vi.fn(),
@@ -72,7 +74,11 @@ vi.mock('@/course-sync/dropbox-mux-source', () => ({
 	verifyDropboxMuxProxyToken: () => true,
 }))
 vi.mock('@/course-sync/control-plane', () => ({
-	createCourseSyncControlPlane: () => ({}),
+	createCourseSyncControlPlane: () => ({ apply: mocks.apply }),
+}))
+vi.mock('@/lib/lesson-transcript-cache', () => ({
+	invalidateLessonTranscript: mocks.invalidateLessonTranscript,
+	LESSON_TRANSCRIPT_TAG: 'lesson-video-transcript',
 }))
 vi.mock('@/course-sync/drizzle-persistence', () => ({
 	drizzleCourseSyncPersistence: {},
@@ -101,7 +107,7 @@ vi.mock('googleapis', () => ({
 		}),
 	},
 }))
-import '@/course-sync/runtime'
+import { courseSyncControlPlane } from '@/course-sync/runtime'
 import { GET as assetGET } from '@/app/api/course-sync/dropbox-asset/route'
 import { GET as dropboxGET } from '@/app/api/integrations/dropbox/route'
 import {
@@ -115,6 +121,27 @@ import {
 	listYouTubeLiveBroadcasts,
 	verifyYouTubeForceSslScope,
 } from './youtube-live-broadcasts'
+
+describe('course sync transcript invalidation', () => {
+	it('invalidates the global tag only after a new successful apply', async () => {
+		const input = { runId: 'run-1', idempotencyKey: 'apply-1' }
+		mocks.invalidateLessonTranscript.mockClear()
+		mocks.apply
+			.mockRejectedValueOnce(new Error('apply failed'))
+			.mockResolvedValueOnce({ state: 'applied', noOp: true })
+			.mockResolvedValueOnce({ state: 'applied', noOp: false })
+
+		await expect(courseSyncControlPlane.apply(input)).rejects.toThrow('apply failed')
+		await expect(courseSyncControlPlane.apply(input)).resolves.toMatchObject({ noOp: true })
+		expect(mocks.invalidateLessonTranscript).not.toHaveBeenCalled()
+
+		await expect(courseSyncControlPlane.apply(input)).resolves.toMatchObject({ noOp: false })
+		expect(mocks.invalidateLessonTranscript).toHaveBeenCalledTimes(1)
+		expect(mocks.invalidateLessonTranscript).toHaveBeenCalledWith(
+			'lesson-video-transcript',
+		)
+	})
+})
 
 const key = Buffer.alloc(32, 7)
 

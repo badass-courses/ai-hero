@@ -10,6 +10,10 @@ import {
 	VIDEO_DETACHED_EVENT,
 } from '@/inngest/events/video-attachment'
 import { inngest } from '@/inngest/inngest.server'
+import {
+	invalidateLessonTranscript,
+	lessonTranscriptTag,
+} from '@/lib/lesson-transcript-cache'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
 import { and, desc, eq, lt, notExists, notInArray, or, sql } from 'drizzle-orm'
@@ -228,6 +232,8 @@ export async function attachVideoResourceToPost(
 				},
 			})
 
+		const transcriptTag = lessonTranscriptTag(postId)
+
 		// If there are existing video resources, detach them
 		if (existingVideoResources.length > 0) {
 			for (const existingResource of existingVideoResources) {
@@ -243,6 +249,7 @@ export async function attachVideoResourceToPost(
 						),
 					)
 
+				invalidateLessonTranscript(transcriptTag)
 				await log.info('post.video.detached', {
 					postId,
 					videoResourceId: existingResource.resourceId,
@@ -272,6 +279,7 @@ export async function attachVideoResourceToPost(
 		await db
 			.insert(contentResourceResource)
 			.values({ resourceOfId: postId, resourceId: videoResourceId })
+		invalidateLessonTranscript(transcriptTag)
 
 		await log.info('post.video.attached', {
 			postId,
@@ -335,6 +343,7 @@ export async function detachVideoResourceFromPost(
 					eq(contentResourceResource.resourceId, videoResourceId),
 				),
 			)
+		invalidateLessonTranscript(lessonTranscriptTag(postId))
 
 		await log.info('post.video.detached', {
 			postId,
