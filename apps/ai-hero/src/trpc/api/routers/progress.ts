@@ -2,7 +2,7 @@ import { cookies } from 'next/headers'
 import { courseBuilderAdapter, db } from '@/db'
 import { resourceProgress } from '@/db/schema'
 import { findOrCreateUserWithPersonalOrg } from '@/lib/find-or-create-user'
-import { getLesson } from '@/lib/lessons-query'
+import { getLesson } from '@/lib/lesson-read-query'
 import {
 	addProgress,
 	getModuleProgressForUser,

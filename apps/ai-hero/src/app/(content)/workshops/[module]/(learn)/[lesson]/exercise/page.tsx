@@ -1,7 +1,7 @@
 import * as React from 'react'
 import type { Metadata, ResolvingMetadata } from 'next'
 import { LessonPage } from '@/app/(content)/workshops/[module]/(learn)/[lesson]/shared-page'
-import { getLesson } from '@/lib/lessons-query'
+import { getLesson } from '@/lib/lesson-read-query'
 import { getCachedMinimalWorkshop } from '@/lib/workshops-query'
 import { getOGImageUrlForResource } from '@/utils/get-og-image-url-for-resource'
 

@@ -23,7 +23,7 @@ vi.mock('@/db', () => ({
 vi.mock('@/lib/entitlements-query', () => ({
 	getAllUserEntitlements: mocks.getAllUserEntitlements,
 }))
-vi.mock('@/lib/lessons-query', () => ({ getLesson: mocks.getLesson }))
+vi.mock('@/lib/lesson-read-query', () => ({ getLesson: mocks.getLesson }))
 vi.mock('@/lib/workshops-query', () => ({
 	getWorkshop: mocks.getWorkshop,
 	getWorkshopsForLesson: mocks.getWorkshopsForLesson,

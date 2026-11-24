@@ -1,4 +1,4 @@
-import { getLessonMuxPlaybackId } from '@/lib/lessons-query'
+import { getLessonMuxPlaybackId } from '@/lib/lesson-read-query'
 import { createTRPCRouter, protectedProcedure } from '@/trpc/api/trpc'
 import { TRPCError } from '@trpc/server'
 import { z } from 'zod'

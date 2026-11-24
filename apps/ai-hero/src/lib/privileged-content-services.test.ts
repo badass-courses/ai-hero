@@ -18,9 +18,11 @@ vi.mock('@/inngest/events/resource-management', () => ({
 vi.mock('@/inngest/inngest.server', () => ({
 	inngest: { send: vi.fn() },
 }))
+vi.mock('@/lib/lesson-read-query', () => ({
+	getAllLessons: mocks.getAllLessons,
+}))
 vi.mock('@/lib/lessons-query', () => ({
 	deleteLessonFromDatabase: vi.fn(),
-	getAllLessons: mocks.getAllLessons,
 	writeLessonUpdateToDatabase: vi.fn(),
 	writeNewLessonToDatabase: vi.fn(),
 }))

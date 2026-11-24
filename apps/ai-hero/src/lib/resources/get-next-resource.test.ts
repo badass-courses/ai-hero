@@ -10,7 +10,7 @@ vi.mock('@/lib/content-navigation', () => ({
 	flattenNavigationResources: (n: { ids: string[] } | null) =>
 		(n?.ids ?? []).map((id) => ({ id })),
 }))
-vi.mock('@/lib/lessons-query', () => ({
+vi.mock('@/lib/lesson-read-query', () => ({
 	getCachedLesson: vi.fn(async (id: string) => lessons.get(id) ?? null),
 }))
 

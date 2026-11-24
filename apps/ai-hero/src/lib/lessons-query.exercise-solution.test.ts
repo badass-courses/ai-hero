@@ -27,7 +27,7 @@ vi.mock('./solutions-query', () => ({
 
 import { log } from '@/server/logger'
 
-import { getExerciseSolution, getLesson } from './lessons-query'
+import { getExerciseSolution, getLesson } from './lesson-read-query'
 
 const now = new Date()
 

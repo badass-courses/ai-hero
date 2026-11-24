@@ -51,7 +51,7 @@ vi.mock('@/db', () => ({
 	courseBuilderAdapter: { getPurchasesForUser: mocks.purchases },
 }))
 vi.mock('@/lib/entitlements-query', () => ({ getAllUserEntitlements: mocks.entitlements }))
-vi.mock('@/lib/lessons-query', () => ({ getCachedLesson: mocks.cachedLesson, getLesson: mocks.lesson }))
+vi.mock('@/lib/lesson-read-query', () => ({ getCachedLesson: mocks.cachedLesson, getLesson: mocks.lesson }))
 vi.mock('@/lib/workshops-query', () => ({ getWorkshopAccessTree: mocks.workshop, getCachedMinimalWorkshop: mocks.minimalWorkshop }))
 vi.mock('@/server/auth', () => ({ getServerAuthSession: mocks.session }))
 vi.mock('@/server/logger', () => ({

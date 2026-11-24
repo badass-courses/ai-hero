@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('@/db', () => ({ db: {} }))
-vi.mock('@/lib/lessons-query', () => ({
+vi.mock('@/lib/lesson-read-query', () => ({
 	getLesson: mocks.getLesson,
 	getExerciseSolution: mocks.getExerciseSolution,
 }))

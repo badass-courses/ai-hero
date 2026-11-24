@@ -24,9 +24,9 @@ import { and, asc, eq, inArray, or, sql } from 'drizzle-orm'
 
 import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 
+import { getAllLessons } from '../lesson-read-query'
 import {
 	deleteLessonFromDatabase,
-	getAllLessons,
 	writeLessonUpdateToDatabase,
 	writeNewLessonToDatabase,
 } from '../lessons-query'

@@ -2,7 +2,7 @@ import { subject } from '@casl/ability'
 import { notFound } from 'next/navigation'
 import LayoutClient from '@/components/layout-client'
 import { env } from '@/env.mjs'
-import { getLesson } from '@/lib/lessons-query'
+import { getLesson } from '@/lib/lesson-read-query'
 import {
 	getSolutionForLesson,
 	getVideoResourceForSolution,

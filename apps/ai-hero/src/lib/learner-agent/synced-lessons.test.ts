@@ -46,7 +46,7 @@ vi.mock('@/lib/workshops-query', () => ({
 	getCachedWorkshopNavigation: mocks.getNavigation,
 	getWorkshopsForLesson: async () => [workshop],
 }))
-vi.mock('@/lib/lessons-query', () => ({
+vi.mock('@/lib/lesson-read-query', () => ({
 	getLesson: mocks.getLesson,
 	getCachedLesson: mocks.getLesson,
 	getExerciseSolution: async () => ({

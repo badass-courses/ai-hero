@@ -13,10 +13,9 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('next/navigation', () => ({ notFound: mocks.notFound }))
 vi.mock('./shared-page', () => ({ LessonPage: mocks.LessonPage }))
-vi.mock('@/lib/lessons-query', () => ({
+vi.mock('@/lib/lesson-read-query', () => ({
 	getLesson: mocks.getLesson,
 	getCachedExerciseSolution: mocks.getCachedExerciseSolution,
-	getExerciseSolution: vi.fn(),
 }))
 vi.mock('@/lib/workshops-query', () => ({
 	getCachedMinimalWorkshop: mocks.getCachedMinimalWorkshop,
