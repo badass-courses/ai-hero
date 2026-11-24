@@ -207,7 +207,7 @@ vi.mock('@/lib/surveys-api', () => ({
 	SurveyApiError: class SurveyApiError extends Error {},
 	updateSurveyForApi: mocks.updateSurveyForApi,
 }))
-vi.mock('@/lib/video-resource-query', () => ({
+vi.mock('@/lib/video-resource-read', () => ({
 	getVideoResource: mocks.getVideoResource,
 }))
 vi.mock('@/server/ability-for-request', () => ({

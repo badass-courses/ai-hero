@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
 	log: { error: vi.fn(), info: vi.fn(), warn: vi.fn() },
 }))
 
-vi.mock('@/lib/video-resource-query', () => ({
+vi.mock('@/lib/video-resource-read', () => ({
 	getVideoResource: mocks.getVideoResource,
 }))
 vi.mock('@/server/logger', () => ({ log: mocks.log }))

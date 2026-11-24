@@ -26,7 +26,7 @@ import { TypesenseResourceSchema } from './typesense'
 import { selectTypesenseRecommendation } from './typesense-recommendations'
 import { computeVideoFacts, type VideoFacts } from './video-facts'
 import { getVideoFactsForResource, loadVideoGraph } from './video-facts-query'
-import { getVideoResource } from './video-resource-query'
+import { getVideoResource } from './video-resource-read'
 import { getWorkshopsForLesson } from './workshops-query'
 
 function getErrorMessage(error: unknown) {
