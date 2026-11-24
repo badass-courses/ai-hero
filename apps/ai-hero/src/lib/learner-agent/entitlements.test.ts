@@ -86,15 +86,15 @@ function arrange({
 		contentIds: ['requested-workshop'],
 		startsAt,
 	})
-	const module = {
+	const workshop = {
 		...fixture.module,
 		fields: { ...fixture.module.fields, state },
 	}
-	mocks.getWorkshop.mockResolvedValue(module)
+	mocks.getWorkshop.mockResolvedValue(workshop)
 	mocks.getLesson.mockResolvedValue(fixture.lesson)
-	mocks.getWorkshopsForLesson.mockResolvedValue([{ id: module.id }])
+	mocks.getWorkshopsForLesson.mockResolvedValue([{ id: workshop.id }])
 	mocks.getAllUserEntitlements.mockResolvedValue(entitlements)
-	return { module, lesson: fixture.lesson }
+	return { module: workshop, lesson: fixture.lesson }
 }
 
 beforeEach(() => {
