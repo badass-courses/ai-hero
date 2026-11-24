@@ -178,11 +178,11 @@ describe('ResourceListView completion check', () => {
 		act(() => {
 			link?.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
 		})
-		expect(prefetch).toHaveBeenCalledExactlyOnceWith(href)
+		expect(prefetch.mock.calls).toEqual([[href]])
 
 		prefetch.mockClear()
 		act(() => link?.focus())
-		expect(prefetch).toHaveBeenCalledExactlyOnceWith(href)
+		expect(prefetch.mock.calls).toEqual([[href]])
 	})
 
 	it('draws the check when a lesson is completed while mounted', () => {
