@@ -217,7 +217,7 @@ const FreeCourseCta = ({
 		api.ability.getSkillsCourseCtaState.useQuery()
 	const isSubscribed = courseCta?.state === 'subscribed'
 
-	const { status: sessionStatus } = useSession()
+	const sessionStatus = useSession()?.status ?? 'unauthenticated'
 
 	// Does this reader already own what the ladder is about to offer them?
 	//
@@ -376,7 +376,8 @@ const Navigation = () => {
 		setIsSearchOpen(false)
 	}, [pathname])
 
-	const { data: sessionData, status: sessionStatus } = useSession()
+	const { data: sessionData, status: sessionStatus = 'unauthenticated' } =
+		useSession() ?? {}
 	// The gating read, not the full one. This runs in the root layout on every
 	// page in the site, and the full read re-fetches the subscriber from Kit
 	// whenever the cookie is partial — a third-party round-trip per navigation

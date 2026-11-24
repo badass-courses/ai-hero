@@ -56,6 +56,14 @@ function expectNoPrefetch(link: Element | null) {
 	expect(link?.getAttribute('data-prefetch')).toBe('false')
 }
 
+it('renders anonymous account links when the session context is unavailable', async () => {
+	useSession.mockReturnValue(undefined)
+	const footer = await renderFooter()
+
+	expect(footer.querySelector('a[href="/login"]')?.textContent).toContain('Log in')
+	expect(footer.querySelector('a[href="/profile#my-courses"]')).toBeNull()
+})
+
 describe('footer link prefetch', () => {
 	it('skips cohort renders, login, the signup funnel and markdown but keeps static page defaults', async () => {
 		useSession.mockReturnValue({ data: null, status: 'unauthenticated' })
