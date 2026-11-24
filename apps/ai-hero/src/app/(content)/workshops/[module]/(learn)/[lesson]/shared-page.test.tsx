@@ -38,7 +38,7 @@ vi.mock('@/lib/ai-coding-dictionary', () => ({
 	getAiCodingDictionary: mocks.getAiCodingDictionary,
 }))
 
-vi.mock('@/lib/lessons-query', () => ({
+vi.mock('@/lib/lesson-video-query', () => ({
 	getLessonVideoPlaybackResource: mocks.getLessonVideoPlaybackResource,
 }))
 

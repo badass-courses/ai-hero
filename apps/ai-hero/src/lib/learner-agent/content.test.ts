@@ -11,8 +11,10 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/db', () => ({ db: {} }))
 vi.mock('@/lib/lessons-query', () => ({
 	getLesson: mocks.getLesson,
-	getLessonVideoTranscript: mocks.getLessonVideoTranscript,
 	getExerciseSolution: mocks.getExerciseSolution,
+}))
+vi.mock('@/lib/lesson-video-query', () => ({
+	getLessonVideoTranscript: mocks.getLessonVideoTranscript,
 }))
 vi.mock('@/lib/session-extract-query', () => ({
 	getLessonSessionExtract: mocks.getLessonSessionExtract,

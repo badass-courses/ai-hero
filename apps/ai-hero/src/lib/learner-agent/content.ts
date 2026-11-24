@@ -3,11 +3,8 @@ import { contentResource } from '@/db/schema'
 import { CohortOfficeHoursSessionsSchema } from '@/lib/cohort-office-hours'
 import { getCachedCohortNavigation } from '@/lib/cohort-navigation-query'
 import type { ResourceNavigation } from '@/lib/content-navigation'
-import {
-	getExerciseSolution,
-	getLesson,
-	getLessonVideoTranscript,
-} from '@/lib/lessons-query'
+import { getLessonVideoTranscript } from '@/lib/lesson-video-query'
+import { getExerciseSolution, getLesson } from '@/lib/lessons-query'
 import { sanitizeResourcePayload } from '@/lib/resource-api-sanitizer'
 import { getLessonSessionExtract } from '@/lib/session-extract-query'
 import { getSkillEntries } from '@/lib/skills-query'
