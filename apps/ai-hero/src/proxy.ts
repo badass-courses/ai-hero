@@ -88,6 +88,17 @@ function respondWithoutSession(req: NextRequest): NextResponse | undefined {
 			: NextResponse.next()
 	}
 
+	// Next decodes dynamic route parameters before invoking the post page.
+	// Match only encoded single segments so ordinary posts stay off the proxy.
+	if (/^\/[^/]*%[^/]*\/?$/.test(pathname)) {
+		try {
+			decodeURIComponent(pathname)
+		} catch {
+			return new NextResponse(null, { status: 400 })
+		}
+		return NextResponse.next()
+	}
+
 	const campaignLandingMatch = pathname.match(/^\/c\/([^/]+)\/([^/]+)\/?$/)
 
 	if (campaignLandingMatch) {
@@ -331,5 +342,6 @@ export const config = {
 		'/llms.txt',
 		'/md/:path*',
 		'/:path*.md',
+		'/:post([^/]*%[^/]*)',
 	],
 }
