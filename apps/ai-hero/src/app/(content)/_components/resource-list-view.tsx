@@ -39,6 +39,7 @@ import {
 import { cn } from '@coursebuilder/utils/cn'
 
 import { AutoPlayToggle } from './autoplay-toggle'
+import { LessonIntentLink } from './lesson-intent-link'
 
 /**
  * The module that follows this one, rendered as the last row of the list.
@@ -615,9 +616,9 @@ function LessonResource({
 			>
 				<div className="relative flex w-full min-w-0 items-center">
 					{canViewLesson ? (
-						<Link href={lessonHref} prefetch className={rowClasses}>
+						<LessonIntentLink href={lessonHref} className={rowClasses}>
 							{rowContent}
-						</Link>
+						</LessonIntentLink>
 					) : (
 						<div className={rowClasses}>{rowContent}</div>
 					)}
@@ -659,9 +660,8 @@ function LessonResource({
 			/>
 			<div className="bg-card dark:bg-foreground/[0.07] relative">
 				<div className="relative flex w-full min-w-0 items-center">
-					<Link
+					<LessonIntentLink
 						href={lessonHref}
-						prefetch
 						className="relative flex w-full min-w-0 items-center py-2.5 pl-4 pr-12 transition-colors"
 					>
 						<span
@@ -686,7 +686,7 @@ function LessonResource({
 						>
 							{lesson.fields?.title}
 						</span>
-					</Link>
+					</LessonIntentLink>
 					{canCreate && editHref && (
 						<Button
 							asChild
@@ -702,9 +702,8 @@ function LessonResource({
 				</div>
 				<ul>
 					<li data-active={isActiveLesson ? 'true' : 'false'}>
-						<Link
+						<LessonIntentLink
 							href={lessonHref}
-							prefetch
 							className={cn(
 								subRowBase,
 								isActiveLesson ? subRowActive : subRowInactive,
@@ -730,12 +729,11 @@ function LessonResource({
 							>
 								Problem
 							</span>
-						</Link>
+						</LessonIntentLink>
 					</li>
 					<li data-active={isActiveSolution ? 'true' : 'false'}>
-						<Link
+						<LessonIntentLink
 							href={`${lessonHref}/solution`}
-							prefetch
 							className={cn(
 								subRowBase,
 								isActiveSolution ? subRowActive : subRowInactive,
@@ -761,7 +759,7 @@ function LessonResource({
 							>
 								Solution
 							</span>
-						</Link>
+						</LessonIntentLink>
 					</li>
 				</ul>
 			</div>

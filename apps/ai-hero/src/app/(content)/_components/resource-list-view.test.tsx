@@ -3,13 +3,29 @@ import * as React from 'react'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
 	isFreshCompletion,
 	ResourceListView,
 	type NextModuleLink,
 } from './resource-list-view'
+
+const { prefetch } = vi.hoisted(() => ({ prefetch: vi.fn() }))
+
+vi.mock('next/navigation', async (importOriginal) => ({
+	...(await importOriginal<typeof import('next/navigation')>()),
+	useRouter: () => ({ prefetch }),
+}))
+
+vi.mock('next/link', () => ({
+	default: ({
+		prefetch,
+		...props
+	}: React.ComponentProps<'a'> & { prefetch?: boolean }) => (
+		<a {...props} data-prefetch={prefetch} />
+	),
+}))
 
 function render(
 	overrides: Partial<React.ComponentProps<typeof ResourceListView>> = {},
@@ -147,6 +163,26 @@ describe('ResourceListView completion check', () => {
 	afterEach(() => {
 		act(() => root.unmount())
 		container.remove()
+	})
+
+	it('prefetches lesson rows on hover and focus, not on mount or viewport', () => {
+		prefetch.mockClear()
+		mount([])
+
+		const href = '/workshops/claude-code~p9j8f/permissions~pwt8r'
+		const link = container.querySelector<HTMLAnchorElement>(`a[href="${href}"]`)
+		expect(link).not.toBeNull()
+		expect(link?.dataset.prefetch).toBe('false')
+		expect(prefetch).not.toHaveBeenCalled()
+
+		act(() => {
+			link?.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+		})
+		expect(prefetch.mock.calls).toEqual([[href]])
+
+		prefetch.mockClear()
+		act(() => link?.focus())
+		expect(prefetch.mock.calls).toEqual([[href]])
 	})
 
 	it('draws the check when a lesson is completed while mounted', () => {
