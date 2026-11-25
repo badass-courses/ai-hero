@@ -1,7 +1,7 @@
 // get mux thumbnail
 
 import { NextRequest, NextResponse } from 'next/server'
-import { getVideoResource } from '@/lib/video-resource-query'
+import { getVideoResource } from '@/lib/video-resource-read'
 import { log } from '@/server/logger'
 import { withSkill } from '@/server/with-skill'
 

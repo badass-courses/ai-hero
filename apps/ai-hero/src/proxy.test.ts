@@ -58,6 +58,10 @@ describe('proxy matcher', () => {
 		'/md/workshops/agentic-coding/lesson-one',
 		'/skills.md',
 		'/workshops/agentic-coding/lesson-one.md',
+		'/skills%E2%80%94discussed',
+		'/grill-with-doc%EE%80%80s',
+		'/archived%ZZ',
+		'/archived%E2%80',
 	])('includes %s', (url) => {
 		expect(doesProxyMatch(url)).toBe(true)
 	})
@@ -65,8 +69,6 @@ describe('proxy matcher', () => {
 	it.each([
 		'/',
 		'/a-public-post',
-		'/skills%E2%80%94discussed',
-		'/grill-with-doc%EE%80%80s',
 		'/lists',
 		'/lists/ai-coding',
 		'/sitemap.xml',
@@ -82,6 +84,25 @@ describe('proxy matcher', () => {
 		'/robots.txt',
 	])('excludes %s', (url) => {
 		expect(doesProxyMatch(url)).toBe(false)
+	})
+})
+
+describe('encoded post URLs', () => {
+	it.each(['/archived%ZZ', '/archived%E2%80'])('returns 400 for %s', async (path) => {
+		const response = await runProxy(new NextRequest(`https://example.test${path}`))
+
+		expect(response.status).toBe(400)
+		expect(response.body).toBeNull()
+	})
+
+	it('passes through a valid encoded post without checking the session', async () => {
+		authSpy.mockClear()
+		const response = await runProxy(new NextRequest('https://example.test/skills%E2%80%94discussed', {
+			headers: { cookie: 'authjs.session-token=synthetic' },
+		}))
+
+		expect(response.headers.get('x-middleware-next')).toBe('1')
+		expect(authSpy).not.toHaveBeenCalled()
 	})
 })
 

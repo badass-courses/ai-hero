@@ -217,7 +217,8 @@ function CohortsColumn() {
 
 function AccountColumn() {
 	const [mounted, setMounted] = React.useState(false)
-	const { data: sessionData, status: sessionStatus } = useSession()
+	const { data: sessionData, status: sessionStatus = 'unauthenticated' } =
+		useSession() ?? {}
 	const { data: abilityRules } = api.ability.getCurrentAbilityRules.useQuery()
 	const ability = createAppAbility(abilityRules || [])
 	const canViewInvoice = ability.can('read', 'Invoice')

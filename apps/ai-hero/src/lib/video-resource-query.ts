@@ -14,6 +14,7 @@ import {
 	invalidateLessonTranscript,
 	lessonTranscriptTag,
 } from '@/lib/lesson-transcript-cache'
+import { getVideoResource as readVideoResource } from '@/lib/video-resource-read'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
 import { and, desc, eq, lt, notExists, notInArray, or, sql } from 'drizzle-orm'
@@ -22,7 +23,15 @@ import { z } from 'zod'
 import { ContentResourceSchema } from '@coursebuilder/core/schemas/content-resource-schema'
 
 export async function getVideoResource(id: string | null | undefined) {
-	return courseBuilderAdapter.getVideoResource(id)
+	const { session, ability } = await getServerAuthSession()
+	if (
+		!session?.user ||
+		(!ability.can('create', 'Content') && !ability.can('update', 'Content'))
+	) {
+		throw new Error('Unauthorized')
+	}
+
+	return readVideoResource(id)
 }
 
 export type PaginatedVideoResourcesResponse = {

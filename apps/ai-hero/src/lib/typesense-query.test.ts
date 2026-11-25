@@ -17,7 +17,7 @@ vi.mock('next/cache', () => ({
 vi.mock('./posts-query', () => ({ getPostTags: mocks.getPostTags }))
 vi.mock('./solutions-query', () => ({ getLessonForSolution: vi.fn() }))
 vi.mock('./workshops-query', () => ({ getWorkshopsForLesson: vi.fn() }))
-vi.mock('./video-resource-query', () => ({ getVideoResource: vi.fn() }))
+vi.mock('./video-resource-read', () => ({ getVideoResource: vi.fn() }))
 vi.mock('./video-facts-query', () => ({
 	getVideoFactsForResource: mocks.getVideoFacts,
 	loadVideoGraph: vi.fn(),

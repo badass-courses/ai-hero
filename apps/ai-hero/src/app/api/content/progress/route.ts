@@ -6,8 +6,17 @@ import { z } from 'zod'
 import { retryOnceOnLockTimeout } from './retry-lock-timeout'
 
 export async function POST(request: NextRequest) {
+	let body: unknown
 	try {
-		const body = await request.json()
+		body = await request.json()
+	} catch {
+		return NextResponse.json(
+			{ ok: false, error: 'Invalid content progress payload' },
+			{ status: 400 },
+		)
+	}
+
+	try {
 		const result = await retryOnceOnLockTimeout(() =>
 			captureContentProgress(body),
 		)
