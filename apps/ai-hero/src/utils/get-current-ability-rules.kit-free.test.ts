@@ -5,6 +5,8 @@ const mocks = vi.hoisted(() => ({
 	getWorkshop: vi.fn(),
 	getLesson: vi.fn(),
 	getSession: vi.fn(),
+	requestCache: new Map<(...args: unknown[]) => unknown, Map<string, unknown>>(),
+	cacheEnabled: false,
 	getSubscriber: vi.fn(),
 	getSubscriberByEmail: vi.fn(),
 	getSubscriberFromCookie: vi.fn(),
@@ -26,7 +28,16 @@ vi.mock('@/db', () => ({
 }))
 vi.mock('react', async (original) => ({
 	...(await original<typeof import('react')>()),
-	cache: (fn: unknown) => fn,
+	cache: (fn: (...args: unknown[]) => unknown) => (...args: unknown[]) => {
+		if (!mocks.cacheEnabled) return fn(...args)
+		const entries = mocks.requestCache.get(fn) ?? new Map<string, unknown>()
+		mocks.requestCache.set(fn, entries)
+		// Like React cache for these scalar inputs, an omitted trailing argument
+		// and an explicit undefined have distinct keys.
+		const key = JSON.stringify(args)
+		if (!entries.has(key)) entries.set(key, fn(...args))
+		return entries.get(key)
+	},
 }))
 vi.mock('next/cache', () => ({ unstable_cache: (fn: unknown) => fn }))
 vi.mock('next/headers', () => ({
@@ -60,6 +71,7 @@ vi.mock('@/server/auth', () => ({ getServerAuthSession: mocks.getSession }))
 vi.mock('@/server/perf', () => ({
 	measureIfSlow: ({ operation }: { operation: () => Promise<unknown> }) =>
 		operation(),
+	noTimings: {},
 }))
 vi.mock('@/server/logger', () => ({
 	log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -70,7 +82,10 @@ vi.mock('@/utils/get-resource-section', () => ({
 
 import { defineRulesForPurchases } from '@/ability'
 import { cohortAbilityFixture } from '@/ability/test-fixtures/cohort-content-scope'
-import { getCurrentAbilityRules } from './get-current-ability-rules'
+import {
+	getAbilityForResource,
+	getCurrentAbilityRules,
+} from './get-current-ability-rules'
 
 // A full Kit record, the shape getSubscriberFromCookie used to return here.
 const kitSubscriber = {
@@ -97,8 +112,25 @@ describe('ability rules without the Kit subscriber', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 		mocks.cookies.clear()
+		mocks.requestCache.clear()
+		mocks.cacheEnabled = false
 		mocks.getSubscriberFromCookie.mockResolvedValue(kitSubscriber)
 		mocks.getSubscriber.mockResolvedValue(kitSubscriber)
+	})
+
+	it('reuses the lesson access rules when the page asks for the raw rules', async () => {
+		mocks.cacheEnabled = true
+		const fixture = viewers.entitled()
+		mocks.getSession.mockResolvedValue({ session: { user: fixture.input.user } })
+		mocks.getWorkshop.mockResolvedValue(fixture.module)
+		mocks.getLesson.mockResolvedValue(fixture.lesson)
+		const input = { lessonId: 'paid-lesson', moduleId: 'requested-workshop' }
+
+		await getAbilityForResource(input.lessonId, input.moduleId)
+		const rules = await getCurrentAbilityRules(input)
+
+		expect(rules.length).toBeGreaterThan(0)
+		expect(mocks.getSession).toHaveBeenCalledOnce()
 	})
 
 	it.each(Object.entries(viewers))(

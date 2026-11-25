@@ -6,6 +6,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
 	compileMDX: vi.fn(),
 	getAbilityForResource: vi.fn(),
+	getCurrentAbilityRules: vi.fn(),
+	abilitySeed: vi.fn(),
+	getCachedLesson: vi.fn(),
+	getCachedMinimalWorkshop: vi.fn(),
 	getAiCodingDictionary: vi.fn(),
 	redirect: vi.fn(),
 	notFound: vi.fn(),
@@ -32,6 +36,16 @@ vi.mock('@/utils/compile-mdx', () => ({
 
 vi.mock('@/utils/get-current-ability-rules', () => ({
 	getAbilityForResource: mocks.getAbilityForResource,
+	getCurrentAbilityRules: mocks.getCurrentAbilityRules,
+}))
+vi.mock('@/lib/lesson-read-query', () => ({
+	getCachedLesson: mocks.getCachedLesson,
+}))
+vi.mock('@/lib/workshops-query', () => ({
+	getCachedMinimalWorkshop: mocks.getCachedMinimalWorkshop,
+}))
+vi.mock('@/app/(content)/workshops/_components/lesson-ability-seed', () => ({
+	LessonAbilitySeed: mocks.abilitySeed,
 }))
 
 vi.mock('@/lib/ai-coding-dictionary', () => ({
@@ -115,6 +129,7 @@ vi.mock('../../../_components/lesson-body', () => ({
 	LessonBody: () => null,
 }))
 
+import LessonPageWrapper, { dynamic } from './page'
 import { LessonPage, type LessonTimingPart } from './shared-page'
 import { sampleTimings } from '@/server/perf'
 import { createAppAbility, defineRulesForPurchases } from '@/ability'
@@ -199,6 +214,50 @@ describe('LessonPage office-hours authorization context', () => {
 		mocks.source.mockReturnValue(null)
 		mocks.controls.mockReturnValue(null)
 	})
+
+	it('keeps personalized rule seeding on a force-dynamic page', () => {
+		expect(dynamic).toBe('force-dynamic')
+	})
+
+	it.each(['allowed', 'anonymous', 'denied'] as const)(
+		'only seeds signed-in viewers after the lesson access check (%s)',
+		async (viewer) => {
+			const input = { moduleId: 'workshop-slug', lessonId: 'lesson-slug' }
+			const rules = [{ action: 'manage', subject: 'all' }]
+			mocks.getCachedLesson.mockResolvedValue(lesson)
+			mocks.getCachedMinimalWorkshop.mockResolvedValue(workshop)
+			mocks.abilitySeed.mockReturnValue(null)
+			mocks.getCurrentAbilityRules.mockResolvedValue(rules)
+			mocks.getAbilityForResource.mockResolvedValue({
+				...baseAbility,
+				canViewLesson: viewer !== 'denied',
+			})
+			vi.mocked(getServerAuthSession).mockResolvedValue({
+				session: viewer === 'anonymous' ? null : { user: { id: 'viewer' } },
+				ability: createAppAbility(),
+			})
+
+			const tree = await LessonPageWrapper({
+				params: Promise.resolve({ module: input.moduleId, lesson: input.lessonId }),
+				searchParams: Promise.resolve({}),
+			})
+			if (viewer === 'denied') {
+				await expect(resolveServerTree(tree)).rejects.toThrow('NEXT_REDIRECT')
+				expect(mocks.abilitySeed).not.toHaveBeenCalled()
+			} else {
+				await resolveServerTree(tree)
+				expect(mocks.abilitySeed).toHaveBeenCalledWith({
+					...input,
+					viewer: viewer === 'allowed' ? { id: 'viewer', rules } : null,
+				})
+			}
+			if (viewer === 'allowed') {
+				expect(mocks.getCurrentAbilityRules.mock.calls).toEqual([[input]])
+			} else {
+				expect(mocks.getCurrentAbilityRules).not.toHaveBeenCalled()
+			}
+		},
+	)
 
 	it.each([true, false])('logs one sample for canViewLesson=%s', async (canViewLesson) => {
 		vi.mocked(getServerAuthSession).mockResolvedValueOnce({

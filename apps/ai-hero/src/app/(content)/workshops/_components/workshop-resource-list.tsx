@@ -19,10 +19,8 @@ import {
 	getWorkshopResourceHref,
 	type CourseResource,
 } from '@/lib/course-resume-navigation'
-import { api } from '@/trpc/react'
 import { formatCohortDateRange } from '@/utils/format-cohort-date'
 import type { RawRuleOf } from '@casl/ability'
-import { useSession } from 'next-auth/react'
 
 import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 
@@ -31,6 +29,7 @@ import {
 	type NextModuleLink,
 } from '../../_components/resource-list-view'
 import { useCohortNavigation } from './cohort-navigation-provider'
+import { useWorkshopAbilityRules } from './use-workshop-ability'
 
 type Props = {
 	currentSectionSlug?: string | null
@@ -127,19 +126,14 @@ export function WorkshopResourceList(props: Props) {
 	const currentLessonSlug =
 		typeof params.lesson === 'string' ? params.lesson : undefined
 	const pathname = usePathname()
-	const { status: sessionStatus } = useSession()
+	const {
+		query: { data: abilityRules, status: abilityStatus },
+		sessionStatus,
+	} = useWorkshopAbilityRules({
+		moduleId: workshopNavigation?.id,
+		lessonId: currentLessonSlug,
+	})
 	const isAnonymousShell = sessionStatus !== 'authenticated'
-
-	const { data: abilityRules, status: abilityStatus } =
-		api.ability.getCurrentAbilityRules.useQuery(
-			{
-				moduleId: workshopNavigation?.id,
-				lessonId: currentLessonSlug,
-			},
-			{
-				enabled: sessionStatus === 'authenticated' && !!workshopNavigation?.id,
-			},
-		)
 
 	const ability = createAppAbility(
 		isAnonymousShell

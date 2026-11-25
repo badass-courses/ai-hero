@@ -4,13 +4,18 @@ import {
 	LessonPage,
 	type LessonTimingPart,
 } from '@/app/(content)/workshops/[module]/(learn)/[lesson]/shared-page'
+import { LessonAbilitySeed } from '@/app/(content)/workshops/_components/lesson-ability-seed'
 import { getCachedLesson } from '@/lib/lesson-read-query'
 import { getCachedMinimalWorkshop } from '@/lib/workshops-query'
+import { getServerAuthSession } from '@/server/auth'
 import { measureIfSlow, sampleTimings } from '@/server/perf'
+import { getCurrentAbilityRules } from '@/utils/get-current-ability-rules'
 import { getOGImageUrlForResource } from '@/utils/get-og-image-url-for-resource'
 
 // Lesson bodies and playback IDs are paid data. Keep this route request-bound
 // so the server ability check in shared-page runs before either loader.
+// The rules below are user-specific: a cached or shared shell could serve
+// one user's purchases to everyone.
 export const dynamic = 'force-dynamic'
 
 export async function generateMetadata(
@@ -70,9 +75,27 @@ export default async function LessonPageWrapper(props: Props) {
 						lesson={lesson}
 						params={params}
 						workshop={workshop}
+						abilitySeed={
+							<LessonPageAbilitySeed
+								moduleId={params.module}
+								lessonId={params.lesson}
+							/>
+						}
 						timings={timings}
 					/>
 				)
 			}),
 	})
+}
+
+async function LessonPageAbilitySeed(input: {
+	moduleId: string
+	lessonId: string
+}) {
+	const { session } = await getServerAuthSession()
+	const id = session?.user?.id
+	// LessonPage renders this slot only after its access check. That check
+	// already resolved these same rules in React's request cache.
+	const viewer = id ? { id, rules: await getCurrentAbilityRules(input) } : null
+	return <LessonAbilitySeed {...input} viewer={viewer} />
 }
