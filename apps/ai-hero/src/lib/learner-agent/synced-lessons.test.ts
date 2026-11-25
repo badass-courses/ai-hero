@@ -49,10 +49,12 @@ vi.mock('@/lib/workshops-query', () => ({
 vi.mock('@/lib/lessons-query', () => ({
 	getLesson: mocks.getLesson,
 	getCachedLesson: mocks.getLesson,
-	getLessonVideoTranscript: async () => 'Synthetic transcript',
 	getExerciseSolution: async () => ({
 		solution: { fields: { title: 'Solution', body: 'Synthetic answer' } },
 	}),
+}))
+vi.mock('@/lib/lesson-video-query', () => ({
+	getLessonVideoTranscript: async () => 'Synthetic transcript',
 }))
 vi.mock('@/lib/cohort-navigation-query', () => ({
 	getCachedCohortNavigation: vi.fn(),

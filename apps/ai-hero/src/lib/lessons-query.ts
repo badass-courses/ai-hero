@@ -30,14 +30,10 @@ import {
 	ContentResourceSchema,
 	type ContentResourceResource,
 } from '@coursebuilder/core/schemas'
-import {
-	VideoChapterSchema,
-	VideoResourceSchema,
-} from '@coursebuilder/core/schemas/video-resource'
+import { VideoResourceSchema } from '@coursebuilder/core/schemas/video-resource'
 import { last } from '@coursebuilder/nodash'
 
 import {
-	getUncachedLessonVideoTranscript,
 	invalidateLessonTranscript,
 	lessonTranscriptTag,
 } from './lesson-transcript-cache'
@@ -95,12 +91,6 @@ function getResourceSlug(resource: unknown): string | undefined {
 	return undefined
 }
 
-export const getLessonVideoTranscript = async (
-	lessonIdOrSlug?: string | null,
-) => {
-	return lessonIdOrSlug ? getUncachedLessonVideoTranscript(lessonIdOrSlug) : null
-}
-
 export const getVideoResourceForLesson = async (lessonIdOrSlug: string) => {
 	const query = sql`SELECT *
 		FROM ${contentResource} AS cr_lesson
@@ -122,60 +112,6 @@ export const getVideoResourceForLesson = async (lessonIdOrSlug: string) => {
 	}
 
 	return VideoResourceSchema.parse(videoResource)
-}
-
-const LessonVideoPlaybackResourceSchema = z.object({
-	id: z.string(),
-	muxPlaybackId: z.string().nullable().optional(),
-	muxSignedPlaybackId: z.string().nullable().optional(),
-	chapters: z.preprocess((value) => {
-		if (typeof value !== 'string') return value
-		try {
-			return JSON.parse(value)
-		} catch {
-			return value
-		}
-	}, z.array(VideoChapterSchema).nullable().optional()),
-})
-
-export const getLessonVideoPlaybackResource = async (
-	lessonIdOrSlug: string,
-) => {
-	return measureIfSlow({
-		event: 'perf.lesson.video-playback-resource.slow',
-		spanName: 'lesson.video-playback-resource.fetch',
-		thresholdMs: 100,
-		data: { lessonIdOrSlug },
-		operation: async () => {
-			const query = sql`SELECT
-					cr_video.id AS id,
-					cr_video.fields->>'$.muxPlaybackId' AS muxPlaybackId,
-					cr_video.fields->>'$.muxSignedPlaybackId' AS muxSignedPlaybackId,
-					JSON_EXTRACT(cr_video.fields, '$.chapters') AS chapters
-				FROM ${contentResource} AS cr_lesson
-				JOIN ${contentResourceResource} AS crr ON cr_lesson.id = crr.resourceOfId
-				JOIN ${contentResource} AS cr_video ON crr.resourceId = cr_video.id
-				WHERE (cr_lesson.id = ${lessonIdOrSlug} OR JSON_UNQUOTE(JSON_EXTRACT(cr_lesson.fields, '$.slug')) = ${lessonIdOrSlug})
-					AND cr_video.type = 'videoResource'
-				LIMIT 1;`
-			const result = await db.execute(query)
-
-			const parsedResult = z
-				.array(LessonVideoPlaybackResourceSchema)
-				.safeParse(result.rows)
-
-			if (!parsedResult.success) {
-				await log.error('lesson.video-playback-resource.error', {
-					lessonId: lessonIdOrSlug,
-					slug: lessonIdOrSlug,
-					error: formatZodError(parsedResult.error),
-				})
-				return null
-			}
-
-			return parsedResult.data[0] ?? null
-		},
-	})
 }
 
 export const getLessonMuxPlaybackId = async (lessonIdOrSlug: string) => {
