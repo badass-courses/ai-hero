@@ -1,7 +1,7 @@
 import { revalidateTag } from 'next/cache'
 import { db, type DbExecutor } from '@/db'
 import { contentResource, contentResourceResource } from '@/db/schema'
-import { getUsersEntitledToWorkshops } from '@/lib/cohort-workshop-emails-query'
+import { getUsersEntitledToWorkshops } from '@/lib/cohort-workshop-entitlements-query'
 import { type Cohort } from '@/lib/cohort'
 import { getAllWorkshopsInCohort, getCohort } from '@/lib/cohorts-query'
 import { EmailSchema, type NewEmail } from '@/lib/emails'

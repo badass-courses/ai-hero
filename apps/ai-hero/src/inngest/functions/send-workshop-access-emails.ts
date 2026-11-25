@@ -2,9 +2,9 @@ import { WorkshopBatchAccessEmail } from '@/emails/workshop-batch-access-email'
 import { inngest } from '@/inngest/inngest.server'
 import {
 	getCohortProducts,
-	getUserWorkshopEntitlements,
 	getWorkshopsStartingToday,
 } from '@/lib/cohort-workshop-emails-query'
+import { getUserWorkshopEntitlements } from '@/lib/cohort-workshop-entitlements-query'
 import { getAllWorkshopsInCohort } from '@/lib/cohorts-query'
 import { groupWorkshopsByStartTime } from '@/lib/group-workshops-by-start-time'
 import type { Workshop } from '@/lib/workshops'
