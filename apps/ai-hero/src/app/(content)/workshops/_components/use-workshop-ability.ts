@@ -27,7 +27,7 @@ export function useWorkshopAbilityRules({
 	// branch only repeats a cohort grant already scoped to this same module.
 	// Both consumers can use the page's input without unlocking more rows.
 	const input = scope?.input ?? { moduleId, lessonId }
-	const waitingForPage = Boolean(scope && !scope.seed)
+	const waitingForPage = scope?.waitingForPage ?? false
 	const viewer = scope?.seed?.viewer
 	const initialData = viewer?.id === userId ? viewer?.rules : undefined
 	const key = getQueryKey(api.ability.getCurrentAbilityRules, input, 'query')

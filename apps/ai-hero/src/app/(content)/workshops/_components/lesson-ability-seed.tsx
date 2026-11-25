@@ -5,6 +5,7 @@ import {
 	useCallback,
 	useContext,
 	useEffect,
+	useMemo,
 	useState,
 	type ReactNode,
 } from 'react'
@@ -24,7 +25,12 @@ type Seed = {
 type LessonScope = {
 	input: Pick<Seed, 'moduleId' | 'lessonId'>
 	seed: Seed | undefined
+	waitingForPage: boolean
 }
+
+// Let the streamed page register before mounting the live query. A denied
+// lesson redirects and a missing lesson renders no seed at all.
+const SEED_WAIT_MS = 250
 
 const ScopeContext = createContext<LessonScope | null>(null)
 const RegisterContext = createContext<((seed: Seed) => () => void) | null>(null)
@@ -39,16 +45,24 @@ export function LessonAbilitySeedProvider({ children }: { children: ReactNode })
 	}, [])
 	// Only the base lesson page supplies a seed. Exercise and solution keep
 	// their existing client queries. The sidebar outlives all these pages.
-	const scope =
-		segments.length === 1 && module && lesson
-			? {
-					input: { moduleId: module, lessonId: lesson },
-					seed:
-						seed?.moduleId === module && seed.lessonId === lesson
-							? seed
-							: undefined,
-				}
-			: null
+	const isBaseLesson = segments.length === 1
+	const input = useMemo(
+		() => isBaseLesson && module && lesson ? { moduleId: module, lessonId: lesson } : null,
+		[isBaseLesson, module, lesson],
+	)
+	const matchingSeed = seed?.moduleId === module && seed?.lessonId === lesson
+		? seed
+		: undefined
+	const [expiredInput, setExpiredInput] = useState<LessonScope['input']>()
+	useEffect(() => {
+		if (!input || matchingSeed) return
+		const timeout = window.setTimeout(() => setExpiredInput(input), SEED_WAIT_MS)
+		return () => window.clearTimeout(timeout)
+	}, [input, matchingSeed])
+
+	const scope = input
+		? { input, seed: matchingSeed, waitingForPage: !matchingSeed && expiredInput !== input }
+		: null
 
 	return (
 		<RegisterContext value={register}>

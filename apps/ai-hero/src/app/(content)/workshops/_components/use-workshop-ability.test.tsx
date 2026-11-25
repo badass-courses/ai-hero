@@ -1,6 +1,8 @@
 // @vitest-environment happy-dom
 import { act, type ComponentProps } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { defineRulesForPurchases } from '@/ability'
+import { cohortAbilityFixture } from '@/ability/test-fixtures/cohort-content-scope'
 import { api } from '@/trpc/react'
 import { createQueryClient } from '@/trpc/query-client'
 import { QueryClientProvider, type QueryClient } from '@tanstack/react-query'
@@ -10,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { LessonAbilitySeed, LessonAbilitySeedProvider } from './lesson-ability-seed'
 import { useWorkshopAbility } from './use-workshop-ability'
 import { WorkshopResourceList } from './workshop-resource-list'
+import { WorkshopSaleGate } from './workshop-sale-gate'
 import type { ResourceListViewProps } from '../../_components/resource-list-view'
 
 const state = vi.hoisted(() => ({
@@ -28,7 +31,7 @@ vi.mock('next/navigation', () => ({
 	useSelectedLayoutSegments: () => state.segments,
 }))
 vi.mock('./workshop-navigation-provider', () => ({
-	useWorkshopNavigation: () => ({ id: 'workshop-1', type: 'workshop', fields: { slug: 'workshop-slug' } }),
+	useWorkshopNavigation: () => ({ id: 'requested-workshop', type: 'workshop', fields: { slug: 'workshop-slug' } }),
 }))
 vi.mock('./cohort-navigation-provider', () => ({ useCohortNavigation: () => null }))
 vi.mock('@/app/(content)/_components/module-progress-provider', () => ({
@@ -69,6 +72,7 @@ afterEach(async () => {
 	queryClient.clear()
 	host.remove()
 	vi.unstubAllGlobals()
+	vi.useRealTimers()
 })
 
 function lessonView() {
@@ -86,6 +90,7 @@ function lessonView() {
 					<LessonAbilitySeedProvider>
 						<WorkshopResourceList />
 						<Controls />
+						<WorkshopSaleGate>Buy workshop</WorkshopSaleGate>
 						{seed !== undefined && (
 							<LessonAbilitySeed
 								moduleId={input.moduleId}
@@ -127,6 +132,32 @@ describe('lesson ability queries', () => {
 		expect(request).not.toHaveBeenCalled()
 	})
 
+	it('shows the buy state to a signed-in viewer when a locked lesson supplies no seed', async () => {
+		vi.useFakeTimers()
+		state.userId = 'non-buyer'
+		await lessonView()(undefined)
+		expect(controls()).toBe('pending:false:false')
+		expect(host.textContent).not.toContain('Buy workshop')
+
+		await act(async () => vi.advanceTimersByTimeAsync(250))
+		await act(async () => vi.advanceTimersByTimeAsync(1))
+
+		expect(request.mock.calls).toEqual([['ability.getCurrentAbilityRules', input]])
+		expect(host.textContent).toContain('Buy workshop')
+		expect(controls()).toBe('success:false:false')
+		expect(list()).toBe('success:false')
+	})
+
+	it('does not grant workshop access from a free lesson and an unrelated entitlement', async () => {
+		const fixture = cohortAbilityFixture({ free: true, contentIds: ['other-workshop'] })
+		state.userId = fixture.user.id
+		await lessonView()({ id: fixture.user.id, rules: defineRulesForPurchases(fixture.input) })
+
+		expect(controls()).toBe('success:false:false')
+		expect(host.textContent).toContain('Buy workshop')
+		expect(request).not.toHaveBeenCalled()
+	})
+
 	it('keeps queries disabled for anonymous viewers', async () => {
 		state.userId = null
 		await lessonView()(null)
@@ -152,8 +183,8 @@ describe('lesson ability queries', () => {
 		await lessonView()(undefined)
 
 		expect(request.mock.calls).toEqual([
-			['ability.getCurrentAbilityRules', { moduleId: 'workshop-1', lessonId: 'opening' }],
-			['ability.getCurrentAbilityRules', { moduleId: 'workshop-1', lessonId: undefined }],
+			['ability.getCurrentAbilityRules', { moduleId: 'requested-workshop', lessonId: 'opening' }],
+			['ability.getCurrentAbilityRules', { moduleId: 'requested-workshop', lessonId: undefined }],
 		])
 	})
 })
