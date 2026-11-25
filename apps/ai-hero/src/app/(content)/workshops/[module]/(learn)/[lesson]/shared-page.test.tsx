@@ -233,7 +233,13 @@ describe('LessonPage office-hours authorization context', () => {
 				canViewLesson: viewer !== 'denied',
 			})
 			vi.mocked(getServerAuthSession).mockResolvedValue({
-				session: viewer === 'anonymous' ? null : { user: { id: 'viewer' } },
+				session:
+					viewer === 'anonymous'
+						? null
+						: {
+								expires: '2099-01-01T00:00:00.000Z',
+								user: { id: 'viewer', role: 'user', email: 'viewer@example.test' },
+							},
 				ability: createAppAbility(),
 			})
 

@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act } from 'react'
+import { act, type ComponentProps } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { api } from '@/trpc/react'
 import { createQueryClient } from '@/trpc/query-client'
@@ -46,7 +46,8 @@ function Controls() {
 }
 
 const input = { moduleId: 'workshop-slug', lessonId: 'opening' }
-const viewer = { id: 'buyer', rules: [{ action: 'manage', subject: 'all' }] }
+type Viewer = ComponentProps<typeof LessonAbilitySeed>['viewer']
+const viewer = { id: 'buyer', rules: [{ action: 'manage', subject: 'all' }] } satisfies Viewer
 const request = vi.fn<[path: string, input: unknown], void>()
 let root: Root
 let host: HTMLDivElement
@@ -78,7 +79,7 @@ function lessonView() {
 			observer.complete()
 		})],
 	})
-	return async (seed: typeof viewer | null | undefined) => {
+	return async (seed: Viewer | undefined) => {
 		await act(async () => root.render(
 			<QueryClientProvider client={queryClient}>
 				<api.Provider client={client} queryClient={queryClient}>
