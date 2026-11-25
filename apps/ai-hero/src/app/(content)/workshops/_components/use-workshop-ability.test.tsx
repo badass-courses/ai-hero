@@ -125,9 +125,10 @@ describe('lesson ability queries', () => {
 		const render = lessonView()
 		await render(viewer)
 		expect(list()).toBe('success:true')
+		await act(async () => vi.advanceTimersByTimeAsync(150_000))
 		state.segments = ['second']
 		await render(undefined)
-		await act(async () => vi.advanceTimersByTimeAsync(400))
+		await act(async () => vi.advanceTimersByTimeAsync(300))
 
 		expect(request).not.toHaveBeenCalled()
 		expect(list()).toBe('pending:false')
@@ -135,6 +136,41 @@ describe('lesson ability queries', () => {
 
 		expect(list()).toBe('success:false')
 		expect(request).not.toHaveBeenCalled()
+	})
+
+	it.each([150_000, 300_001])('does not refetch a seeded lesson on focus after %i ms', async (elapsed) => {
+		vi.useFakeTimers()
+		await lessonView()(viewer)
+		expect(list()).toBe('success:true')
+		await act(async () => vi.advanceTimersByTimeAsync(elapsed))
+
+		await act(async () => {
+			window.dispatchEvent(new Event('focus'))
+			// TanStack Query observes document visibility, not the focus event.
+			window.dispatchEvent(new Event('visibilitychange'))
+		})
+
+		expect(request).not.toHaveBeenCalled()
+		expect(list()).toBe('success:true')
+	})
+
+	it('reuses the seeded query on return within the controls freshness window', async () => {
+		vi.useFakeTimers()
+		const render = lessonView()
+		await render(viewer)
+		await act(async () => vi.advanceTimersByTimeAsync(150_000))
+		state.segments = ['second']
+		await render({ id: viewer.id, rules: [] })
+		expect(list()).toBe('success:false')
+
+		state.segments = ['opening']
+		await render(undefined)
+		await act(async () => vi.advanceTimersByTimeAsync(300))
+		expect(request).not.toHaveBeenCalled()
+		await render(viewer)
+
+		expect(request).not.toHaveBeenCalled()
+		expect(list()).toBe('success:true')
 	})
 
 	it('shows the buy state to a signed-in viewer when a locked lesson supplies no seed', async () => {

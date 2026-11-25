@@ -40,11 +40,13 @@ export function useWorkshopAbilityRules({
 			client.ability.getCurrentAbilityRules.query(input, { signal }),
 		enabled: Boolean(userId && moduleId && !waitingForPage),
 		initialData,
-		...(workshopControls && {
+		// Either observer can refetch the shared query. Give the sidebar the
+		// controls' refresh policy when the page supplied this viewer's rules.
+		...((workshopControls || initialData !== undefined) && {
 			staleTime: 5 * 60 * 1000,
 			refetchOnWindowFocus: false,
-			retry: 1,
 		}),
+		...(workshopControls && { retry: 1 }),
 	})
 	return { query, sessionStatus }
 }
