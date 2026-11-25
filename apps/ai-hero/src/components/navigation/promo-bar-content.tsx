@@ -1,10 +1,18 @@
+'use client'
+
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { ArrowRight } from 'lucide-react'
 
 import type { Promo } from './promo-config'
 
 /** The bar's one row. Shared by the site promo and a recipient's transfer. */
 export function PromoBarContent({ promo }: { promo: Promo }) {
+	const router = useRouter()
+	const prefetchOnIntent = promo.href.startsWith('/s/')
+		? undefined
+		: () => router.prefetch(promo.href)
+
 	return (
 		<aside
 			aria-label="Announcement"
@@ -20,7 +28,9 @@ export function PromoBarContent({ promo }: { promo: Promo }) {
 				)}
 				<Link
 					href={promo.href}
-					prefetch={promo.href.startsWith('/s/') ? false : undefined}
+					prefetch={false}
+					onPointerEnter={prefetchOnIntent}
+					onFocus={prefetchOnIntent}
 					className="group focus-visible:ring-ring inline-flex min-w-0 items-center gap-1.5 font-medium tracking-tight underline-offset-4 transition hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
 				>
 					{promo.shortMessage ? (

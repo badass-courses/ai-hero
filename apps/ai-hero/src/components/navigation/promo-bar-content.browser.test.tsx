@@ -2,10 +2,14 @@ import React from 'react'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { PromoBarContent } from './promo-bar-content'
 import { FEATURED_PROMO } from './promo-config'
+
+vi.mock('next/navigation', () => ({
+	useRouter: () => ({ prefetch: vi.fn() }),
+}))
 
 // Opt-in, no app server, credentials or payment calls. Requires Playwright Chromium.
 // AIH_BROWSER_CHECK=1 pnpm exec vitest run -c vitest.config.ts src/components/navigation/promo-bar-content.browser.test.tsx
