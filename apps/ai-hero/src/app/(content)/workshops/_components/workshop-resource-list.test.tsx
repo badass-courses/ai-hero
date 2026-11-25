@@ -20,18 +20,11 @@ vi.mock('next/navigation', () => ({
 	usePathname: () => '/workshops/claude-code~p9j8f/permissions~pwt8r',
 }))
 
-vi.mock('next-auth/react', () => ({
-	useSession: () => ({ status: 'authenticated' }),
-}))
-
-vi.mock('@/trpc/react', () => ({
-	api: {
-		ability: {
-			getCurrentAbilityRules: {
-				useQuery: () => ({ data: [], status: 'success' }),
-			},
-		},
-	},
+vi.mock('./use-workshop-ability', () => ({
+	useWorkshopAbilityRules: () => ({
+		query: { data: [], status: 'success' },
+		sessionStatus: 'authenticated',
+	}),
 }))
 
 vi.mock('./cohort-navigation-provider', () => ({

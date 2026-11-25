@@ -1,6 +1,7 @@
 import React from 'react'
 import { LessonPlayerHost } from '@/app/(content)/_components/lesson-player-host'
 import { SESSION_PANEL_BOOT_SCRIPT } from '@/app/(content)/_components/session-panel-boot'
+import { LessonAbilitySeedProvider } from '@/app/(content)/workshops/_components/lesson-ability-seed'
 import { WorkshopResourceList } from '@/app/(content)/workshops/_components/workshop-resource-list'
 import LayoutClient from '@/components/layout-client'
 import { getServerAuthSession } from '@/server/auth'
@@ -29,16 +30,18 @@ const LessonLayout = async (props: { children: React.ReactNode }) => {
 			/>
 			{/* Uncapped: the player caps itself at 75svh tall, so it grows with
 			    the screen, and the lesson text keeps its own reading width. */}
-			<LayoutClient withContainer className="max-w-none">
-				<div className="flex min-w-0">
-					<WorkshopResourceList className="hidden lg:block" />
-					<LessonsSheet />
-					{/* Relative: the lesson page pins its scroll target to this top. */}
-					<div className="relative min-w-0 flex-1">
-						<LessonPlayerHost>{children}</LessonPlayerHost>
+			<LessonAbilitySeedProvider>
+				<LayoutClient withContainer className="max-w-none">
+					<div className="flex min-w-0">
+						<WorkshopResourceList className="hidden lg:block" />
+						<LessonsSheet />
+						{/* Relative: the lesson page pins its scroll target to this top. */}
+						<div className="relative min-w-0 flex-1">
+							<LessonPlayerHost>{children}</LessonPlayerHost>
+						</div>
 					</div>
-				</div>
-			</LayoutClient>
+				</LayoutClient>
+			</LessonAbilitySeedProvider>
 		</LessonRouteSessionProvider>
 	)
 }

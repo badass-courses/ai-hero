@@ -181,7 +181,7 @@ const getAbilityForResourceCached = cache(
 	async (lessonId: string | undefined, moduleId: string) => {
 		// Independent of each other — same two-wave reasoning as the rules
 		// resolution above.
-		const rulesLoader = getCurrentAbilityRulesCached(lessonId, moduleId)
+		const rulesLoader = getCurrentAbilityRulesCached(lessonId, moduleId, undefined)
 		const stopExtras = startAbilityTiming('abilityWrapperExtras')
 		const workshopLoader = getCachedMinimalWorkshop(moduleId)
 		const lessonLoader = lessonId ? getLesson(lessonId) : null

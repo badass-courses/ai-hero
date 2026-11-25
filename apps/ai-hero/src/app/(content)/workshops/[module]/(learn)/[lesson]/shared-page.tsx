@@ -1,4 +1,4 @@
-import { Suspense } from 'react'
+import { Suspense, type ReactNode } from 'react'
 import { notFound, redirect } from 'next/navigation'
 import { LessonControls } from '@/app/(content)/_components/lesson-controls'
 import { LessonVideoSource } from '@/app/(content)/_components/lesson-player-host'
@@ -58,6 +58,7 @@ export async function LessonPage({
 	params,
 	lessonType = 'lesson',
 	workshop,
+	abilitySeed,
 	timings = noTimings,
 }: {
 	params: { module: string; lesson: string }
@@ -67,6 +68,7 @@ export async function LessonPage({
 	searchParams: { [key: string]: string | string[] | undefined }
 	lessonType?: 'lesson' | 'exercise' | 'solution'
 	workshop: MinimalWorkshop | null
+	abilitySeed?: ReactNode
 	timings?: LessonTimings
 }) {
 	if (!lesson) {
@@ -160,6 +162,7 @@ export async function LessonPage({
 				aria-hidden
 				className="pointer-events-none absolute inset-x-0 top-0 h-px"
 			/>
+			{abilitySeed}
 			{/* Before <main>, not inside it: before hydration it holds the player's
 			    place, and the layout's player then takes that same place above
 			    the page. Inside <main> the handover moved <main>'s top down by

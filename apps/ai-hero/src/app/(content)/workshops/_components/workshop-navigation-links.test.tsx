@@ -15,6 +15,10 @@ vi.mock('@/app/(content)/_components/module-progress-provider', () => ({
 }))
 vi.mock('./use-workshop-ability', () => ({
 	useWorkshopAbility: () => ({ canViewWorkshop: true, status: 'success' }),
+	useWorkshopAbilityRules: () => ({
+		query: { data: [{ action: 'read', subject: 'all' }], status: 'success' },
+		sessionStatus: 'authenticated',
+	}),
 }))
 vi.mock('next-auth/react', () => ({
 	useSession: () => ({ status: 'authenticated' }),
@@ -23,18 +27,6 @@ vi.mock('next/navigation', () => ({
 	useParams: () => ({ module: 'parent', lesson: 'opening' }),
 	usePathname: () => '/workshops/parent/opening',
 	useRouter: () => ({ prefetch: vi.fn() }),
-}))
-vi.mock('@/trpc/react', () => ({
-	api: {
-		ability: {
-			getCurrentAbilityRules: {
-				useQuery: () => ({
-					data: [{ action: 'read', subject: 'all' }],
-					status: 'success',
-				}),
-			},
-		},
-	},
 }))
 vi.mock('./cohort-navigation-provider', () => ({
 	useCohortNavigation: () => null,
