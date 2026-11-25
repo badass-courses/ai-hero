@@ -238,7 +238,14 @@ describe('LessonPage office-hours authorization context', () => {
 						? null
 						: {
 								expires: '2099-01-01T00:00:00.000Z',
-								user: { id: 'viewer', role: 'user', email: 'viewer@example.test' },
+								user: {
+									id: 'viewer',
+									email: 'viewer@example.test',
+									role: 'user',
+									memberships: null,
+									roles: [],
+									organizationRoles: [],
+								},
 							},
 				ability: createAppAbility(),
 			})
