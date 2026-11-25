@@ -4,9 +4,8 @@ import { notFound } from 'next/navigation'
 import { LessonPage } from '@/app/(content)/workshops/[module]/(learn)/[lesson]/shared-page'
 import {
 	getCachedExerciseSolution,
-	getExerciseSolution,
 	getLesson,
-} from '@/lib/lessons-query'
+} from '@/lib/lesson-read-query'
 import { getCachedMinimalWorkshop } from '@/lib/workshops-query'
 import { getOGImageUrlForResource } from '@/utils/get-og-image-url-for-resource'
 

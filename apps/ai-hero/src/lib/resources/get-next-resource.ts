@@ -1,7 +1,7 @@
 'use server'
 
 import { flattenNavigationResources } from '@/lib/content-navigation'
-import { getCachedLesson } from '@/lib/lessons-query'
+import { getCachedLesson } from '@/lib/lesson-read-query'
 import { getCachedWorkshopNavigation } from '@/lib/workshops-query'
 
 /**

@@ -3,7 +3,7 @@ import { createAppAbility, defineRulesForPurchases, type User } from '@/ability'
 import { courseBuilderAdapter, db } from '@/db'
 import { getCachedCohortNavigation } from '@/lib/cohort-navigation-query'
 import { getAllUserEntitlements } from '@/lib/entitlements-query'
-import { getLesson } from '@/lib/lessons-query'
+import { getLesson } from '@/lib/lesson-read-query'
 import { getPurchasedResources } from '@/lib/library-query'
 import type { Workshop } from '@/lib/workshops'
 import { getWorkshop, getWorkshopsForLesson } from '@/lib/workshops-query'
@@ -165,15 +165,15 @@ export function makeEntitlementsPort({
 		let result = workshopsByUser.get(key)
 		if (!result) {
 			result = (async () => {
-				const module = await getWorkshop(workshopId)
-				if (!module) return null
+				const workshop = await getWorkshop(workshopId)
+				if (!workshop) return null
 				const ability = await learnerAbility({
 					learner,
 					inputs: await inputsFor(learner),
-					module,
+					module: workshop,
 					country,
 				})
-				return { module, ability }
+				return { module: workshop, ability }
 			})()
 			workshopsByUser.set(key, result)
 		}
@@ -308,32 +308,32 @@ export function makeEntitlementsPort({
 
 			const workshopId =
 				locator.workshop ?? (await getWorkshopsForLesson(lesson.id))[0]?.id
-			const module = workshopId ? await getWorkshop(workshopId) : null
-			if (!module || !getWorkshopResourceIds(module).includes(lesson.id)) {
+			const workshop = workshopId ? await getWorkshop(workshopId) : null
+			if (!workshop || !getWorkshopResourceIds(workshop).includes(lesson.id)) {
 				return { _tag: 'NotFound' }
 			}
 
 			const ability = await learnerAbility({
 				learner,
 				inputs: await inputsFor(learner),
-				module,
+				module: workshop,
 				lesson,
 				country,
 			})
 			const canRead = ability.can('read', subject('Content', { id: lesson.id }))
 
-			if (canRead && isPublished(module)) return { _tag: 'Readable' }
+			if (canRead && isPublished(workshop)) return { _tag: 'Readable' }
 			if (canRead || ability.can('read', 'PendingOpenAccess')) {
 				return {
 					_tag: 'NotYetOpen',
-					workshopTitle: module.fields?.title ?? 'This workshop',
-					opensAt: module.fields?.startsAt ?? null,
+					workshopTitle: workshop.fields?.title ?? 'This workshop',
+					opensAt: workshop.fields?.startsAt ?? null,
 				}
 			}
 			return {
 				_tag: 'NotEntitled',
-				workshopUrl: module.fields?.slug
-					? workshopUrl(baseUrl, module.fields.slug)
+				workshopUrl: workshop.fields?.slug
+					? workshopUrl(baseUrl, workshop.fields.slug)
 					: null,
 			}
 		},

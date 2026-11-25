@@ -28,8 +28,8 @@ vi.mock('./solutions-query', () => ({
 
 import { log } from '@/server/logger'
 
+import { getLesson } from './lesson-read-query'
 import { LessonSchema } from './lessons'
-import { getLesson } from './lessons-query'
 
 const row = {
 	id: 'lesson-abc',

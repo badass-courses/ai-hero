@@ -145,7 +145,7 @@ jobs:
         run: |
           pnpm --filter @ai-hero/learner-agent build
           pnpm --filter @ai-hero/learner-agent test
-          pnpm --filter ai-hero exec vitest run -c vitest.config.ts src/lib/learner-agent src/app/mcp src/app/api/learner src/app/oauth/token
+          pnpm --filter ai-hero exec vitest run -c vitest.config.ts src/lib/learner-agent src/app/mcp src/app/api/learner src/app/oauth/token src/test/server-action-export-boundary.test.ts
 
   pricing-e2e:
     # Real browser, real workshop CTAs and pricing actor; every API response is

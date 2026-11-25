@@ -4,7 +4,7 @@ import {
 	LessonPage,
 	type LessonTimingPart,
 } from '@/app/(content)/workshops/[module]/(learn)/[lesson]/shared-page'
-import { getCachedLesson } from '@/lib/lessons-query'
+import { getCachedLesson } from '@/lib/lesson-read-query'
 import { getCachedMinimalWorkshop } from '@/lib/workshops-query'
 import { measureIfSlow, sampleTimings } from '@/server/perf'
 import { getOGImageUrlForResource } from '@/utils/get-og-image-url-for-resource'

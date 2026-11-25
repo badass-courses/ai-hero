@@ -47,7 +47,7 @@ vi.mock('@/coursebuilder/email-list-provider', () => ({
 		getSubscriberByEmail: mocks.getSubscriberByEmail,
 	},
 }))
-vi.mock('@/lib/lessons-query', () => ({
+vi.mock('@/lib/lesson-read-query', () => ({
 	getCachedLesson: mocks.getLesson,
 	getLesson: mocks.getLesson,
 }))

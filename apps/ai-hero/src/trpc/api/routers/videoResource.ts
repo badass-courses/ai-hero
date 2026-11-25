@@ -6,9 +6,11 @@ import {
 import {
 	attachVideoResourceToPost,
 	detachVideoResourceFromPost,
+} from '@/lib/video-resource-query'
+import {
 	getAllVideoResources,
 	getPaginatedVideoResources,
-} from '@/lib/video-resource-query'
+} from '@/lib/video-resource-read'
 import { log } from '@/server/logger'
 import { createTRPCRouter, protectedProcedure } from '@/trpc/api/trpc'
 import { VideoChapterSchema } from '@coursebuilder/core/schemas'

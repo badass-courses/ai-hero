@@ -48,7 +48,7 @@ vi.mock('next/headers', () => ({ headers: mocks.getHeaders }))
 vi.mock('@/lib/convertkit', () => ({
 	getSubscriberFromCookie: async () => null,
 }))
-vi.mock('@/lib/lessons-query', () => ({
+vi.mock('@/lib/lesson-read-query', () => ({
 	getCachedLesson: mocks.getLesson,
 	getLesson: mocks.getLesson,
 }))

@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('server-only', () => ({}))
 
-vi.mock('@/lib/lessons-query', () => ({
+vi.mock('@/lib/lesson-read-query', () => ({
 	getCachedLesson: mocks.getCachedLesson,
 }))
 

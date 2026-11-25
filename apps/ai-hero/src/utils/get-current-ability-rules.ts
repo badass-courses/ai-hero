@@ -6,7 +6,7 @@ import { headers } from 'next/headers'
 import { createAppAbility, defineRulesForPurchases } from '@/ability'
 import { courseBuilderAdapter, db } from '@/db'
 import { getAllUserEntitlements } from '@/lib/entitlements-query'
-import { getCachedLesson, getLesson } from '@/lib/lessons-query'
+import { getCachedLesson, getLesson } from '@/lib/lesson-read-query'
 import {
 	getCachedMinimalWorkshop,
 	getWorkshopAccessTree,

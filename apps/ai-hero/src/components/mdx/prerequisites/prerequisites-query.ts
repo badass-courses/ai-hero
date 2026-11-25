@@ -5,7 +5,7 @@ import { getLessonThumbnailUrl } from '@/app/(content)/_components/next-lesson'
 import { db } from '@/db'
 import { contentResource } from '@/db/schema'
 import { isCompletionTrackedResource } from '@/lib/content-navigation'
-import { getCachedLesson } from '@/lib/lessons-query'
+import { getCachedLesson } from '@/lib/lesson-read-query'
 import { inArray, sql } from 'drizzle-orm'
 
 import type { PrerequisiteItem } from './types'

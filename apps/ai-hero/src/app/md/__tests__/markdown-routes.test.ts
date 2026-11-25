@@ -46,7 +46,7 @@ vi.mock('@/lib/workshops-query', () => ({
 	getWorkshop: getWorkshopMock,
 }))
 
-vi.mock('@/lib/lessons-query', () => ({
+vi.mock('@/lib/lesson-read-query', () => ({
 	getLesson: getLessonMock,
 }))
 
