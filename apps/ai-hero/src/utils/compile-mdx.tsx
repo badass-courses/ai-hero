@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto'
 import { Children, cache, isValidElement } from 'react'
 import dynamic from 'next/dynamic'
-import Link from 'next/link'
 import { unstable_rethrow } from 'next/navigation'
 import { SkillsCta } from '@/app/(content)/skills/_components/skills-cta'
 import { SkillsNewsletterCta } from '@/app/(content)/skills/_components/skills-newsletter-cta'
@@ -10,6 +9,7 @@ import {
 	Recommendation,
 } from '@/app/admin/pages/_components/page-builder-mdx-components'
 import { CldImage, ThemeImage } from '@/components/cld-image'
+import { CohortIntentLink } from '@/components/cohort-intent-link'
 import { DictionaryHoverLink } from '@/components/dictionary/dictionary-hover-link'
 import { redrawForImage } from '@/components/mdx/diagrams'
 import { Heading } from '@/components/mdx/heading'
@@ -318,14 +318,14 @@ function MdxAnchor({
 }: React.AnchorHTMLAttributes<HTMLAnchorElement>) {
 	if (typeof href === 'string' && isInternalPath(href)) {
 		return (
-			<Link
+			<CohortIntentLink
 				href={href}
 				title={title}
 				{...props}
 				className={cn('ah-prose-a', props.className)}
 			>
 				{children}
-			</Link>
+			</CohortIntentLink>
 		)
 	}
 

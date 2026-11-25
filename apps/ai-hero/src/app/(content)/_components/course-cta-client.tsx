@@ -1,6 +1,6 @@
 'use client'
 
-import Link from 'next/link'
+import { CohortIntentLink } from '@/components/cohort-intent-link'
 import { useCtaGate } from '@/hooks/use-cta-gate'
 import { hasJoinedOfferWaitlist } from '@/lib/cta-gating'
 import type { NextOffer } from '@/lib/next-offer'
@@ -78,7 +78,7 @@ export function CourseCtaClient({
 				</p>
 			</div>
 			<div>
-				<Link
+				<CohortIntentLink
 					href={offer.href}
 					className="bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover focus-visible:ring-ring focus-visible:ring-offset-background group relative isolate inline-flex h-[46px] items-center gap-2 overflow-hidden rounded-[9px] px-5 text-[15px] font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
 				>
@@ -92,7 +92,7 @@ export function CourseCtaClient({
 						style={{ backgroundSize: '200% 100%' }}
 						className="animate-shine pointer-events-none absolute inset-0 -z-10 rounded-[inherit] bg-[linear-gradient(120deg,rgba(255,255,255,0)40%,rgba(255,255,255,1)50%,rgba(255,255,255,0)60%)] opacity-10 motion-reduce:animate-none dark:opacity-20"
 					/>
-				</Link>
+				</CohortIntentLink>
 			</div>
 		</aside>
 	)

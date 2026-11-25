@@ -3,6 +3,7 @@
 import * as React from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import { CohortIntentLink } from '@/components/cohort-intent-link'
 import { TYPE } from '@/components/landing/type'
 import {
 	getCohortWorkshopPosition,
@@ -155,7 +156,7 @@ export function WorkshopCompleteCard({
 				</p>
 			)}
 
-			<Link
+			<CohortIntentLink
 				href={cohortHref}
 				className={cn(
 					TYPE.meta,
@@ -163,7 +164,7 @@ export function WorkshopCompleteCard({
 				)}
 			>
 				All workshops in {cohortNavigation.title}
-			</Link>
+			</CohortIntentLink>
 		</nav>
 	)
 }

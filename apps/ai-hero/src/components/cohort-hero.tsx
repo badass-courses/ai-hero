@@ -1,6 +1,6 @@
 import * as React from 'react'
 import Image from 'next/image'
-import Link from 'next/link'
+import { CohortIntentLink } from '@/components/cohort-intent-link'
 import { WaitlistForm } from '@/components/cohort-waitlist-form'
 import { C5SaleSwitch } from '@/components/c5-sale-switch'
 import { C5JoinCta } from '@/components/c5-join-cta'
@@ -263,7 +263,7 @@ export async function CohortHero({
 					)}
 				>
 					{image ? (
-						<Link
+						<CohortIntentLink
 							href={href}
 							aria-label={`${title}: ${FLAGSHIP_HERO.imageLinkLabel.toLowerCase()}`}
 							className="focus-visible:ring-ring group block rounded-[10px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
@@ -290,7 +290,7 @@ export async function CohortHero({
 								{FLAGSHIP_HERO.imageLinkLabel}
 								<ArrowRight className="ease-out-quart size-3.5 shrink-0 transition-transform duration-300 group-hover:translate-x-1 motion-reduce:transform-none motion-reduce:transition-none" />
 							</span>
-						</Link>
+						</CohortIntentLink>
 					) : null}
 
 					<Facts
@@ -409,7 +409,7 @@ function Ask({
 					// Where a link beats a form: seats are on sale and there is a page
 					// to buy on, or the reader already joined and the form has nothing
 					// left to ask.
-					<Link
+					<CohortIntentLink
 						href={href}
 						className={cn(
 							TYPE.meta,
@@ -421,7 +421,7 @@ function Ask({
 							aria-hidden
 							className="ease-out-quart size-4 shrink-0 transition-transform duration-300 group-hover:translate-x-1 motion-reduce:transform-none motion-reduce:transition-none"
 						/>
-					</Link>
+					</CohortIntentLink>
 				) : (
 					<>
 						<WaitlistForm

@@ -2,6 +2,7 @@ import * as React from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { SpotIllustration } from '@/components/brand/spot-illustration'
+import { CohortIntentLink } from '@/components/cohort-intent-link'
 import { CompanyLogoGrid } from '@/components/landing/company-logo-grid'
 import { BADGE_SOLID, TYPE } from '@/components/landing/type'
 import {
@@ -44,7 +45,7 @@ function RunningStrip({
 	running: NonNullable<CoursesHeroState['running']>
 }) {
 	return (
-		<Link
+		<CohortIntentLink
 			href={`/cohorts/${running.slug}`}
 			className="border-border focus-visible:ring-ring group flex flex-wrap items-center gap-x-4 gap-y-2 border-b bg-[color:var(--ah-accent-wash)] px-[18px] py-3.5 transition-colors hover:bg-[color:var(--ah-accent-panel)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset sm:px-11"
 		>
@@ -67,7 +68,7 @@ function RunningStrip({
 					className="ease-out-quart size-3.5 shrink-0 transition-transform duration-300 group-hover:translate-x-1 motion-reduce:transform-none motion-reduce:transition-none"
 				/>
 			</span>
-		</Link>
+		</CohortIntentLink>
 	)
 }
 
@@ -495,7 +496,7 @@ function SecondOffer({
 		<section aria-label={label} className="border-b">
 			<div className="flex flex-col gap-5 px-[18px] py-10 sm:px-11 md:py-12">
 				<p className={MONO_LABEL}>{label}</p>
-				<Link
+				<CohortIntentLink
 					href={href}
 					className="border-border bg-muted hover:border-foreground/20 focus-visible:ring-ring group flex flex-col gap-5 rounded-lg border p-4 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 sm:flex-row sm:items-center sm:gap-7 sm:p-5"
 				>
@@ -546,7 +547,7 @@ function SecondOffer({
 							className="ease-out-quart size-4 shrink-0 transition-transform duration-300 group-hover:translate-x-1 motion-reduce:transform-none motion-reduce:transition-none"
 						/>
 					</span>
-				</Link>
+				</CohortIntentLink>
 			</div>
 		</section>
 	)
@@ -572,7 +573,7 @@ function CatalogCard({
 	image?: string
 }) {
 	return (
-		<Link
+		<CohortIntentLink
 			href={href}
 			className="border-border bg-card hover:border-foreground/20 focus-visible:ring-ring group flex flex-col overflow-hidden rounded-md border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
 		>
@@ -609,6 +610,6 @@ function CatalogCard({
 					{description}
 				</p>
 			</div>
-		</Link>
+		</CohortIntentLink>
 	)
 }

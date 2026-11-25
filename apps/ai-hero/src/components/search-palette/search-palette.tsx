@@ -1,8 +1,8 @@
 'use client'
 
 import * as React from 'react'
-import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import { CohortIntentLink } from '@/components/cohort-intent-link'
 import { TYPE } from '@/components/landing/type'
 import { track } from '@/utils/analytics'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
@@ -369,13 +369,8 @@ export function SearchPalette({
 									>
 										{/* Real anchor: status-bar URL, cmd/middle-click,
 										    long-press context menu all work. */}
-										<Link
+										<CohortIntentLink
 											href={item.href}
-											// Default `auto`: partial prefetch in the viewport, full
-											// on hover. Not `true` — the list re-renders per keystroke
-											// and full-fetching 8 speculative results each time is
-											// waste. Not `false` either: in Next 16 that kills hover
-											// prefetch too, and these rows are about to be clicked.
 											tabIndex={-1}
 											onClick={() => trackAndClose(item, 'result')}
 											className="flex w-full items-center gap-2 px-2 py-3"
@@ -385,7 +380,7 @@ export function SearchPalette({
 												className="text-muted-foreground size-4 shrink-0"
 											/>
 											<span className="truncate">{item.title}</span>
-										</Link>
+										</CohortIntentLink>
 									</CommandItem>
 								)
 							})}
@@ -496,9 +491,8 @@ function PalettePromoRow({
 	if (!promo) return null
 
 	return (
-		<Link
+		<CohortIntentLink
 			href={promo.href}
-			prefetch={promo.href.startsWith('/s/') ? false : undefined}
 			onClick={() =>
 				onSelect(
 					{ title: promo.message, href: promo.href, type: 'cohort' },
@@ -530,6 +524,6 @@ function PalettePromoRow({
 				aria-hidden
 				className="ml-auto size-3.5 shrink-0 transition-transform group-hover:translate-x-0.5"
 			/>
-		</Link>
+		</CohortIntentLink>
 	)
 }
