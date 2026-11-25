@@ -79,6 +79,13 @@ export async function createImageResource(input: {
 	})
 }
 
+async function assertCanUpdateContent() {
+	const { session, ability } = await getServerAuthSession()
+	if (!session?.user || !ability.can('update', 'Content')) {
+		throw new Error('Unauthorized')
+	}
+}
+
 /**
  * Newest-first image page for the media library. `limit` is a PER-PAGE
  * clamp (200 — same ceiling as the video picker query, not a total cap);
@@ -93,6 +100,7 @@ export async function listImageResources({
 	limit: number
 	offset?: number
 }) {
+	await assertCanUpdateContent()
 	const capped = Math.min(Math.max(1, Math.floor(limit)), 200)
 	const skip = Math.max(0, Math.floor(offset))
 	const query = sql`

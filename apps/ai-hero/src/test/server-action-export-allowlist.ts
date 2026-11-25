@@ -12,8 +12,6 @@ export const existingReadActions = {
 	'lib/cms/page-contents.ts#listPageContents': 'CMS page contents.',
 	'lib/cms/workshop-contents.ts#listWorkshopContents': 'CMS workshop contents.',
 	'lib/cohort-workshop-emails-query.ts#getCohortProducts': 'Cohort email product lookup.',
-	'lib/cohort-workshop-emails-query.ts#getUserWorkshopEntitlements': 'Cohort email recipient entitlement lookup.',
-	'lib/cohort-workshop-emails-query.ts#getUsersEntitledToWorkshops': 'Cohort workshop recipient lookup.',
 	'lib/cohort-workshop-emails-query.ts#getWorkshopsStartingToday': 'Cohort email workshop start lookup.',
 	'lib/cohort-workshop-emails-query.ts#getWorkshopEmails': 'Cohort workshop email lookup.',
 	'lib/content-navigation-query.ts#getContentNavigation': 'Existing content navigation lookup.',
@@ -41,7 +39,6 @@ export const existingReadActions = {
 	'lib/posts-graph.ts#getCachedPostsGraph': 'Cached full post graph.',
 	'lib/posts-query.ts#getCachedAllPosts': 'Cached full post inventory.',
 	'lib/posts-query.ts#getAllPosts': 'Existing full post inventory.',
-	'lib/posts-query.ts#getAllPostsForUser': 'Existing author post inventory.',
 	'lib/posts-query.ts#getPostTags': 'Existing post tag lookup.',
 	'lib/posts-query.ts#getPostsByTag': 'Existing tag-to-post lookup.',
 	'lib/posts-query.ts#getCachedPostsByTag': 'Cached tag-to-post lookup.',
@@ -104,6 +101,5 @@ export const existingReadActions = {
 	'lib/workshops-query.ts#getCachedPublicWorkshops': 'Cached public workshop listing.',
 	'lib/workshops-query.ts#getPublicWorkshops': 'Existing public workshop listing.',
 	'lib/workshops-query.ts#getWorkshopsForLesson': 'Existing lesson-to-workshops lookup.',
-	'purchase-transfer/purchase-transfer-actions.tsx#getPurchaseTransferById': 'Existing transfer ID lookup.',
 	'purchase-transfer/purchase-transfer-actions.tsx#getPurchaseTransferForPurchaseId': 'Existing purchase-to-transfer lookup.',
 }

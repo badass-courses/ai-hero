@@ -26,10 +26,12 @@ vi.mock('@/lib/lessons-query', () => ({
 	writeLessonUpdateToDatabase: vi.fn(),
 	writeNewLessonToDatabase: vi.fn(),
 }))
+vi.mock('@/lib/post-author-read-query', () => ({
+	getAllPostsForUser: mocks.getAllPostsForUser,
+}))
 vi.mock('@/lib/posts-query', () => ({
 	deletePostFromDatabase: vi.fn(),
 	getAllPosts: mocks.getAllPosts,
-	getAllPostsForUser: mocks.getAllPostsForUser,
 	writeNewPostToDatabase: vi.fn(),
 	writePostUpdateToDatabase: vi.fn(),
 }))

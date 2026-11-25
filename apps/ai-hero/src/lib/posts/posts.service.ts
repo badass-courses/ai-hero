@@ -24,10 +24,10 @@ import {
 import { Ability, subject } from '@casl/ability'
 import { and, asc, eq, inArray, or, sql } from 'drizzle-orm'
 
+import { getAllPostsForUser } from '../post-author-read-query'
 import {
 	deletePostFromDatabase,
 	getAllPosts,
-	getAllPostsForUser,
 	writeNewPostToDatabase,
 	writePostUpdateToDatabase,
 } from '../posts-query'
