@@ -28,9 +28,9 @@ type LessonScope = {
 	waitingForPage: boolean
 }
 
-// Let the streamed page register before mounting the live query. A denied
-// lesson redirects and a missing lesson renders no seed at all.
-const SEED_WAIT_MS = 250
+// Give each lesson's streamed page time to register after the route changes.
+// Keep the wait bounded for renders that never supply a seed.
+const SEED_WAIT_MS = 2_500
 
 const ScopeContext = createContext<LessonScope | null>(null)
 const RegisterContext = createContext<((seed: Seed) => () => void) | null>(null)

@@ -120,11 +120,16 @@ describe('lesson ability queries', () => {
 		expect(request).not.toHaveBeenCalled()
 	})
 
-	it('waits for the next lesson seed without using the previous lesson rules', async () => {
+	it('waits for a streamed seed after navigating to the next lesson', async () => {
+		vi.useFakeTimers()
 		const render = lessonView()
 		await render(viewer)
+		expect(list()).toBe('success:true')
 		state.segments = ['second']
 		await render(undefined)
+		await act(async () => vi.advanceTimersByTimeAsync(400))
+
+		expect(request).not.toHaveBeenCalled()
 		expect(list()).toBe('pending:false')
 		await render({ id: viewer.id, rules: [] })
 
@@ -139,7 +144,7 @@ describe('lesson ability queries', () => {
 		expect(controls()).toBe('pending:false:false')
 		expect(host.textContent).not.toContain('Buy workshop')
 
-		await act(async () => vi.advanceTimersByTimeAsync(250))
+		await act(async () => vi.advanceTimersByTimeAsync(2_500))
 		await act(async () => vi.advanceTimersByTimeAsync(1))
 
 		expect(request.mock.calls).toEqual([['ability.getCurrentAbilityRules', input]])
