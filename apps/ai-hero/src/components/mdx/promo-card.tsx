@@ -1,7 +1,7 @@
 'use client'
 
 import * as React from 'react'
-import Link from 'next/link'
+import { CohortIntentLink } from '@/components/cohort-intent-link'
 import { ArrowRight, BookOpenIcon, GraduationCapIcon, TerminalIcon } from 'lucide-react'
 
 import { cn } from '@coursebuilder/ui/utils/cn'
@@ -88,7 +88,7 @@ export function PromoCard({
 	const meta = variant === 'skill' ? duration : enrollmentDate
 
 	return (
-		<Link
+		<CohortIntentLink
 			href={href}
 			aria-label={`${resolvedEyebrow}: ${title}`}
 			// See `Callout`: in-article promos register themselves with the ToC
@@ -144,6 +144,6 @@ export function PromoCard({
 					aria-hidden="true"
 				/>
 			</span>
-		</Link>
+		</CohortIntentLink>
 	)
 }

@@ -1,6 +1,6 @@
 import * as React from 'react'
 import Image from 'next/image'
-import Link from 'next/link'
+import { CohortIntentLink } from '@/components/cohort-intent-link'
 import { db } from '@/db'
 import { contentResource } from '@/db/schema'
 import {
@@ -253,7 +253,7 @@ export async function Hero({
 					<C5SaleSwitch
 						fallback={
 							<div className="mt-[34px] flex flex-wrap items-center gap-2.5">
-								<Link
+								<CohortIntentLink
 									href={ctaHref}
 									className={cn(
 										TYPE.meta,
@@ -261,8 +261,8 @@ export async function Hero({
 									)}
 								>
 									{ctaLabel}
-								</Link>
-								<Link
+								</CohortIntentLink>
+								<CohortIntentLink
 									href={secondaryCtaHref}
 									className={cn(
 										TYPE.meta,
@@ -271,7 +271,7 @@ export async function Hero({
 								>
 									{secondaryCtaLabel}
 									<ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" />
-								</Link>
+								</CohortIntentLink>
 							</div>
 						}
 					>
@@ -283,7 +283,7 @@ export async function Hero({
 									'bg-accent-fill text-accent-fill-foreground hover:bg-accent-fill-hover inline-flex min-h-[46px] items-center rounded-[9px] px-5 py-3 font-bold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2',
 								)}
 							/>
-							<Link
+							<CohortIntentLink
 								href={ctaHref}
 								className={cn(
 									TYPE.meta,
@@ -291,7 +291,7 @@ export async function Hero({
 								)}
 							>
 								{ctaLabel}
-							</Link>
+							</CohortIntentLink>
 						</div>
 					</C5SaleSwitch>
 				)}

@@ -3,6 +3,7 @@
 import * as React from 'react'
 import Link from 'next/link'
 import { type AppAbility } from '@/ability'
+import { CohortIntentLink } from '@/components/cohort-intent-link'
 import { TYPE } from '@/components/landing/type'
 import { useFillViewportHeight } from '@/hooks/use-fill-viewport-height'
 import { useScrollToActive } from '@/hooks/use-scroll-to-active'
@@ -210,12 +211,12 @@ export function ResourceListView({
 								<div className="flex min-w-0 flex-col gap-1.5">
 									{breadcrumb && (
 										<div className="text-muted-foreground flex items-center gap-1.5 pr-10 text-[12px] leading-none">
-											<Link
+											<CohortIntentLink
 												href={breadcrumb.href}
 												className="hover:text-foreground block truncate transition-colors"
 											>
 												{breadcrumb.label}
-											</Link>
+											</CohortIntentLink>
 											<span className="text-muted-foreground/50">/</span>
 										</div>
 									)}

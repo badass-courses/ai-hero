@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
 	},
 }))
 
+vi.mock('next/navigation', () => ({ useRouter: () => ({ prefetch: vi.fn() }) }))
+
 vi.mock('@/hooks/use-cta-gate', () => ({
 	useCtaGate: () => mocks.gate,
 }))
