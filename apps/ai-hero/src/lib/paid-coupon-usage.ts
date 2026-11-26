@@ -8,6 +8,7 @@ import {
 } from '@/db/schema'
 import { cloneAdapter } from '@/lib/paid-coupon-pricing-view'
 import { updatePurchaseFields } from '@/lib/purchase-fields-write'
+import { log } from '@/server/logger'
 import {
 	and,
 	eq,
@@ -213,7 +214,7 @@ export async function recordPaidCouponUse(
 	db: Pick<DbExecutor, 'transaction'>,
 	purchaseId: string,
 ) {
-	return db.transaction(
+	const result = await db.transaction(
 		async (
 			tx,
 		): Promise<
@@ -222,6 +223,7 @@ export async function recordPaidCouponUse(
 			| 'ineligible'
 			| 'not_applicable'
 			| 'pending'
+			| { overCapCouponId: string }
 		> => {
 			const [purchase] = await tx
 				.select({
@@ -247,7 +249,11 @@ export async function recordPaidCouponUse(
 			if (!activePurchaseStatuses.includes(purchase.status)) return 'pending'
 
 			const [row] = await tx
-				.select({ id: coupon.id, maxUses: coupon.maxUses })
+				.select({
+					id: coupon.id,
+					maxUses: coupon.maxUses,
+					overCap: sql<number>`${coupon.usedCount} + 1 > ${coupon.maxUses}`,
+				})
 				.from(coupon)
 				.where(eq(coupon.id, purchase.couponId))
 				.for('update')
@@ -270,7 +276,17 @@ export async function recordPaidCouponUse(
 				patch: { paidCouponUseCounted: true },
 				executor: tx,
 			})
-			return 'counted'
+			return row.overCap ? { overCapCouponId: row.id } : 'counted'
 		},
 	)
+	if (typeof result === 'string') return result
+	try {
+		await log.warn('coupon_usage.over_cap', {
+			purchaseId,
+			couponId: result.overCapCouponId,
+		})
+	} catch {
+		// The count and replay marker have committed. Logging must not retry them.
+	}
+	return 'counted'
 }

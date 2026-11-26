@@ -355,6 +355,40 @@ describe.skipIf(!uri)(
 			).toBe('not_applicable')
 		})
 
+		it('logs only IDs after an over-cap purchase commits, without retrying on log failure', async () => {
+			const id = key('over-cap')
+			const first = key('at-cap-payment')
+			const second = key('over-cap-payment')
+			await createCoupon(id)
+			await createPurchase(first, id)
+			await createPurchase(second, id)
+			const { log } = await import('@/server/logger')
+			const warn = vi.mocked(log.warn)
+			warn.mockClear()
+			const record = (purchaseId: string) =>
+				usage.recordPaidCouponUse(runtime.db, purchaseId)
+			expect(await record(first)).toBe('counted')
+			expect(warn).not.toHaveBeenCalled()
+			const committed = vi.fn()
+			warn.mockImplementationOnce(async () => {
+				const [row] = await runtime.db
+					.select({ usedCount: coupon.usedCount })
+					.from(coupon)
+					.where(eq(coupon.id, id))
+				const purchase = await runtime.db.query.purchases.findFirst({
+					where: eq(purchases.id, second),
+				})
+				committed(row?.usedCount, purchase?.fields?.paidCouponUseCounted)
+				throw new Error('logging unavailable')
+			})
+			expect(await record(second)).toBe('counted')
+			expect(await record(second)).toBe('already-counted')
+			expect(committed.mock.calls).toEqual([[2, true]])
+			expect(warn.mock.calls).toEqual([
+				['coupon_usage.over_cap', { purchaseId: second, couponId: id }],
+			])
+		})
+
 		it('records once on concurrent replay and can count a purchase once payment settles', async () => {
 			const id = key('replay')
 			const first = key('first')

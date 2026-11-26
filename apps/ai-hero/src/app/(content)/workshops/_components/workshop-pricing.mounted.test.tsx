@@ -42,6 +42,7 @@ vi.mock('./workshop-pricing-widget-container', () => ({
 }))
 
 import { api } from '@/trpc/react'
+import { WorkshopEvergreenOfferEndedNotice } from './workshop-evergreen-offer-ended-notice'
 import { WorkshopInlineBuyButton } from './workshop-pricing'
 
 const product = {
@@ -91,9 +92,14 @@ describe('workshop coupon actor lifecycle', () => {
 		{ search: 'code=SAVE199', used: false },
 		{ search: 'coupon=coupon-valid', used: true },
 		{ search: 'code=SAVE199', used: true },
+		{
+			search: `coupon=eoj-coupon:${'a'.repeat(64)}`,
+			used: true,
+			evergreen: true,
+		},
 	])(
 		'renders a buyable quote for $search (used: $used) even when telemetry fetch rejects',
-		async ({ search, used }) => {
+		async ({ search, used, evergreen }) => {
 			vi.mocked(navigator.sendBeacon).mockReturnValue(false)
 			let telemetryRequests = 0
 			const spentCode = used && search.startsWith('code=')
@@ -133,6 +139,9 @@ describe('workshop coupon actor lifecycle', () => {
 						telemetryRequests++
 						throw new Error('Buyer is offline or telemetry is blocked')
 					}
+					if (evergreen && url.startsWith('/api/evergreen/offer-status?')) {
+						return Response.json({ status: 'used' })
+					}
 					if (url !== '/api/coursebuilder/prices-formatted') {
 						throw new Error(`Expected same-origin price request, got ${url}`)
 					}
@@ -161,6 +170,12 @@ describe('workshop coupon actor lifecycle', () => {
 				root.render(
 					<QueryClientProvider client={queryClient}>
 						<api.Provider client={trpcClient} queryClient={queryClient}>
+							{evergreen && (
+								<WorkshopEvergreenOfferEndedNotice
+									endpoint="/api/evergreen/offer-status"
+									productId={product.id}
+								/>
+							)}
 							<WorkshopInlineBuyButton
 								pricingProps={{ products: [product] } as any}
 								pricingDataLoader={pricingDataLoader}
@@ -195,7 +210,15 @@ describe('workshop coupon actor lifecycle', () => {
 			})
 			expect(telemetryRequests).toBeGreaterThan(0)
 			expect(host.textContent).toContain(used ? '$299' : '$199')
-			if (used) expect(host.textContent).toContain('This code has been used.')
+			if (used)
+				expect(
+					host.textContent?.match(/This code has been used\./g),
+				).toHaveLength(1)
+			if (evergreen)
+				expect(
+					host.querySelector('[data-testid="evergreen-offer-ended"]')
+						?.textContent,
+				).toContain('This code has been used.')
 			expect(priceRequests).toEqual([spentCode ? null : couponId])
 			const form = host.querySelector('form[action]')
 			expect(form).not.toBeNull()

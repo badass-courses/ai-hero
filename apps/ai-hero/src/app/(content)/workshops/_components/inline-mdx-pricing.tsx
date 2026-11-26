@@ -5,7 +5,7 @@ import { BuyPathPricingBeacon } from '@/lib/buy-path/beacons'
 import { inlineBuyLabel } from '@/lib/pricing-decisions'
 import Link from 'next/link'
 import { GatedBuyButton } from '@/components/commerce/gated-buy-button'
-import { UsedCouponNotice } from '@/components/commerce/used-coupon-notice'
+import { WorkshopUsedCouponNotice } from '@/components/commerce/used-coupon-notice'
 import { TYPE } from '@/components/landing/type'
 import Spinner from '@/components/spinner'
 import { env } from '@/env.mjs'
@@ -107,7 +107,10 @@ export const BuyButtonComponent: React.FC<
 					<RegionalPricingNote targetId={regionalPricingNoteTargetId} />
 				)}
 			</Pricing.Product>
-			<UsedCouponNotice coupon={couponFromCode} />
+			<WorkshopUsedCouponNotice
+				coupon={couponFromCode}
+				productId={product.id}
+			/>
 		</Pricing.Root>
 	)
 }
