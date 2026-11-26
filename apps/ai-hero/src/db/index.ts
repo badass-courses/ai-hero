@@ -3,6 +3,7 @@ import { mysqlTable } from '@/db/mysql-table'
 import { withDefaultCouponInvalidation } from '@/lib/default-coupon-invalidation'
 import { withPurchaseCountInvalidation } from '@/lib/purchase-count-invalidation'
 import { guardLegendGiftCouponPaths } from '@/lib/legend-gift-coupon-guard'
+import { withPaidCouponUsage } from '@/lib/paid-coupon-usage'
 import { withSessionAccessBusts } from '@/server/session-access-busts'
 import { bustSessionAccessForUser } from '@/server/session-access-runtime'
 import { eq } from 'drizzle-orm'
@@ -54,7 +55,7 @@ const drizzleAdapter = withSessionAccessBusts(
  */
 export const courseBuilderAdapter: RequiredPricingAuthority<
 	typeof drizzleAdapter
-> = Object.assign(drizzleAdapter, {
+> = Object.assign(withPaidCouponUsage(drizzleAdapter, db), {
 	authoritativePrice: async (request: AuthoritativePriceRequest) =>
 		(await import('@/lib/c5-pricing/server')).c5AuthoritativePrice(request),
 })

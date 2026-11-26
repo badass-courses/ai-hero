@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server'
+import { CouponUsedUpError } from '@/lib/purchase-guardrails'
 import {
 	authorizeExclusiveCouponSelection,
 	type ExclusiveCouponAuthorizationAdapter,
@@ -161,6 +162,8 @@ const protectPricesFormattedRequest = async (
 		requestedSiteCouponId: stringValue(body.couponId),
 	})
 
+	if (decision.paidCouponUsedUp) throw new CouponUsedUpError()
+
 	if (!decision.authorized) {
 		delete body.merchantCoupon
 		delete body.couponId
@@ -220,6 +223,8 @@ const protectCheckoutRequest = async (
 		requestedMerchantCouponId: stringValue(url.searchParams.get('couponId')),
 		requestedSiteCouponId: stringValue(url.searchParams.get('usedCouponId')),
 	})
+
+	if (decision.paidCouponUsedUp) throw new CouponUsedUpError()
 
 	if (decision.authorized && decision.entitlementCouponId) {
 		url.searchParams.set('usedCouponId', decision.entitlementCouponId)

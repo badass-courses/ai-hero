@@ -42,6 +42,16 @@ export const INVALID_QUANTITY = 'invalid-quantity'
 
 export const INVALID_QUANTITY_PATH = `/subscribe/error?reason=${INVALID_QUANTITY}`
 
+export const COUPON_USED_UP = 'coupon-used-up'
+export const COUPON_USED_UP_PATH = `/subscribe/error?reason=${COUPON_USED_UP}`
+export const COUPON_USED_UP_MESSAGE = 'This coupon has already been used'
+
+export class CouponUsedUpError extends Error {
+	constructor() {
+		super(COUPON_USED_UP)
+	}
+}
+
 /** `reason` on /subscribe/error for a checkout link that is missing or unusable. */
 export const CHECKOUT_LINK_EXPIRED = 'invalid-expired'
 

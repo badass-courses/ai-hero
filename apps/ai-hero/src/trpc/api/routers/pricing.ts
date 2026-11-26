@@ -3,7 +3,9 @@ import { courseBuilderAdapter, db } from '@/db'
 import { entitlementTypes } from '@/db/schema'
 import { AUTHORITATIVE_PRODUCT_IDS } from '@/lib/c5-pricing/decision'
 import { authorizeExclusiveCouponSelection } from '@/lib/exclusive-coupon-authorization'
+import { COUPON_USED_UP } from '@/lib/purchase-guardrails'
 import { getServerAuthSession } from '@/server/auth'
+import { TRPCError } from '@trpc/server'
 import { createTRPCRouter, publicProcedure } from '@/trpc/api/trpc'
 import { isAfter } from 'date-fns'
 import { eq } from 'drizzle-orm'
@@ -318,6 +320,12 @@ export const pricingRouter = createTRPCRouter({
 				requestedMerchantCouponId: merchantCoupon?.id,
 				requestedSiteCouponId: couponId,
 			})
+			if (
+				couponAuthorization.paidCouponUsedUp &&
+				!AUTHORITATIVE_PRODUCT_IDS.has(productId)
+			) {
+				throw new TRPCError({ code: 'CONFLICT', message: COUPON_USED_UP })
+			}
 			const authorizedMerchantCoupon = couponAuthorization.authorized
 				? merchantCoupon
 				: undefined

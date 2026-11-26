@@ -39,6 +39,8 @@ import { protectCourseBuilderRequest } from '@/coursebuilder/coursebuilder-reque
 import { PURCHASE_BLOCKED_ERROR_PATH } from '@/coursebuilder/purchase-block-checkout'
 import {
 	ALREADY_OWN_PATH,
+	COUPON_USED_UP_PATH,
+	CouponUsedUpError,
 	INVALID_QUANTITY_PATH,
 	REGIONAL_TEAM_NOT_ALLOWED_PATH,
 } from '@/lib/purchase-guardrails'
@@ -65,6 +67,20 @@ beforeEach(() => {
 })
 
 describe('protectCommerceRequest', () => {
+	it('routes a used coupon to the checkout error page and refuses its formatted price', async () => {
+		vi.mocked(protectCourseBuilderRequest).mockRejectedValueOnce(new CouponUsedUpError())
+		const { request: stopped } = await protectCommerceRequest(checkout('product-ma254'))
+		expect(stopped).toBeInstanceOf(Response)
+		expect((stopped as Response).status).toBe(303)
+		expect((stopped as Response).headers.get('location')).toBe(`https://app.test${COUPON_USED_UP_PATH}`)
+
+		vi.mocked(protectCourseBuilderRequest).mockRejectedValueOnce(new CouponUsedUpError())
+		const { request: price } = await protectCommerceRequest(new NextRequest(
+			'https://app.test/api/coursebuilder/prices-formatted', { method: 'POST' },
+		))
+		expect((price as Response).status).toBe(409)
+		expect(await price.json()).toEqual({ error: 'coupon-used-up' })
+	})
 	it('refuses a chargeback-blocked buyer before any coupon or pricing work', async () => {
 		const isBlocked = vi.fn(async () => {
 			mocks.calls.push('purchase-block')

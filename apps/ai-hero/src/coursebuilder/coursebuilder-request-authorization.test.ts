@@ -440,6 +440,27 @@ describe('protectCourseBuilderRequest', () => {
 		)
 	})
 
+	it('refuses an exhausted paid coupon before checkout can fall back to full price', async () => {
+		const url = new URL('https://example.test/api/coursebuilder/checkout/stripe')
+		url.searchParams.set('productId', 'product-ma254')
+		url.searchParams.set('couponId', publicMerchantCoupon.id)
+		url.searchParams.set('usedCouponId', publicCoupon.id)
+		await expect(
+			protectCourseBuilderRequest(new NextRequest(url, { method: 'POST' }), {
+				adapter: {
+					...createAdapter(),
+					getCoupon: async () => ({
+						...publicCoupon,
+						restrictedToProductId: 'product-ma254',
+						maxUses: 1,
+						usedCount: 1,
+						paidCouponUsedUp: true,
+					}),
+				},
+			}),
+		).rejects.toThrow('coupon-used-up')
+	})
+
 	it('keeps ordinary public checkout coupons compatible', async () => {
 		const request = new NextRequest(
 			`https://aihero.dev/api/coursebuilder/checkout/stripe?productId=product-crash-course&quantity=1&cancelUrl=%2F&couponId=${publicMerchantCoupon.id}&usedCouponId=${publicCoupon.id}`,

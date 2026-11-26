@@ -222,6 +222,7 @@ vi.mock('@coursebuilder/commerce/checkout-attribution', () => ({
 	buildCheckoutAttribution: vi.fn(() => ({})),
 }))
 
+import { courseBuilderAdapter } from '@/db'
 import { hashCheckoutLoginBrowserSession } from '@/lib/checkout-login-browser-session'
 import { createCheckoutLoginHandoff } from '@/lib/checkout-login-handoff'
 
@@ -286,6 +287,21 @@ describe('logged-in checkout coupon authorization', () => {
 		expect(mocks.redirect).toHaveBeenCalledWith(
 			'/subscribe/error?reason=purchase-blocked',
 		)
+	})
+
+	it('refuses a coupon used between the initial quote and login callback', async () => {
+		const exhausted = {
+			...mocks.coupon,
+			maxUses: 1,
+			usedCount: 1,
+			paidCouponUsedUp: true,
+		}
+		vi.mocked(courseBuilderAdapter.getCoupon).mockResolvedValueOnce(exhausted as never)
+
+		await LoginPage({ searchParams: Promise.resolve(searchParams) })
+
+		expect(mocks.createCheckoutSession).not.toHaveBeenCalled()
+		expect(mocks.redirect).toHaveBeenCalledWith('/subscribe/error?reason=coupon-used-up')
 	})
 
 	it('removes an unowned exclusive selector before Stripe checkout', async () => {

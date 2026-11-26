@@ -22,6 +22,7 @@ type SiteCouponRecord = {
 	expires?: Date | null
 	maxUses?: number
 	usedCount?: number
+	paidCouponUsedUp?: true
 }
 
 type EntitlementRecord = {
@@ -64,6 +65,7 @@ export type ExclusiveCouponAuthorizationDecision = {
 	protectedSiteCoupon: boolean
 	/** The denied selection was a PPP coupon; server pricing may re-derive PPP. */
 	requestedPPP?: boolean
+	paidCouponUsedUp?: true
 	entitlementCouponId?: string
 }
 
@@ -169,13 +171,23 @@ export async function authorizeExclusiveCouponSelection({
 	const requestedSiteCoupon = requestedSiteCouponId
 		? await adapter.getCoupon(requestedSiteCouponId)
 		: null
+	const protectedSiteCoupon = requestedSiteCoupon?.fields?.exclusive === true
+	if (
+		requestedSiteCoupon?.paidCouponUsedUp &&
+		couponPermitsProduct(requestedSiteCoupon, productId)
+	) {
+		return {
+			authorized: false,
+			protectedMerchantCoupon: Boolean(requestedMerchantCouponId),
+			protectedSiteCoupon,
+			paidCouponUsedUp: true,
+		}
+	}
 	const merchantCouponId =
 		requestedMerchantCouponId || requestedSiteCoupon?.merchantCouponId
 	const requestedMerchantCoupon = merchantCouponId
 		? await adapter.getMerchantCoupon(merchantCouponId)
 		: null
-
-	const protectedSiteCoupon = requestedSiteCoupon?.fields?.exclusive === true
 	const publicProvenance = requestedMerchantCoupon
 		? isPublicCouponProvenance({
 				merchantCoupon: requestedMerchantCoupon,

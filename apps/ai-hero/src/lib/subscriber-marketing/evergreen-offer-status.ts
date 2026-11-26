@@ -39,6 +39,8 @@ export function evergreenOfferStatus(
 	// An unreadable clock says nothing rather than "ended".
 	if (!Number.isFinite(nowMs) || !Number.isFinite(expiresMs))
 		return { status: 'none' }
-	if (nowMs < expiresMs) return { status: 'open' }
+	if (nowMs < expiresMs) {
+		return row.usedCount >= row.maxUses ? { status: 'used' } : { status: 'open' }
+	}
 	return { status: 'ended', deadline: issuedCouponDeadline(coupon) }
 }

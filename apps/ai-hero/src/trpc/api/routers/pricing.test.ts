@@ -389,7 +389,7 @@ describe('pricing.formatted exclusive coupon authorization', () => {
 		)
 	})
 
-	it('prices a signed-out evergreen coupon after the real adapter schema normalizes its row', async () => {
+	it.each([0, 1])('prices an evergreen coupon only below its purchase cap (%i uses)', async (usedCount) => {
 		vi.useFakeTimers()
 		vi.setSystemTime(new Date('2026-09-24T18:00:00.000Z'))
 		try {
@@ -452,7 +452,11 @@ describe('pricing.formatted exclusive coupon authorization', () => {
 			mocks.getServerAuthSession.mockResolvedValue({ session: null })
 			// This one-shot fixture uses the wider real adapter shape rather than
 			// the narrow public/default fixtures inferred by this test's mocks.
-			mocks.adapter.getCoupon.mockResolvedValueOnce(row as never)
+			mocks.adapter.getCoupon.mockResolvedValueOnce({
+				...row,
+				usedCount,
+				paidCouponUsedUp: usedCount > 0,
+			} as never)
 			mocks.adapter.getMerchantCoupon.mockResolvedValueOnce({
 				...merchant,
 				percentageDiscount: null,
@@ -470,14 +474,20 @@ describe('pricing.formatted exclusive coupon authorization', () => {
 					input.merchantCouponId === merchant.id ? merchant : null,
 			}))
 
-			const result = await caller().formatted({
+			const result = caller().formatted({
 				productId: 'product-ma254',
 				quantity: 1,
 				couponId,
 			})
-			expect(result.calculatedPrice).toBe(199)
-			expect(result.usedCouponId).toBe(couponId)
-			expect(result.appliedMerchantCoupon?.id).toBe(merchant.id)
+			if (usedCount) {
+				await expect(result).rejects.toThrow('coupon-used-up')
+				expect(mocks.formatPricesForProduct).not.toHaveBeenCalled()
+				return
+			}
+			const price = await result
+			expect(price.calculatedPrice).toBe(199)
+			expect(price.usedCouponId).toBe(couponId)
+			expect(price.appliedMerchantCoupon?.id).toBe(merchant.id)
 			expect(mocks.formatPricesForProduct).toHaveBeenCalledWith(
 				expect.objectContaining({
 					merchantCouponId: merchant.id,

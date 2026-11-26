@@ -9,6 +9,9 @@ import { REGIONAL_UPGRADE_PATH } from '@/lib/c5-pricing/products'
 import { getProduct } from '@/lib/products-query'
 import {
 	ALREADY_OWN_PATH,
+	COUPON_USED_UP,
+	COUPON_USED_UP_PATH,
+	CouponUsedUpError,
 	duplicatePurchaseGuard,
 	INVALID_QUANTITY_PATH,
 	isRegionalCoupon,
@@ -130,7 +133,13 @@ export const protectCommerceRequest = async (
 			})
 			return serverComputed.coupon
 		},
+	}).catch((error: unknown) => {
+		if (!(error instanceof CouponUsedUpError)) throw error
+		return isCheckoutRequest(request)
+			? Response.redirect(new URL(COUPON_USED_UP_PATH, request.url), 303)
+			: Response.json({ error: COUPON_USED_UP }, { status: 409 })
 	})
+	if (guarded instanceof Response) return { request: guarded, userId }
 	const authoritativeProduct = authoritativeCheckoutProduct(guarded)
 	const redirectTo = (path: string) => ({
 		request: Response.redirect(new URL(path, request.url), 303),

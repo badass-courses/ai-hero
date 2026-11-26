@@ -6,12 +6,13 @@
  * price; without this, the recipient of "final notice" sees that price with
  * no reason given (a support report, 2026-09-29).
  *
- * The answer names no contact and no price. It only restates the deadline the
- * link's own email already printed.
+ * The answer names no contact and no price. It says the coupon was used or
+ * restates the deadline from the link's own email.
  */
 export type EvergreenOfferStatus =
 	| { readonly status: 'none' }
 	| { readonly status: 'open' }
+	| { readonly status: 'used' }
 	| { readonly status: 'ended'; readonly deadline: string }
 
 /** The site coupon id every evergreen offer link carries. */
@@ -26,7 +27,7 @@ export function evergreenOfferEndedText(deadline: string) {
 }
 
 /**
- * Whether the ended-offer notice shows. Someone who already owns the product
+ * Whether the unavailable-offer notice shows. Someone who already owns the product
  * (Valid or Restricted, non-bulk: the buy box's own signal) has no use for a
  * line about a discount they no longer need.
  */
@@ -34,5 +35,8 @@ export function showEvergreenEndedNotice(input: {
 	status: EvergreenOfferStatus['status']
 	viewerOwnsProduct: boolean
 }) {
-	return input.status === 'ended' && !input.viewerOwnsProduct
+	return (
+		(input.status === 'ended' || input.status === 'used') &&
+		!input.viewerOwnsProduct
+	)
 }

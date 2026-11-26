@@ -27,6 +27,7 @@ describe('/subscribe/error', () => {
 		['regional-upgrade', 'You already have a regional ticket'],
 		['browser-mismatch', 'One more step'],
 		['invalid-expired', 'This checkout link has expired'],
+		['coupon-used-up', 'This coupon has already been used'],
 		['invalid-quantity', 'number of seats'],
 		['checkout-unavailable', 'start checkout'],
 	])('renders the copy for %s', async (reason, text) => {

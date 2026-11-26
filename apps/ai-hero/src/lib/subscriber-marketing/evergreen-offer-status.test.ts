@@ -69,6 +69,13 @@ describe('evergreenOfferStatus', () => {
 		)
 	})
 
+	it('says a redeemed offer is used before its deadline', async () => {
+		const { row } = await issuedRow(offerPayload())
+		expect(
+			evergreenOfferStatus({ ...row, usedCount: 1 }, '2026-10-05T21:59:58.999Z'),
+		).toEqual({ status: 'used' })
+	})
+
 	it('fails closed on an unreadable clock: none, never ended', async () => {
 		const { row } = await issuedRow(offerPayload())
 		expect(evergreenOfferStatus(row, 'not-a-date')).toEqual({ status: 'none' })
