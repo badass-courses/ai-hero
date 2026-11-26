@@ -3,6 +3,11 @@ name: Evergreen Journey MySQL
 on:
   pull_request:
     paths:
+      - "apps/ai-hero/src/lib/paid-coupon-*"
+      - "apps/ai-hero/src/db/index.ts"
+      - "apps/ai-hero/src/coursebuilder/*commerce-request*"
+      - "apps/ai-hero/src/coursebuilder/coursebuilder-request-authorization*"
+      - "apps/ai-hero/src/inngest/functions/count-paid-coupon-use*"
       - ".github/workflows/evergreen-journey-mysql.yaml"
       - "pnpm-lock.yaml"
       - "apps/ai-hero/package.json"
@@ -56,6 +61,11 @@ on:
   push:
     branches: [main]
     paths:
+      - "apps/ai-hero/src/lib/paid-coupon-*"
+      - "apps/ai-hero/src/db/index.ts"
+      - "apps/ai-hero/src/coursebuilder/*commerce-request*"
+      - "apps/ai-hero/src/coursebuilder/coursebuilder-request-authorization*"
+      - "apps/ai-hero/src/inngest/functions/count-paid-coupon-use*"
       - ".github/workflows/evergreen-journey-mysql.yaml"
       - "pnpm-lock.yaml"
       - "apps/ai-hero/package.json"
@@ -195,7 +205,7 @@ jobs:
         run: |
           mysql -h 127.0.0.1 -P 3307 -uroot -paih_test_password -e 'CREATE DATABASE IF NOT EXISTS coupon_mint_test'
           pnpm --filter ai-hero exec node scripts/test-mysql-schema.mjs "$AIH_COUPON_MINT_MYSQL_URL"
-          pnpm --filter ai-hero exec vitest run -c vitest.config.ts --testTimeout=30000 src/lib/coupon-mint.mysql.test.ts
+          pnpm --filter ai-hero exec vitest run -c vitest.config.ts --testTimeout=30000 src/lib/coupon-mint.mysql.test.ts src/lib/paid-coupon-usage.mysql.test.ts src/inngest/functions/count-paid-coupon-use.test.ts
 
       - name: Run guarded early-access payer suite
         env:

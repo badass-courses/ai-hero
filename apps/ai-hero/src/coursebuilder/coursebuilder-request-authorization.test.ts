@@ -440,13 +440,14 @@ describe('protectCourseBuilderRequest', () => {
 		)
 	})
 
-	it('refuses an exhausted paid coupon before checkout can fall back to full price', async () => {
+	it('removes an exhausted coupon but lets checkout continue', async () => {
 		const url = new URL('https://example.test/api/coursebuilder/checkout/stripe')
 		url.searchParams.set('productId', 'product-ma254')
 		url.searchParams.set('couponId', publicMerchantCoupon.id)
 		url.searchParams.set('usedCouponId', publicCoupon.id)
-		await expect(
-			protectCourseBuilderRequest(new NextRequest(url, { method: 'POST' }), {
+		const paidCouponUsedUp = vi.fn()
+		const checkout = await protectCourseBuilderRequest(new NextRequest(url, { method: 'POST' }), {
+				onPaidCouponUsedUp: paidCouponUsedUp,
 				adapter: {
 					...createAdapter(),
 					getCoupon: async () => ({
@@ -457,8 +458,10 @@ describe('protectCourseBuilderRequest', () => {
 						paidCouponUsedUp: true,
 					}),
 				},
-			}),
-		).rejects.toThrow('coupon-used-up')
+			})
+		expect(paidCouponUsedUp).toHaveBeenCalledOnce()
+		expect(checkout.nextUrl.searchParams.has('couponId')).toBe(false)
+		expect(checkout.nextUrl.searchParams.has('usedCouponId')).toBe(false)
 	})
 
 	it('keeps ordinary public checkout coupons compatible', async () => {

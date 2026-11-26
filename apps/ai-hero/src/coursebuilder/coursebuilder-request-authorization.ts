@@ -1,5 +1,4 @@
 import { NextRequest } from 'next/server'
-import { CouponUsedUpError } from '@/lib/purchase-guardrails'
 import {
 	authorizeExclusiveCouponSelection,
 	type ExclusiveCouponAuthorizationAdapter,
@@ -15,6 +14,7 @@ type ProtectCourseBuilderRequestOptions = {
 		} | null>
 	}
 	verifiedUserId?: string
+	onPaidCouponUsedUp?: () => void
 	/**
 	 * Products the app's authoritative-price hook prices. Their only client
 	 * input is the PPP consent (`AUTHORITATIVE_PPP_OFFER_ID`); every coupon
@@ -124,6 +124,7 @@ const protectPricesFormattedRequest = async (
 		adapter,
 		verifiedUserId,
 		authoritativeProductIds,
+		onPaidCouponUsedUp,
 	}: ProtectCourseBuilderRequestOptions,
 ) => {
 	const body = await parsePricesFormattedBody(request)
@@ -162,7 +163,10 @@ const protectPricesFormattedRequest = async (
 		requestedSiteCouponId: stringValue(body.couponId),
 	})
 
-	if (decision.paidCouponUsedUp) throw new CouponUsedUpError()
+	if (decision.paidCouponUsedUp) {
+		onPaidCouponUsedUp?.()
+		delete body.code
+	}
 
 	if (!decision.authorized) {
 		delete body.merchantCoupon
@@ -185,6 +189,7 @@ const protectCheckoutRequest = async (
 		verifiedUserId,
 		authoritativeProductIds,
 		resolveServerComputedMerchantCoupon,
+		onPaidCouponUsedUp,
 	}: ProtectCourseBuilderRequestOptions,
 ) => {
 	// Vercel country is trusted; the checkout query is caller-controlled.
@@ -224,7 +229,7 @@ const protectCheckoutRequest = async (
 		requestedSiteCouponId: stringValue(url.searchParams.get('usedCouponId')),
 	})
 
-	if (decision.paidCouponUsedUp) throw new CouponUsedUpError()
+	if (decision.paidCouponUsedUp) onPaidCouponUsedUp?.()
 
 	if (decision.authorized && decision.entitlementCouponId) {
 		url.searchParams.set('usedCouponId', decision.entitlementCouponId)
@@ -234,12 +239,14 @@ const protectCheckoutRequest = async (
 		url.searchParams.delete('couponId')
 		url.searchParams.delete('usedCouponId')
 
-		const serverComputedCoupon = await resolveServerComputedMerchantCoupon?.({
-			productId,
-			quantity,
-			verifiedUserId,
-			country: trustedCountry,
-		})
+		const serverComputedCoupon = decision.paidCouponUsedUp && quantity < 2
+			? null
+			: await resolveServerComputedMerchantCoupon?.({
+					productId,
+					quantity,
+					verifiedUserId,
+					country: trustedCountry,
+				})
 		if (
 			serverComputedCoupon?.type === 'bulk' ||
 			(serverComputedCoupon?.type === 'ppp' && decision.requestedPPP)

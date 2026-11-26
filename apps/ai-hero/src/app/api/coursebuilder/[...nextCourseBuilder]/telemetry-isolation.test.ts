@@ -7,16 +7,20 @@ const mocks = vi.hoisted(() => ({
 	retrieve: vi.fn(),
 	core: vi.fn(),
 	decision: 'new_purchase',
+	paidCouponUsedUp: undefined as true | undefined,
 }))
 vi.mock('@/coursebuilder/course-builder-config', () => ({
 	GET: vi.fn(),
 	POST: mocks.core,
+	commercePricingHandlers: { POST: mocks.core },
 }))
 vi.mock('@/coursebuilder/protect-commerce-request', () => ({
 	protectCommerceRequest: async (request: NextRequest) => ({
 		request,
 		userId: 'user_fixture',
+		paidCouponUsedUp: mocks.paidCouponUsedUp,
 	}),
+	isProtectedCommerceRequest: (request: NextRequest) => !request.nextUrl.pathname.includes('/webhook/'),
 	authoritativeCheckoutProduct: () => null,
 }))
 vi.mock('@/coursebuilder/stripe-provider', () => ({
@@ -67,6 +71,7 @@ const session = {
 }
 beforeEach(() => {
 	vi.resetAllMocks()
+	mocks.paidCouponUsedUp = undefined
 	mocks.core.mockResolvedValue(new Response(null, { status: 200 }))
 	mocks.retrieve.mockResolvedValue(session)
 	mocks.emit.mockResolvedValue(undefined)
@@ -102,6 +107,14 @@ it('reads the amount from the completed webhook, not a telemetry retrieval', asy
 		{ amountCents: 90650 },
 	)
 })
+it('keeps a used-coupon quote successful and exposes the notice to the buy box', async () => {
+	mocks.paidCouponUsedUp = true
+	mocks.core.mockResolvedValue(Response.json({ calculatedPrice: 299 }))
+	const response = await POST(new NextRequest('http://localhost/api/coursebuilder/prices-formatted', { method: 'POST' }))
+	expect(response.status).toBe(200)
+	expect(await response.json()).toEqual({ calculatedPrice: 299, paidCouponUsedUp: true })
+})
+
 it('redirects checkout without a Stripe retrieval and keeps the captured decision', async () => {
 	mocks.core.mockResolvedValue(
 		new Response(null, {

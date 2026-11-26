@@ -4,7 +4,7 @@ import { log } from '@/server/logger'
 import { formatDiscount } from '@/utils/discount-formatter'
 import { and, eq, sql } from 'drizzle-orm'
 
-import { getCouponForCode } from '@coursebuilder/commerce/props-for-commerce'
+import { getCouponForCode } from '@/lib/coupon-display'
 import type { Coupon } from '@coursebuilder/core/schemas'
 import { getResourcePath } from '@coursebuilder/utils/resource-paths'
 

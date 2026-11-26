@@ -53,9 +53,10 @@ const drizzleAdapter = withSessionAccessBusts(
  * as they were, and loaded on first call to keep `@/db` free of an import
  * cycle.
  */
+const paidCouponAdapter = withPaidCouponUsage(drizzleAdapter, db)
 export const courseBuilderAdapter: RequiredPricingAuthority<
-	typeof drizzleAdapter
-> = Object.assign(withPaidCouponUsage(drizzleAdapter, db), {
+	typeof paidCouponAdapter
+> = Object.assign(paidCouponAdapter, {
 	authoritativePrice: async (request: AuthoritativePriceRequest) =>
 		(await import('@/lib/c5-pricing/server')).c5AuthoritativePrice(request),
 })

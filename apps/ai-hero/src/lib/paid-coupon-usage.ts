@@ -1,6 +1,6 @@
 import type { DbExecutor } from '@/db/client'
 import { coupon, purchases } from '@/db/schema'
-import { and, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm'
 
 import type { CouponPort } from '@coursebuilder/core/ports'
 
@@ -66,24 +66,20 @@ export function withPaidCouponUsage<
 		CouponPort,
 		'getCoupon' | 'couponForIdOrCode' | 'getDefaultCoupon'
 	>,
->(adapter: T, db: DbExecutor): T {
-	const getCoupon = adapter.getCoupon.bind(adapter)
+>(adapter: T, db: DbExecutor) {
 	const couponForIdOrCode = adapter.couponForIdOrCode.bind(adapter)
 	const getDefaultCoupon = adapter.getDefaultCoupon.bind(adapter)
 	return Object.assign(adapter, {
-		getCoupon: async (key: string) => {
-			const row = await getCoupon(key)
-			if (!row) return null
-			const effective = await withEffectivePaidCouponUsage(db, row)
-			// The legacy formatter also reads entitlement coupons with getCoupon,
-			// but doesn't check usedCount there. Do not expose a discount source.
-			return effective.paidCouponUsedUp
-				? { ...effective, merchantCouponId: null }
-				: effective
+		getCouponForDisplay: async (key: string) => {
+			const row = await adapter.getCoupon(key)
+			return row && withEffectivePaidCouponUsage(db, row)
 		},
 		couponForIdOrCode: async (input: Parameters<T['couponForIdOrCode']>[0]) => {
 			const row = await couponForIdOrCode(input)
-			return row && withEffectivePaidCouponUsage(db, row)
+			return row &&
+				!(await withEffectivePaidCouponUsage(db, row)).paidCouponUsedUp
+				? row
+				: null
 		},
 		getDefaultCoupon: async (productIds?: string[]) => {
 			const result = await getDefaultCoupon(productIds)
@@ -100,36 +96,44 @@ export async function recordPaidCouponUse(
 	purchaseId: string,
 ) {
 	return db.transaction(
-		async (tx): Promise<'counted' | 'already-counted' | 'ineligible'> => {
+		async (
+			tx,
+		): Promise<'counted' | 'already-counted' | 'ineligible' | 'pending'> => {
 			const [purchase] = await tx
 				.select({
 					couponId: purchases.couponId,
 					counted: sql<number>`JSON_CONTAINS_PATH(${purchases.fields}, 'one', '$.paidCouponUseCounted')`,
 					fieldsType: sql<string | null>`JSON_TYPE(${purchases.fields})`,
+					paid: sql<number>`(${purchases.merchantChargeId} IS NOT NULL AND ${purchases.totalAmount} > 0)`,
+					status: purchases.status,
+					bulkCouponId: purchases.bulkCouponId,
+					redeemedBulkCouponId: purchases.redeemedBulkCouponId,
 				})
 				.from(purchases)
-				.where(
-					and(
-						eq(purchases.id, purchaseId),
-						inArray(purchases.status, activePurchaseStatuses),
-						isNull(purchases.bulkCouponId),
-						isNull(purchases.redeemedBulkCouponId),
-						isNotNull(purchases.merchantChargeId),
-						sql`${purchases.totalAmount} > 0`,
-					),
-				)
+				.where(eq(purchases.id, purchaseId))
 				.for('update')
-			if (!purchase?.couponId) return 'ineligible'
+			if (!purchase) return 'pending'
 			if (purchase.counted) return 'already-counted'
+			if (purchase.bulkCouponId || purchase.redeemedBulkCouponId)
+				return 'ineligible'
+			if (['Refunded', 'Banned'].includes(purchase.status)) return 'ineligible'
+			// The paid checkout adapter writes couponId with the purchase, not at settlement.
+			if (!purchase.couponId) return 'ineligible'
+			if (!purchase.paid || !activePurchaseStatuses.includes(purchase.status))
+				return 'pending'
 
 			const [row] = await tx
 				.select({ id: coupon.id, maxUses: coupon.maxUses })
 				.from(coupon)
 				.where(eq(coupon.id, purchase.couponId))
 				.for('update')
-			if (!row || row.maxUses <= 0 || (await isTeamCoupon(tx, row.id)))
+			if (!row) return 'pending'
+			if (row.maxUses <= 0 || (await isTeamCoupon(tx, row.id)))
 				return 'ineligible'
-			if (purchase.fieldsType && !['OBJECT', 'NULL'].includes(purchase.fieldsType)) {
+			if (
+				purchase.fieldsType &&
+				!['OBJECT', 'NULL'].includes(purchase.fieldsType)
+			) {
 				throw new Error('invalid-purchase-fields-for-coupon-accounting')
 			}
 

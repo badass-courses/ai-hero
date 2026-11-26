@@ -1,9 +1,11 @@
 import {
 	GET as courseBuilderGET,
 	POST as coreCourseBuilderPOST,
+	commercePricingHandlers,
 } from '@/coursebuilder/course-builder-config'
 import {
 	authoritativeCheckoutProduct,
+	isProtectedCommerceRequest,
 	protectCommerceRequest,
 } from '@/coursebuilder/protect-commerce-request'
 import { stripeProvider } from '@/coursebuilder/stripe-provider'
@@ -163,7 +165,9 @@ const courseBuilderGETWithCouponAuthorization = async (
 ) => {
 	const { request: protectedRequest } = await protectCommerceRequest(request)
 	if (protectedRequest instanceof Response) return protectedRequest
-	return withTrustedCountry(request, () => courseBuilderGET(protectedRequest))
+	return withTrustedCountry(request, () =>
+		(isProtectedCommerceRequest(request) ? commercePricingHandlers.GET : courseBuilderGET)(protectedRequest),
+	)
 }
 
 const courseBuilderPOSTWithCashBalanceReconciliation = async (
@@ -177,7 +181,7 @@ const courseBuilderPOSTWithCashBalanceReconciliation = async (
 		return Response.json('invalid signature', { status: 401 })
 	const startedAt = Date.now()
 	const webhookRequest = request.clone()
-	const { request: protectedRequest, userId } =
+	const { request: protectedRequest, userId, paidCouponUsedUp } =
 		await protectCommerceRequest(request)
 	if (protectedRequest instanceof Response) return protectedRequest
 	const rawPre = request.cookies.get('buy_path_pre')?.value
@@ -189,7 +193,7 @@ const courseBuilderPOSTWithCashBalanceReconciliation = async (
 		preSessionId,
 		() =>
 			withTrustedCountry(request, () =>
-				coreCourseBuilderPOST(protectedRequest),
+				(isProtectedCommerceRequest(request) ? commercePricingHandlers.POST : coreCourseBuilderPOST)(protectedRequest),
 			),
 	)
 	// Preserve reservation settlement even when the core handler failed.
@@ -262,6 +266,14 @@ const courseBuilderPOSTWithCashBalanceReconciliation = async (
 			userId,
 			productId: authoritativeProductId,
 			keepSessionId: createdSessionId,
+		})
+	}
+	if (paidCouponUsedUp && request.nextUrl.pathname.endsWith('/prices-formatted') && response.ok) {
+		const headers = new Headers(response.headers)
+		headers.delete('content-length')
+		return Response.json({ ...(await response.json()), paidCouponUsedUp }, {
+			status: response.status,
+			headers,
 		})
 	}
 	return response

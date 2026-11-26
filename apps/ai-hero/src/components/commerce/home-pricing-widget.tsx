@@ -17,6 +17,7 @@ import type {
 
 import { GatedPPPToggle } from './regional-toggle-gate'
 import { GatedBuyButton } from './gated-buy-button'
+import { UsedCouponNotice } from './used-coupon-notice'
 import { CheckoutSurveyBuyButton } from './checkout-survey-buy-button'
 import { ProductPricingFeatures } from './product-pricing-features'
 
@@ -73,6 +74,7 @@ export const PricingWidget: React.FC<{
 					<Pricing.BuyMoreSeats className="pt-5">
 						<Pricing.TeamQuantityInput className="mb-0" label="Quantity" />
 						<Pricing.Price className="scale-75" />
+						<UsedCouponNotice coupon={couponFromCode} />
 						<GatedBuyButton className="via-primary bg-linear-to-b mt-3 from-blue-500 to-blue-700 shadow-sm">
 							Buy Additional Seats
 						</GatedBuyButton>

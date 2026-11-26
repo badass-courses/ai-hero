@@ -462,7 +462,7 @@ describe('pricing.formatted exclusive coupon authorization', () => {
 				percentageDiscount: null,
 			} as never)
 			mocks.adapter.getDefaultCoupon.mockResolvedValueOnce(null as never)
-			mocks.adapter.couponForIdOrCode.mockResolvedValueOnce({
+			mocks.adapter.couponForIdOrCode.mockResolvedValueOnce(usedCount ? null : {
 				...row,
 				merchantCoupon: merchant,
 			} as never)
@@ -480,8 +480,7 @@ describe('pricing.formatted exclusive coupon authorization', () => {
 				couponId,
 			})
 			if (usedCount) {
-				await expect(result).rejects.toThrow('coupon-used-up')
-				expect(mocks.formatPricesForProduct).not.toHaveBeenCalled()
+				await expect(result).resolves.toMatchObject({ calculatedPrice: 299, paidCouponUsedUp: true, appliedMerchantCoupon: null })
 				return
 			}
 			const price = await result

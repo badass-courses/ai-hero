@@ -40,7 +40,9 @@ export function evergreenOfferStatus(
 	if (!Number.isFinite(nowMs) || !Number.isFinite(expiresMs))
 		return { status: 'none' }
 	if (nowMs < expiresMs) {
-		return row.usedCount >= row.maxUses ? { status: 'used' } : { status: 'open' }
+		return row.maxUses > 0 && row.usedCount >= row.maxUses
+			? { status: 'used' }
+			: { status: 'open' }
 	}
 	return { status: 'ended', deadline: issuedCouponDeadline(coupon) }
 }

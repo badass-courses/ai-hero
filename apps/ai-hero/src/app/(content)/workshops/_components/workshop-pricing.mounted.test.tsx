@@ -86,9 +86,11 @@ afterEach(async () => {
 })
 
 describe('workshop coupon actor lifecycle', () => {
-	it.each(['coupon=coupon-valid', 'code=SAVE199'])(
-		'renders $199 and authorized checkout after %s resolves even when telemetry fetch rejects',
-		async (search) => {
+	it.each([
+		{ search: 'coupon=coupon-valid', used: false },
+		{ search: 'code=SAVE199', used: false },
+		{ search: 'coupon=coupon-valid', used: true },
+	])('renders a buyable quote for $search (used: $used) even when telemetry fetch rejects', async ({ search, used }) => {
 			vi.mocked(navigator.sendBeacon).mockReturnValue(false)
 			let telemetryRequests = 0
 			testState.search = search
@@ -138,10 +140,11 @@ describe('workshop coupon actor lifecycle', () => {
 						JSON.stringify({
 							id: product.id,
 							fullPrice: 299,
-							calculatedPrice: body.couponId === couponId ? 199 : 299,
-							usedCouponId: body.couponId ?? null,
+							calculatedPrice: !used && body.couponId === couponId ? 199 : 299,
+							usedCouponId: used ? null : body.couponId ?? null,
 							appliedMerchantCoupon:
-								body.couponId === couponId ? { id: merchantCouponId } : null,
+								!used && body.couponId === couponId ? { id: merchantCouponId } : null,
+							...(used && { paidCouponUsedUp: true }),
 						}),
 						{ status: 200, headers: { 'Content-Type': 'application/json' } },
 					)
@@ -174,7 +177,8 @@ describe('workshop coupon actor lifecycle', () => {
 				await new Promise((resolve) => setTimeout(resolve, 20))
 			})
 			expect(telemetryRequests).toBeGreaterThan(0)
-			expect(host.textContent).toContain('$199')
+			expect(host.textContent).toContain(used ? '$299' : '$199')
+			if (used) expect(host.textContent).toContain('This code has been used.')
 			expect(priceRequests).toEqual([couponId])
 			const form = host.querySelector('form[action]')
 			expect(form).not.toBeNull()
@@ -184,8 +188,9 @@ describe('workshop coupon actor lifecycle', () => {
 			)
 			expect(checkout.pathname).toBe('/api/coursebuilder/checkout/stripe')
 			expect(checkout.searchParams.get('productId')).toBe(product.id)
-			expect(checkout.searchParams.get('couponId')).toBe(merchantCouponId)
-			expect(checkout.searchParams.get('usedCouponId')).toBe(couponId)
+			expect(checkout.searchParams.get('couponId')).toBe(used ? null : merchantCouponId)
+			expect(checkout.searchParams.get('usedCouponId')).toBe(used ? null : couponId)
+			expect(form?.querySelector('button[type="submit"]')?.hasAttribute('disabled')).toBe(false)
 		},
 	)
 

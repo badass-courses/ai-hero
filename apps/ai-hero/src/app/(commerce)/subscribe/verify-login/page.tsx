@@ -23,7 +23,6 @@ import {
 	ALREADY_OWN_PATH,
 	CHECKOUT_LINK_EXPIRED_PATH,
 	CHECKOUT_UNAVAILABLE_PATH,
-	COUPON_USED_UP_PATH,
 	duplicatePurchaseGuard,
 	INVALID_QUANTITY_PATH,
 	isRegionalCoupon,
@@ -85,12 +84,6 @@ export default async function VerifyLoginPage({
 		requestedMerchantCouponId: parsedCheckoutParams.data.couponId,
 		requestedSiteCouponId: parsedCheckoutParams.data.usedCouponId,
 	})
-	if (
-		couponAuthorization.paidCouponUsedUp &&
-		!AUTHORITATIVE_PRODUCT_IDS.has(parsedCheckoutParams.data.productId)
-	) {
-		return redirect(COUPON_USED_UP_PATH)
-	}
 	const regionalCouponApplied = isRegionalCoupon({
 		couponId: parsedCheckoutParams.data.couponId,
 		requestedPPP: couponAuthorization.requestedPPP,

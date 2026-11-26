@@ -7,6 +7,7 @@ import {
 	type ProductPricingFeature,
 } from '@/components/commerce/product-pricing-features'
 import { GatedBuyButton } from '@/components/commerce/gated-buy-button'
+import { UsedCouponNotice } from '@/components/commerce/used-coupon-notice'
 import { RegionalQuantityClear } from '@/components/commerce/regional-toggle-gate'
 import { TYPE } from '@/components/landing/type'
 import { C5_PRODUCT_ID } from '@/lib/c5-pricing/products'
@@ -171,6 +172,7 @@ export const PricingWidget = ({
 							billingInterval={product.fields?.billingInterval}
 						/>
 					</Pricing.Price>
+					<UsedCouponNotice coupon={couponFromCode} />
 					<TeamPurchaseControls teamMode={teamMode} />
 					{buyButton ?? (
 						<GatedBuyButton

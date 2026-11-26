@@ -39,6 +39,7 @@ export type ExclusiveCouponAuthorizationAdapter = {
 		merchantCouponId: string,
 	): Awaitable<MerchantCouponRecord | null>
 	getCoupon(couponId: string): Awaitable<SiteCouponRecord | null>
+	getCouponForDisplay?(couponId: string): Awaitable<SiteCouponRecord | null>
 	getEntitlementTypeByName(
 		name: string,
 	): Awaitable<{ id: string } | null | undefined>
@@ -168,8 +169,9 @@ export async function authorizeExclusiveCouponSelection({
 	requestedSiteCouponId,
 	now = new Date(),
 }: AuthorizeExclusiveCouponSelectionInput): Promise<ExclusiveCouponAuthorizationDecision> {
+	const getCoupon = (adapter.getCouponForDisplay ?? adapter.getCoupon).bind(adapter)
 	const requestedSiteCoupon = requestedSiteCouponId
-		? await adapter.getCoupon(requestedSiteCouponId)
+		? await getCoupon(requestedSiteCouponId)
 		: null
 	const protectedSiteCoupon = requestedSiteCoupon?.fields?.exclusive === true
 	if (
@@ -280,7 +282,7 @@ export async function authorizeExclusiveCouponSelection({
 			continue
 		}
 
-		const sourceCoupon = await adapter.getCoupon(entitlement.sourceId)
+		const sourceCoupon = await getCoupon(entitlement.sourceId)
 		if (
 			!sourceCoupon?.merchantCouponId ||
 			!couponIsActive(sourceCoupon, now) ||

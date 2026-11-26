@@ -1,5 +1,6 @@
 import { AUTHORITATIVE_PRODUCT_IDS } from '@/lib/c5-pricing/decision'
 
+import { paidCouponPricingView } from '@/lib/paid-coupon-pricing-view'
 import { formatPricesForProduct } from '@coursebuilder/commerce'
 import type { CommerceAdapter } from '@coursebuilder/commerce/types'
 
@@ -28,7 +29,7 @@ export async function resolveServerComputedCheckoutCoupon({
 		preferStacking: false,
 		merchantCouponId: defaultCoupons?.defaultMerchantCoupon?.id,
 		usedCouponId: defaultCoupons?.defaultCoupon?.id,
-		ctx: adapter,
+		ctx: paidCouponPricingView(adapter),
 	})
 	const coupon = pricing.appliedMerchantCoupon
 	return coupon?.type === 'bulk' || coupon?.type === 'ppp'

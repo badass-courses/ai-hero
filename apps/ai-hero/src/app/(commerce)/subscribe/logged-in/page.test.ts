@@ -289,7 +289,7 @@ describe('logged-in checkout coupon authorization', () => {
 		)
 	})
 
-	it('refuses a coupon used between the initial quote and login callback', async () => {
+	it('continues without a coupon used between the initial quote and login callback', async () => {
 		const exhausted = {
 			...mocks.coupon,
 			maxUses: 1,
@@ -300,8 +300,10 @@ describe('logged-in checkout coupon authorization', () => {
 
 		await LoginPage({ searchParams: Promise.resolve(searchParams) })
 
-		expect(mocks.createCheckoutSession).not.toHaveBeenCalled()
-		expect(mocks.redirect).toHaveBeenCalledWith('/subscribe/error?reason=coupon-used-up')
+		expect(mocks.createCheckoutSession).toHaveBeenCalledWith(
+			expect.objectContaining({ couponId: undefined, usedCouponId: undefined }),
+			expect.anything(), expect.anything(),
+		)
 	})
 
 	it('removes an unowned exclusive selector before Stripe checkout', async () => {

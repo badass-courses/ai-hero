@@ -13,7 +13,6 @@ import {
 	authorizeExclusiveCouponSelection,
 	type ExclusiveCouponAuthorizationDecision,
 } from '@/lib/exclusive-coupon-authorization'
-import { COUPON_USED_UP } from '@/lib/purchase-guardrails'
 
 import type { CommerceAdapter } from '@coursebuilder/commerce'
 import { AUTHORITATIVE_PPP_OFFER_ID } from '@coursebuilder/commerce/authoritative-price'
@@ -75,12 +74,6 @@ export async function resolveLoggedInCheckoutPricing({
 		requestedSiteCouponId: checkoutParams.usedCouponId,
 		now,
 	})
-	if (
-		couponAuthorization.paidCouponUsedUp &&
-		!authoritativeProductIds?.has(checkoutParams.productId)
-	) {
-		return { kind: 'rejected', reason: COUPON_USED_UP }
-	}
 	const checkoutHandoff = verifyCheckoutLoginHandoff({
 		token: checkoutHandoffToken,
 		secret: handoffSecret,
@@ -163,7 +156,8 @@ export async function resolveLoggedInCheckoutPricing({
 	const country = validPppHandoff
 		? checkoutHandoff.payload.country
 		: trustedCountry
-	const serverComputedCoupon = !couponAuthorization.authorized
+	const serverComputedCoupon = !couponAuthorization.authorized &&
+		(!couponAuthorization.paidCouponUsedUp || quantity >= 2)
 		? await resolveServerComputedCheckoutCoupon({
 				adapter,
 				productId: checkoutParams.productId,

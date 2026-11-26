@@ -60,7 +60,7 @@ export function EvergreenOfferEndedNotice({
 		offer.status === 'ended'
 			? evergreenOfferEndedText(offer.deadline)
 			: offer.status === 'used'
-				? `${COUPON_USED_UP_MESSAGE}.`
+				? COUPON_USED_UP_MESSAGE
 				: null
 	if (
 		!message ||

@@ -18,7 +18,7 @@ import { getOGImageUrlForResource } from '@/utils/get-og-image-url-for-resource'
 import { eq } from 'drizzle-orm'
 
 import { PriceCheckProvider } from '@coursebuilder/commerce-next/pricing/pricing-check-context'
-import { propsForCommerce } from '@coursebuilder/commerce/props-for-commerce'
+import { propsForCommerce } from '@/lib/coupon-display'
 import { Product, Purchase } from '@coursebuilder/core/schemas'
 import { Button } from '@coursebuilder/ui'
 

@@ -5,6 +5,7 @@ import { BuyPathPricingBeacon } from '@/lib/buy-path/beacons'
 import { inlineBuyLabel } from '@/lib/pricing-decisions'
 import Link from 'next/link'
 import { GatedBuyButton } from '@/components/commerce/gated-buy-button'
+import { UsedCouponNotice } from '@/components/commerce/used-coupon-notice'
 import { TYPE } from '@/components/landing/type'
 import Spinner from '@/components/spinner'
 import { env } from '@/env.mjs'
@@ -22,7 +23,7 @@ import { useCoupon } from '@coursebuilder/commerce-next/coupons/use-coupon'
 import * as Pricing from '@coursebuilder/commerce-next/pricing/pricing'
 import { PriceCheckProvider } from '@coursebuilder/commerce-next/pricing/pricing-check-context'
 import { usePricing } from '@coursebuilder/commerce-next/pricing/pricing-context'
-import type { PropsForCommerce } from '@coursebuilder/commerce/props-for-commerce'
+import type { PropsForCommerce } from '@/lib/coupon-display'
 import { Product, Purchase } from '@coursebuilder/core/schemas'
 import type {
 	CommerceProps,
@@ -106,6 +107,7 @@ export const BuyButtonComponent: React.FC<
 					<RegionalPricingNote targetId={regionalPricingNoteTargetId} />
 				)}
 			</Pricing.Product>
+			<UsedCouponNotice coupon={couponFromCode} />
 		</Pricing.Root>
 	)
 }

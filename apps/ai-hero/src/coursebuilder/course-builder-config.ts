@@ -7,6 +7,7 @@ import { courseBuilderAdapter } from '@/db'
 import { env } from '@/env.mjs'
 import { inngest } from '@/inngest/inngest.server'
 import { createUserWithPersonalOrg } from '@/lib/find-or-create-user'
+import { paidCouponPricingView } from '@/lib/paid-coupon-pricing-view'
 import { authOptions, getServerAuthSession } from '@/server/auth'
 
 import { userSchema } from '@coursebuilder/core/schemas'
@@ -14,7 +15,7 @@ import NextCourseBuilder, {
 	type NextCourseBuilderConfig,
 } from '@coursebuilder/next'
 
-export const courseBuilderConfig: NextCourseBuilderConfig = {
+export const courseBuilderConfig = {
 	baseUrl: env.COURSEBUILDER_URL,
 	// Course Builder's handlers mint users (newsletter subscribe) through this
 	// adapter, so its createUser provisions the personal organization.
@@ -41,9 +42,15 @@ export const courseBuilderConfig: NextCourseBuilderConfig = {
 		},
 	},
 	authConfig: authOptions,
-}
+} satisfies NextCourseBuilderConfig
 
 export const {
 	handlers: { POST, GET },
 	coursebuilder,
 } = NextCourseBuilder(courseBuilderConfig)
+
+// Separate HTTP pricing handlers; purchase/webhook writes retain the raw adapter.
+export const { handlers: commercePricingHandlers } = NextCourseBuilder({
+	...courseBuilderConfig,
+	adapter: paidCouponPricingView(courseBuilderConfig.adapter),
+})

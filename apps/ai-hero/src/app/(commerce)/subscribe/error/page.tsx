@@ -6,8 +6,6 @@ import { PURCHASE_BLOCKED } from '@/lib/purchase-block'
 import {
 	CHECKOUT_LINK_EXPIRED,
 	CHECKOUT_UNAVAILABLE,
-	COUPON_USED_UP,
-	COUPON_USED_UP_MESSAGE,
 	INVALID_QUANTITY,
 	REGIONAL_TEAM_NOT_ALLOWED,
 } from '@/lib/purchase-guardrails'
@@ -37,10 +35,6 @@ const COPY = {
 	'browser-mismatch': {
 		title: "You're signed in. One more step",
 		body: "The sign-in link opened in a different browser from the one you started in. You're signed in here now, so go back to the course page in this browser and click Enroll again.",
-	},
-	[COUPON_USED_UP]: {
-		title: COUPON_USED_UP_MESSAGE,
-		body: 'This discount is no longer available. Contact us if you think this is a mistake.',
 	},
 	[CHECKOUT_LINK_EXPIRED]: {
 		title: 'This checkout link has expired',

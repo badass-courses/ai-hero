@@ -9,6 +9,7 @@ import { expireC5SiblingSessions } from '@/lib/c5-pricing/server-checkout'
 import { CHECKOUT_LOGIN_BROWSER_COOKIE } from '@/lib/checkout-login-browser-session'
 import { checkoutLoginHandoffStore } from '@/lib/checkout-login-handoff-store'
 import { addKitSubscriberToCheckoutAttribution } from '@/lib/checkout-subscriber-attribution'
+import { paidCouponPricingView } from '@/lib/paid-coupon-pricing-view'
 import { createLoggedInCheckoutSession } from '@/lib/logged-in-checkout-provider'
 import { resolveLoggedInCheckoutPricing } from '@/lib/logged-in-checkout-pricing'
 import { getSubscriptionStatus } from '@/lib/subscriptions'
@@ -116,7 +117,7 @@ export default async function LoginPage({
 
 	const providerResult = await createLoggedInCheckoutSession({
 		provider: stripeProvider,
-		adapter: courseBuilderAdapter,
+		adapter: paidCouponPricingView(courseBuilderAdapter),
 		handoffStore: checkoutLoginHandoffStore,
 		claim: pricing.claim,
 		handoffPayload: pricing.checkoutHandoff.valid
