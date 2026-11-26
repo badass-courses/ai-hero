@@ -45,6 +45,14 @@ describe('count paid coupon use', () => {
 		expect(step.sleep).not.toHaveBeenCalled()
 	})
 
+	it('finishes a free redemption without waiting or logging a failure', async () => {
+		mocks.record.mockResolvedValue('not_applicable')
+		await expect(handler({ event, step })).resolves.toBe('not_applicable')
+		expect(mocks.record).toHaveBeenCalledOnce()
+		expect(step.sleep).not.toHaveBeenCalled()
+		expect(mocks.error).not.toHaveBeenCalled()
+	})
+
 	it('re-reads pending purchase rows instead of dropping the event', async () => {
 		mocks.record
 			.mockResolvedValueOnce('pending')

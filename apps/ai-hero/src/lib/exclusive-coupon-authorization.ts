@@ -68,6 +68,7 @@ export type ExclusiveCouponAuthorizationDecision = {
 	requestedPPP?: boolean
 	paidCouponUsedUp?: true
 	entitlementCouponId?: string
+	entitlementMerchantCouponId?: string
 }
 
 const isActiveEntitlement = (
@@ -169,7 +170,9 @@ export async function authorizeExclusiveCouponSelection({
 	requestedSiteCouponId,
 	now = new Date(),
 }: AuthorizeExclusiveCouponSelectionInput): Promise<ExclusiveCouponAuthorizationDecision> {
-	const getCoupon = (adapter.getCouponForDisplay ?? adapter.getCoupon).bind(adapter)
+	const getCoupon = (adapter.getCouponForDisplay ?? adapter.getCoupon).bind(
+		adapter,
+	)
 	const requestedSiteCoupon = requestedSiteCouponId
 		? await getCoupon(requestedSiteCouponId)
 		: null
@@ -178,11 +181,24 @@ export async function authorizeExclusiveCouponSelection({
 		requestedSiteCoupon?.paidCouponUsedUp &&
 		couponPermitsProduct(requestedSiteCoupon, productId)
 	) {
+		// Treat the exhausted link as absent when resolving independent credits.
+		const entitlement = await findEntitlementCoupon({
+			adapter,
+			getCoupon,
+			verifiedUserId,
+			productId,
+			quantity,
+			now,
+		})
 		return {
-			authorized: false,
+			authorized: Boolean(entitlement),
 			protectedMerchantCoupon: Boolean(requestedMerchantCouponId),
 			protectedSiteCoupon,
 			paidCouponUsedUp: true,
+			...(entitlement && {
+				entitlementCouponId: entitlement.id,
+				entitlementMerchantCouponId: entitlement.merchantCouponId,
+			}),
 		}
 	}
 	const merchantCouponId =
@@ -258,16 +274,47 @@ export async function authorizeExclusiveCouponSelection({
 		}
 	}
 
+	const entitlement = await findEntitlementCoupon({
+		adapter,
+		getCoupon,
+		verifiedUserId,
+		productId,
+		quantity,
+		now,
+		merchantCouponId: requestedMerchantCouponId,
+		siteCouponId: protectedSiteCoupon ? requestedSiteCoupon?.id : undefined,
+	})
+	return {
+		authorized: Boolean(entitlement),
+		protectedMerchantCoupon,
+		protectedSiteCoupon,
+		...(entitlement && { entitlementCouponId: entitlement.id }),
+	}
+}
+
+async function findEntitlementCoupon({
+	adapter,
+	getCoupon,
+	verifiedUserId,
+	productId,
+	quantity,
+	now,
+	merchantCouponId,
+	siteCouponId,
+}: Pick<
+	AuthorizeExclusiveCouponSelectionInput,
+	'adapter' | 'verifiedUserId' | 'productId' | 'quantity'
+> & {
+	getCoupon: ExclusiveCouponAuthorizationAdapter['getCoupon']
+	now: Date
+	merchantCouponId?: string | null
+	siteCouponId?: string
+}) {
+	if (!verifiedUserId || quantity !== 1) return null
 	const entitlementType = await adapter.getEntitlementTypeByName(
 		'apply_special_credit',
 	)
-	if (!entitlementType) {
-		return {
-			authorized: false,
-			protectedMerchantCoupon,
-			protectedSiteCoupon,
-		}
-	}
+	if (!entitlementType) return null
 
 	const entitlements = await adapter.getEntitlementsForUser({
 		userId: verifiedUserId,
@@ -290,27 +337,13 @@ export async function authorizeExclusiveCouponSelection({
 		) {
 			continue
 		}
-		if (
-			requestedMerchantCouponId &&
-			sourceCoupon.merchantCouponId !== requestedMerchantCouponId
-		) {
+		if (merchantCouponId && sourceCoupon.merchantCouponId !== merchantCouponId)
 			continue
-		}
-		if (protectedSiteCoupon && sourceCoupon.id !== requestedSiteCoupon?.id) {
-			continue
-		}
-
+		if (siteCouponId && sourceCoupon.id !== siteCouponId) continue
 		return {
-			authorized: true,
-			protectedMerchantCoupon,
-			protectedSiteCoupon,
-			entitlementCouponId: sourceCoupon.id,
+			id: sourceCoupon.id,
+			merchantCouponId: sourceCoupon.merchantCouponId,
 		}
 	}
-
-	return {
-		authorized: false,
-		protectedMerchantCoupon,
-		protectedSiteCoupon,
-	}
+	return null
 }

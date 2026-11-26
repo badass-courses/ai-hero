@@ -119,39 +119,6 @@ export const protectCommerceRequest = async (
 		deps.isBlocked,
 	)
 	if (blocked) return { request: blocked, userId }
-	const redirectTo = (path: string) => ({
-		request: Response.redirect(new URL(path, request.url), 303),
-		userId,
-	})
-	let quantity: number | null = 1
-	if (isCheckoutRequest(request)) {
-		// Course Builder uses Object.fromEntries: the last repeated key wins.
-		const param = (key: string) =>
-			request.nextUrl.searchParams.getAll(key).at(-1)
-		quantity = parseCheckoutQuantity(param('quantity'))
-		if (quantity === null) return redirectTo(INVALID_QUANTITY_PATH)
-		const productId = param('productId')
-		if (productId && quantity < 2 && userId) {
-			const existing = await (deps.existingPurchases ?? loadExistingPurchases)(
-				userId,
-				productId,
-			)
-			const decision = duplicatePurchaseGuard({
-				productType: await (deps.productType ?? loadProductType)(productId),
-				quantity,
-				existing,
-				regionalCouponApplied: false,
-			})
-			if (decision === 'already-own') {
-				return redirectTo(
-					AUTHORITATIVE_PRODUCT_IDS.has(productId) &&
-						existing.some((purchase) => purchase.status === 'Restricted')
-						? REGIONAL_UPGRADE_PATH
-						: ALREADY_OWN_PATH,
-				)
-			}
-		}
-	}
 	const serverComputed: {
 		coupon?: { id: string; type?: string | null } | null
 	} = {}
@@ -172,25 +139,65 @@ export const protectCommerceRequest = async (
 		},
 	})
 	const authoritativeProduct = authoritativeCheckoutProduct(guarded)
-	if (
-		isCheckoutRequest(request) &&
-		quantity >= 2 &&
-		guarded.nextUrl.searchParams.has('productId')
-	) {
-		// Team guard reads the final coupon, including any server-computed selection.
-		const couponId =
-			guarded.nextUrl.searchParams.getAll('couponId').at(-1) ?? null
-		if (
-			isRegionalCoupon({
-				couponId,
-				couponType: await finalCouponType(
+	const redirectTo = (path: string) => ({
+		request: Response.redirect(new URL(path, request.url), 303),
+		userId,
+	})
+	if (isCheckoutRequest(request)) {
+		// Course Builder builds `request.query` with `Object.fromEntries` over
+		// the URL, so the last value of a repeated key wins. Read the same way.
+		const params = guarded.nextUrl.searchParams
+		const param = (key: string) => params.getAll(key).at(-1) ?? null
+		const productId = param('productId')
+		// The buy form POSTs to a URL that carries quantity in the query
+		// (`buildStripeCheckoutPath` in pricing.tsx); the body is empty.
+		const quantity = parseCheckoutQuantity(param('quantity'))
+		if (quantity === null) return redirectTo(INVALID_QUANTITY_PATH)
+		if (productId) {
+			// The coupon on the final request, not the raw one: authorization
+			// may have dropped it, and the server may have attached its own.
+			const couponId = param('couponId')
+			const regionalCouponApplied =
+				quantity >= 2 &&
+				isRegionalCoupon({
 					couponId,
-					serverComputed.coupon,
-					deps.couponType,
-				),
+					couponType: await finalCouponType(
+						couponId,
+						serverComputed.coupon,
+						deps.couponType,
+					),
+				})
+			// A team order skips the duplicate guard, so it needs neither the
+			// product type nor the buyer's purchases.
+			const single = quantity < 2
+			const existing =
+				single && userId
+					? await (deps.existingPurchases ?? loadExistingPurchases)(
+							userId,
+							productId,
+						)
+					: []
+			const decision = duplicatePurchaseGuard({
+				productType: single
+					? await (deps.productType ?? loadProductType)(productId)
+					: undefined,
+				quantity,
+				existing,
+				regionalCouponApplied,
 			})
-		)
-			return redirectTo(REGIONAL_TEAM_NOT_ALLOWED_PATH)
+			if (decision === 'regional-team-not-allowed')
+				return redirectTo(REGIONAL_TEAM_NOT_ALLOWED_PATH)
+			if (decision === 'already-own') {
+				// No upgrade path: a regional holder reaches unrestricted access
+				// through support instead of a checkout error.
+				return redirectTo(
+					authoritativeProduct &&
+						existing.some((purchase) => purchase.status === 'Restricted')
+						? REGIONAL_UPGRADE_PATH
+						: ALREADY_OWN_PATH,
+				)
+			}
+		}
 	}
 	// An authoritative product is priced from the signed-in buyer's facts.
 	// Nobody signed in goes to sign-in first; no Stripe session is created

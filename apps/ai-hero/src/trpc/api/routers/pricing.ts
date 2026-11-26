@@ -319,11 +319,17 @@ export const pricingRouter = createTRPCRouter({
 				requestedMerchantCouponId: merchantCoupon?.id,
 				requestedSiteCouponId: couponId,
 			})
-			const paidCouponUsedUp = couponAuthorization.paidCouponUsedUp &&
+			const paidCouponUsedUp =
+				couponAuthorization.paidCouponUsedUp &&
 				!AUTHORITATIVE_PRODUCT_IDS.has(productId)
-			const authorizedMerchantCoupon = couponAuthorization.authorized
-				? merchantCoupon
-				: undefined
+			const authorizedMerchantCoupon =
+				couponAuthorization.entitlementMerchantCouponId
+					? await courseBuilderAdapter.getMerchantCoupon(
+							couponAuthorization.entitlementMerchantCouponId,
+						)
+					: couponAuthorization.authorized
+						? merchantCoupon
+						: undefined
 			const authorizedCouponId = couponAuthorization.authorized
 				? couponAuthorization.entitlementCouponId || couponId
 				: undefined
@@ -418,7 +424,9 @@ export const pricingRouter = createTRPCRouter({
 				// PPP from the trusted country instead of silently dropping it.
 				autoApplyPPP:
 					autoApplyPPP ||
-					Boolean(!couponAuthorization.authorized && couponAuthorization.requestedPPP),
+					Boolean(
+						!couponAuthorization.authorized && couponAuthorization.requestedPPP,
+					),
 				preferStacking: hasEntitlementCoupon,
 				usedCouponId,
 				ctx: paidCouponPricingView(courseBuilderAdapter),

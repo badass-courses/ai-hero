@@ -3,11 +3,14 @@ import { emailProvider } from '@/coursebuilder/email-provider'
 import { openaiProvider } from '@/coursebuilder/openai-provider'
 import { stripeProvider } from '@/coursebuilder/stripe-provider'
 import { transcriptProvider } from '@/coursebuilder/transcript-provider'
-import { courseBuilderAdapter } from '@/db'
+import { courseBuilderAdapter, rawCourseBuilderAdapter } from '@/db'
 import { env } from '@/env.mjs'
 import { inngest } from '@/inngest/inngest.server'
 import { createUserWithPersonalOrg } from '@/lib/find-or-create-user'
-import { paidCouponPricingView } from '@/lib/paid-coupon-pricing-view'
+import {
+	cloneAdapter,
+	paidCouponPricingView,
+} from '@/lib/paid-coupon-pricing-view'
 import { authOptions, getServerAuthSession } from '@/server/auth'
 
 import { userSchema } from '@coursebuilder/core/schemas'
@@ -19,7 +22,9 @@ export const courseBuilderConfig = {
 	baseUrl: env.COURSEBUILDER_URL,
 	// Course Builder's handlers mint users (newsletter subscribe) through this
 	// adapter, so its createUser provisions the personal organization.
-	adapter: { ...courseBuilderAdapter, createUser: createUserWithPersonalOrg },
+	adapter: Object.assign(cloneAdapter(rawCourseBuilderAdapter), {
+		createUser: createUserWithPersonalOrg,
+	}),
 	inngest,
 	providers: [
 		transcriptProvider,
@@ -52,5 +57,7 @@ export const {
 // Separate HTTP pricing handlers; purchase/webhook writes retain the raw adapter.
 export const { handlers: commercePricingHandlers } = NextCourseBuilder({
 	...courseBuilderConfig,
-	adapter: paidCouponPricingView(courseBuilderConfig.adapter),
+	adapter: Object.assign(paidCouponPricingView(courseBuilderAdapter), {
+		createUser: createUserWithPersonalOrg,
+	}),
 })

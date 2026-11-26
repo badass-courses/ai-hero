@@ -1,4 +1,5 @@
-import { courseBuilderAdapter } from '@/db'
+import { rawCourseBuilderAdapter as courseBuilderAdapter } from '@/db'
+import { cloneAdapter } from '@/lib/paid-coupon-pricing-view'
 import { env } from '@/env.mjs'
 import { parseDrovrSignupDeliveryConfig } from '@/lib/subscriber-marketing/drovr-doi-signup'
 import {
@@ -28,14 +29,17 @@ import {
  * config imports this provider, and a static import would evaluate the
  * cycle before `emailProvider` exists.
  */
-export const magicLinkIdentity = {
-	...courseBuilderAdapter,
-	findOrCreateUser: async (email: string, name?: string | null) => {
-		const { findOrCreateUserWithPersonalOrg } =
-			await import('@/lib/find-or-create-user')
-		return findOrCreateUserWithPersonalOrg(email, name)
+// Inngest fulfillment and checkout recovery share this provisioned identity.
+export const magicLinkIdentity = Object.assign(
+	cloneAdapter(courseBuilderAdapter),
+	{
+		findOrCreateUser: async (email: string, name?: string | null) => {
+			const { findOrCreateUserWithPersonalOrg } =
+				await import('@/lib/find-or-create-user')
+			return findOrCreateUserWithPersonalOrg(email, name)
+		},
 	},
-}
+)
 
 /**
  * Postmark answers a send to an inactive address with ErrorCode 406.

@@ -25,7 +25,11 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/inngest/inngest.server', () => ({
 	inngest: { send: mocks.inngestSend },
 }))
-vi.mock('@/db', () => ({ db: {}, courseBuilderAdapter: { getCoupon: vi.fn() } }))
+vi.mock('@/db', () => ({
+	db: {},
+	courseBuilderAdapter: { getCoupon: vi.fn() },
+	rawCourseBuilderAdapter: { getCoupon: vi.fn() },
+}))
 vi.mock('@/lib/team-invoice/early-access-server', () => ({
 	reconcileEarlyAccessPayment: mocks.reconcileEarlyAccessPayment,
 }))

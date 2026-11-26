@@ -66,13 +66,17 @@ beforeEach(() => {
 
 describe('protectCommerceRequest', () => {
 	it('returns the quote notice signal without blocking the price request', async () => {
-		vi.mocked(protectCourseBuilderRequest).mockImplementationOnce(async (request, options) => {
-			options.onPaidCouponUsedUp?.()
-			return request
-		})
-		const result = await protectCommerceRequest(new NextRequest(
-			'https://app.test/api/coursebuilder/prices-formatted', { method: 'POST' },
-		))
+		vi.mocked(protectCourseBuilderRequest).mockImplementationOnce(
+			async (request, options) => {
+				options.onPaidCouponUsedUp?.()
+				return request
+			},
+		)
+		const result = await protectCommerceRequest(
+			new NextRequest('https://app.test/api/coursebuilder/prices-formatted', {
+				method: 'POST',
+			}),
+		)
 		expect(result.request).toBeInstanceOf(NextRequest)
 		expect(result.paidCouponUsedUp).toBe(true)
 	})
@@ -88,10 +92,10 @@ describe('protectCommerceRequest', () => {
 		expect(request).toBeInstanceOf(Response)
 		const response = request as Response
 		expect(response.status).toBe(303)
-		expect(new URL(response.headers.get('location')!).pathname +
-			new URL(response.headers.get('location')!).search).toBe(
-			PURCHASE_BLOCKED_ERROR_PATH,
-		)
+		expect(
+			new URL(response.headers.get('location')!).pathname +
+				new URL(response.headers.get('location')!).search,
+		).toBe(PURCHASE_BLOCKED_ERROR_PATH)
 		expect(mocks.calls).toEqual(['purchase-block'])
 		expect(protectCourseBuilderRequest).not.toHaveBeenCalled()
 		expect(mocks.authoritativePrice).not.toHaveBeenCalled()
@@ -130,7 +134,7 @@ describe('protectCommerceRequest', () => {
 		expect(mocks.authoritativePrice).not.toHaveBeenCalled()
 	})
 
-	it('refuses a single-seat duplicate from a Valid holder before coupon authorization', async () => {
+	it('refuses a single-seat duplicate from a Valid holder on the guarded request', async () => {
 		const { request } = await protectCommerceRequest(checkout(C5, 1), {
 			session: async () => ({ userId: 'user-owner' }),
 			isBlocked: async () => false,
@@ -138,7 +142,6 @@ describe('protectCommerceRequest', () => {
 		})
 		const location = new URL((request as Response).headers.get('location')!)
 		expect(location.pathname + location.search).toBe(ALREADY_OWN_PATH)
-		expect(protectCourseBuilderRequest).not.toHaveBeenCalled()
 	})
 
 	it('also refuses the duplicate on a non-authoritative cohort product', async () => {
@@ -260,7 +263,10 @@ describe('protectCommerceRequest', () => {
 	})
 
 	it('refuses a client-sent PPP merchant coupon the protector kept, on a team order of a non-authoritative product', async () => {
-		mocks.getMerchantCoupon.mockResolvedValueOnce({ id: 'mc-client', type: 'ppp' })
+		mocks.getMerchantCoupon.mockResolvedValueOnce({
+			id: 'mc-client',
+			type: 'ppp',
+		})
 		const { request } = await protectCommerceRequest(
 			checkout('product-other', 5, 'mc-client'),
 			{
@@ -277,7 +283,10 @@ describe('protectCommerceRequest', () => {
 	})
 
 	it('lets a kept client coupon of another type through on a team order', async () => {
-		mocks.getMerchantCoupon.mockResolvedValueOnce({ id: 'mc-special', type: 'special' })
+		mocks.getMerchantCoupon.mockResolvedValueOnce({
+			id: 'mc-special',
+			type: 'special',
+		})
 		const { request } = await protectCommerceRequest(
 			checkout('product-other', 5, 'mc-special'),
 			{

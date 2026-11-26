@@ -14,26 +14,101 @@ import {
 	couponDisplayView,
 	paidCouponPricingView,
 } from './paid-coupon-pricing-view'
-import { recordPaidCouponUse } from './paid-coupon-usage'
+import {
+	previewPaidCouponBackfill,
+	recordPaidCouponUse,
+} from './paid-coupon-usage'
+import { propsForCommerce } from './coupon-display'
 import {
 	coupon,
+	merchantAccount,
 	merchantCoupon,
+	merchantCustomer,
+	merchantPrice,
+	merchantProduct,
 	prices,
 	products,
 	purchases,
+	users,
 } from '@/db/schema'
 
-vi.mock('@/coursebuilder/stripe-provider', () => ({
-	stripeProvider: undefined,
-}))
+const stripeSession = vi.hoisted(() =>
+	vi.fn(
+		async (params: {
+			metadata?: Record<string, string>
+			discounts?: Array<{ promotion_code: string }>
+		}) => ({
+			id: 'cs_coupon_test',
+			url: 'https://checkout.example.test/session',
+			amount_subtotal: 29_900,
+			total_details: {
+				amount_discount:
+					new Map([
+						['promo_paid-coupon-test-stripe', 10_000],
+						['promo_sale_coupon_test', 5_000],
+					]).get(params.discounts?.[0]?.promotion_code ?? '') ?? 0,
+			},
+		}),
+	),
+)
+vi.mock('@/coursebuilder/stripe-provider', async () => {
+	const { default: StripeProvider } =
+		await import('@coursebuilder/commerce/stripe-provider')
+	return {
+		stripeProvider: StripeProvider({
+			baseSuccessUrl: 'https://example.test',
+			cancelUrl: 'https://example.test',
+			errorRedirectUrl: 'https://example.test/error',
+			paymentsAdapter: {
+				getPrice: async (id: string) => ({
+					id,
+					product: 'prod_coupon_test',
+					active: true,
+					currency: 'usd',
+					billing_scheme: 'per_unit',
+					unit_amount: 29900,
+					recurring: null,
+				}),
+				getCouponPercentOff: async () => 0,
+				createPromotionCode: async ({ coupon }: { coupon: string }) =>
+					`promo_${coupon}`,
+				createCheckoutSession: stripeSession,
+				expireCheckoutSession: async () => ({ status: 'expired' }),
+			} as never,
+		}),
+	}
+})
 vi.mock('@/lib/c5-pricing/server', () => ({
 	c5AuthoritativePrice: async () => null,
 }))
 vi.mock('@/server/session-access-runtime', () => ({
 	bustSessionAccessForUser: vi.fn(),
 }))
-vi.mock('@/server/auth', () => ({ getServerAuthSession: vi.fn() }))
-vi.mock('@/server/logger', () => ({ log: { warn: vi.fn(), error: vi.fn() } }))
+vi.mock('next/headers', () => ({
+	headers: async () => new Headers(),
+	cookies: async () => ({ get: () => undefined, getAll: () => [] }),
+}))
+vi.mock('@/server/auth', () => ({
+	getServerAuthSession: async () => ({}),
+	authOptions: {},
+}))
+vi.mock('@/coursebuilder/email-list-provider', () => ({
+	emailListProvider: { id: 'email-list', options: {} },
+}))
+vi.mock('@/coursebuilder/email-provider', () => ({
+	emailProvider: { id: 'email', options: {} },
+	magicLinkIdentity: undefined,
+}))
+vi.mock('@/coursebuilder/openai-provider', () => ({
+	openaiProvider: { id: 'openai', options: {} },
+}))
+vi.mock('@/coursebuilder/transcript-provider', () => ({
+	transcriptProvider: { id: 'transcript', options: {} },
+}))
+vi.mock('@/server/logger', () => ({
+	log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}))
+vi.mock('@/lib/buy-path/server', () => ({ emitBuyPath: vi.fn() }))
 vi.mock('@/lib/products-query', () => ({ getProduct: vi.fn() }))
 vi.mock('@/lib/purchase-disputes', () => ({
 	isUserBlockedFromPurchasing: async () => false,
@@ -74,15 +149,13 @@ describe.skipIf(!uri)(
 			protectCommerceRequest = (
 				await import('@/coursebuilder/protect-commerce-request')
 			).protectCommerceRequest
-			await runtime.db
-				.insert(products)
-				.values({
-					id: productId,
-					name: 'Synthetic Crash Course',
-					status: 1,
-					type: 'self-paced',
-					fields: { slug: 'synthetic-crash-course' },
-				})
+			await runtime.db.insert(products).values({
+				id: productId,
+				name: 'Synthetic Crash Course',
+				status: 1,
+				type: 'self-paced',
+				fields: { slug: 'synthetic-crash-course' },
+			})
 			await runtime.db
 				.insert(prices)
 				.values({ id: key('price'), productId, unitAmount: '299', status: 1 })
@@ -135,7 +208,7 @@ describe.skipIf(!uri)(
 		) => new NextRequest(`https://example.test/api/coursebuilder${path}`, init)
 		const checkout = (id: string, product = productId) =>
 			request(
-				`/checkout/stripe?productId=${product}&couponId=${merchantId}&usedCouponId=${id}`,
+				`/checkout/stripe?productId=${product}&couponId=${merchantId}&usedCouponId=${id}&quantity=1&cancelUrl=https%3A%2F%2Fexample.test`,
 				{ method: 'POST' },
 			)
 		const priceRequest = (id: string, product = productId) =>
@@ -236,6 +309,40 @@ describe.skipIf(!uri)(
 			)
 		})
 
+		it('keeps a spent coupon visible to the default Course Builder config', async () => {
+			const id = key('raw-config')
+			await createCoupon(id)
+			await createPurchase(key('raw-config-purchase'), id)
+			const { courseBuilderConfig } =
+				await import('@/coursebuilder/course-builder-config')
+			expect(
+				await courseBuilderConfig.adapter.couponForIdOrCode({ couponId: id }),
+			).toMatchObject({ id, usedCount: 0 })
+			for (const method of [
+				'getCoupon',
+				'couponForIdOrCode',
+				'getDefaultCoupon',
+				'createMerchantChargeAndPurchase',
+				'redeemFullPriceCoupon',
+			] as const) {
+				expect(courseBuilderConfig.adapter[method]).toBe(
+					runtime.rawCourseBuilderAdapter[method],
+				)
+			}
+		})
+
+		it.each([
+			{ merchantChargeId: null, totalAmount: '199' },
+			{ merchantChargeId: 'synthetic-charge', totalAmount: '0' },
+		])('does not account a free redemption (%j)', async (options) => {
+			const id = key(`free-${options.totalAmount}`)
+			await createCoupon(id)
+			await createPurchase(`${id}-purchase`, id, options)
+			expect(await recordPaidCouponUse(runtime.db, `${id}-purchase`)).toBe(
+				'not_applicable',
+			)
+		})
+
 		it('records once on concurrent replay and can count a purchase once payment settles', async () => {
 			const id = key('replay')
 			const first = key('first')
@@ -255,18 +362,281 @@ describe.skipIf(!uri)(
 				paidCouponUseCounted: true,
 			})
 			await createPurchase(later, id, {
-				merchantChargeId: null,
-				totalAmount: '0',
+				status: 'Disputed',
 				fields: null,
 			})
 			expect(await record(later)).toBe('pending')
 			await runtime.db
 				.update(purchases)
-				.set({ merchantChargeId: key('charge-later'), totalAmount: '199' })
+				.set({ status: 'Valid' })
 				.where(eq(purchases.id, later))
 			expect(await record(later)).toBe('counted')
 			expect(await record(later)).toBe('already-counted')
 			expect((await adapter().getCoupon(id))?.usedCount).toBe(2)
+		})
+
+		it('uses the real HTTP pricing handlers for Stripe session creation and preserves late fulfillment', async () => {
+			const { commercePricingHandlers } =
+				await import('@/coursebuilder/course-builder-config')
+			const id = key('open-session')
+			const sale = key('active-sale')
+			const saleMerchant = key('sale-merchant')
+			const account = key('account')
+			const product = key('merchant-product')
+			const customer = key('merchant-customer')
+			const user = key('synthetic-user')
+			await runtime.db.insert(merchantAccount).values({
+				id: account,
+				status: 1,
+				label: 'stripe',
+				identifier: key('stripe-account'),
+			})
+			await runtime.db.insert(merchantProduct).values({
+				id: product,
+				productId,
+				merchantAccountId: account,
+				status: 1,
+				identifier: 'prod_coupon_test',
+			})
+			await runtime.db.insert(merchantPrice).values({
+				id: key('merchant-price'),
+				priceId: key('price'),
+				merchantProductId: product,
+				merchantAccountId: account,
+				identifier: 'price_coupon_test',
+				status: 1,
+			})
+			await runtime.db
+				.insert(users)
+				.values({ id: user, email: 'coupon-fixture@example.test' })
+			await runtime.db.insert(merchantCustomer).values({
+				id: customer,
+				userId: user,
+				merchantAccountId: account,
+				identifier: 'cus_coupon_test',
+			})
+			await createCoupon(id, { code: key('code') })
+			const open = async (input: NextRequest) => {
+				const guarded = await protectCommerceRequest(input, deps)
+				expect(guarded.request).toBeInstanceOf(NextRequest)
+				const response = await commercePricingHandlers.POST(
+					guarded.request as NextRequest,
+				)
+				expect(response.headers.get('location')).toBe(
+					'https://checkout.example.test/session',
+				)
+				return stripeSession.mock.lastCall![0]
+			}
+			const openSession = await open(checkout(id))
+			expect(openSession.metadata?.usedCouponId).toBe(id)
+			await createPurchase(key('first-session-paid'), id)
+			const { courseBuilderCoreFunctions } =
+				await import('@coursebuilder/server')
+			const { findCheckoutHandler } =
+				await import('./checkout-reconcile/fulfill')
+			const fulfill = findCheckoutHandler(courseBuilderCoreFunctions)
+			const { magicLinkIdentity } = await vi.importActual<
+				typeof import('@/coursebuilder/email-provider')
+			>('@/coursebuilder/email-provider')
+			expect(
+				await magicLinkIdentity.couponForIdOrCode({ couponId: id }),
+			).toMatchObject({ id })
+			const settledSession = {
+				id: 'cs_coupon_test',
+				object: 'checkout.session',
+				mode: 'payment',
+				payment_status: 'paid',
+				status: 'complete',
+				amount_total: 19900,
+				amount_subtotal: 29900,
+				created: Math.floor(Date.now() / 1000),
+				currency: 'usd',
+				custom_fields: [],
+				customer_details: {
+					address: null,
+					email: 'coupon-fixture@example.test',
+					name: 'Fixture Buyer',
+				},
+				livemode: false,
+				payment_method_collection: 'always',
+				phone_number_collection: { enabled: false },
+				success_url: 'https://example.test/thanks',
+				subscription: null,
+				total_details: {
+					amount_discount: 10000,
+					amount_tax: 0,
+					amount_shipping: 0,
+				},
+				metadata: {
+					...Object.fromEntries(
+						Object.entries(openSession.metadata ?? {}).map(([k, v]) => [
+							k,
+							String(v),
+						]),
+					),
+					userId: user,
+				},
+				customer: {
+					id: 'cus_coupon_test',
+					email: 'coupon-fixture@example.test',
+					name: 'Fixture Buyer',
+				},
+				line_items: {
+					data: [
+						{
+							quantity: 1,
+							discounts: [],
+							price: {
+								product: {
+									id: 'prod_coupon_test',
+									name: 'Synthetic Crash Course',
+								},
+							},
+						},
+					],
+				},
+				payment_intent: {
+					id: 'pi_coupon_open_session',
+					latest_charge: { id: 'ch_coupon_open_session', amount: 19900 },
+				},
+			}
+			const sendEvent = vi.fn(async () => undefined)
+			const { purchase: latePurchase } = (await fulfill({
+				event: {
+					name: 'stripe/checkout-session-completed',
+					data: {
+						stripeEvent: {
+							id: 'evt_coupon_open_session',
+							created: Math.floor(Date.now() / 1000),
+							type: 'checkout.session.completed',
+							data: {
+								object: {
+									...settledSession,
+									customer: 'cus_coupon_test',
+									payment_intent: 'pi_coupon_open_session',
+								},
+							},
+						},
+					},
+				},
+				step: {
+					run: async (_: string, fn: () => Promise<unknown>) => fn(),
+					sendEvent,
+				},
+				db: magicLinkIdentity,
+				paymentProvider: {
+					options: {
+						paymentsAdapter: { getCheckoutSession: async () => settledSession },
+					},
+				},
+			})) as { purchase: { id: string; couponId: string } }
+			expect(sendEvent).toHaveBeenCalledWith(
+				'commerce/new-purchase-created',
+				expect.objectContaining({
+					data: expect.objectContaining({ purchaseId: latePurchase.id }),
+				}),
+			)
+			expect(latePurchase.couponId).toBe(id)
+			expect(await recordPaidCouponUse(runtime.db, latePurchase.id)).toBe(
+				'counted',
+			)
+			await runtime.db.insert(merchantCoupon).values({
+				id: saleMerchant,
+				type: 'special',
+				status: 1,
+				amountDiscount: 5000,
+				identifier: 'sale_coupon_test',
+				merchantAccountId: account,
+			})
+			await createCoupon(sale, {
+				default: true,
+				merchantCouponId: saleMerchant,
+				amountDiscount: 5000,
+				expires: new Date(Date.now() + 86_400_000),
+			})
+			const buyerProps = await propsForCommerce(
+				{
+					query: { code: key('code') },
+					products: [await adapter().getProduct(productId)].filter(
+						(product) => product !== null,
+					),
+					userId: undefined,
+				},
+				adapter(),
+			)
+			expect(buyerProps.couponFromCode).toMatchObject({
+				id,
+				isValid: false,
+				paidCouponUsedUp: true,
+			})
+			expect(buyerProps.couponIdFromCoupon).toBeUndefined()
+			const quote = await protectCommerceRequest(
+				request(`/prices-formatted?code=${key('code')}`, {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ productId, quantity: 1, autoApplyPPP: false }),
+				}),
+				deps,
+			)
+			expect(quote.paidCouponUsedUp).toBe(true)
+			expect(
+				await (
+					await commercePricingHandlers.POST(quote.request as NextRequest)
+				).json(),
+			).toMatchObject({
+				calculatedPrice: 249,
+				usedCouponId: sale,
+				appliedMerchantCoupon: { id: saleMerchant },
+			})
+			const nextSession = await open(checkout(id))
+			expect(nextSession.metadata?.usedCouponId).not.toBe(id)
+			expect(nextSession.metadata?.expectedTotalCents).toBe('24900')
+			expect(nextSession.discounts).toEqual([
+				{ promotion_code: 'promo_sale_coupon_test' },
+			])
+		})
+
+		it('strips a spent code but retains the requested team quantity', async () => {
+			const id = key('quantity-two')
+			await createCoupon(id)
+			await createPurchase(`${id}-purchase`, id)
+			const { request: guarded } = await protectCommerceRequest(
+				request(
+					`/checkout/stripe?productId=${productId}&quantity=2&usedCouponId=${id}&couponId=${merchantId}`,
+					{ method: 'POST' },
+				),
+				deps,
+			)
+			expect(guarded).toBeInstanceOf(NextRequest)
+			const params = (guarded as NextRequest).nextUrl.searchParams
+			expect(params.get('quantity')).toBe('2')
+			expect(params.has('usedCouponId')).toBe(false)
+			expect(params.get('couponId')).not.toBe(merchantId)
+		})
+
+		it('previews only unmarked eligible purchases as grouped hashes', async () => {
+			const { createHash } = await import('node:crypto')
+			const id = key('preview')
+			await createCoupon(id)
+			await createPurchase(`${id}-marked`, id, {
+				fields: { paidCouponUseCounted: true },
+			})
+			await createPurchase(`${id}-free`, id, { merchantChargeId: null })
+			await createPurchase(`${id}-eligible`, id, { fields: null })
+			const hash = createHash('sha256').update(id).digest('hex')
+			const preview = await previewPaidCouponBackfill(runtime.db)
+			expect(preview.find((row) => row.couponHash === hash)).toEqual({
+				couponHash: hash,
+				count: 1,
+			})
+			expect((await adapter().getCoupon(id))?.usedCount).toBe(0)
+			expect(
+				(
+					await runtime.db.query.purchases.findFirst({
+						where: eq(purchases.id, `${id}-eligible`),
+					})
+				)?.fields,
+			).toBeNull()
 		})
 
 		it('honors the stored counter, excludes refunded rows, and leaves bulk seats alone', async () => {

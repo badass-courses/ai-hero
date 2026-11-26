@@ -1,10 +1,47 @@
 import type { DbExecutor } from '@/db/client'
 import { coupon, purchases } from '@/db/schema'
-import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm'
+import { cloneAdapter } from '@/lib/paid-coupon-pricing-view'
+import { updatePurchaseFields } from '@/lib/purchase-fields-write'
+import { and, eq, gt, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm'
 
 import type { CouponPort } from '@coursebuilder/core/ports'
 
 const activePurchaseStatuses = ['Valid', 'Restricted']
+const paidCharge = sql<boolean>`(${purchases.merchantChargeId} IS NOT NULL AND ${purchases.merchantChargeId} <> '' AND ${purchases.totalAmount} > 0)`
+const noTeamProvenance = and(
+	isNull(purchases.bulkCouponId),
+	isNull(purchases.redeemedBulkCouponId),
+)
+const markerExists = sql<number>`JSON_CONTAINS_PATH(${purchases.fields}, 'one', '$.paidCouponUseCounted')`
+
+const notATeamCoupon = (
+	couponId: typeof coupon.id | string,
+) => sql<boolean>`NOT EXISTS (
+	SELECT 1 FROM ${purchases} AS team_purchase
+	WHERE team_purchase.bulkCouponId = ${couponId} OR team_purchase.redeemedBulkCouponId = ${couponId}
+)`
+
+/** Select-only preview. Raw coupon and purchase identifiers never leave SQL. */
+export function previewPaidCouponBackfill(db: Pick<DbExecutor, 'select'>) {
+	const couponHash = sql<string>`SHA2(${coupon.id}, 256)`
+	return db
+		.select({ couponHash, count: sql<number>`COUNT(*)`.mapWith(Number) })
+		.from(coupon)
+		.innerJoin(purchases, eq(purchases.couponId, coupon.id))
+		.where(
+			and(
+				gt(coupon.maxUses, 0),
+				isNotNull(purchases.couponId),
+				paidCharge,
+				inArray(purchases.status, activePurchaseStatuses),
+				noTeamProvenance,
+				sql`COALESCE(${markerExists}, 0) = 0`,
+				notATeamCoupon(coupon.id),
+			),
+		)
+		.groupBy(coupon.id)
+		.orderBy(couponHash)
+}
 
 type Usage = {
 	id: string
@@ -44,8 +81,8 @@ export async function withEffectivePaidCouponUsage<T extends Usage>(
 					eq(purchases.productId, row.restrictedToProductId),
 					eq(purchases.couponId, row.id),
 					inArray(purchases.status, activePurchaseStatuses),
-					isNull(purchases.bulkCouponId),
-					isNull(purchases.redeemedBulkCouponId),
+					paidCharge,
+					noTeamProvenance,
 				),
 			)
 			.limit(1)
@@ -69,7 +106,7 @@ export function withPaidCouponUsage<
 >(adapter: T, db: DbExecutor) {
 	const couponForIdOrCode = adapter.couponForIdOrCode.bind(adapter)
 	const getDefaultCoupon = adapter.getDefaultCoupon.bind(adapter)
-	return Object.assign(adapter, {
+	return Object.assign(cloneAdapter(adapter), {
 		getCouponForDisplay: async (key: string) => {
 			const row = await adapter.getCoupon(key)
 			return row && withEffectivePaidCouponUsage(db, row)
@@ -98,13 +135,19 @@ export async function recordPaidCouponUse(
 	return db.transaction(
 		async (
 			tx,
-		): Promise<'counted' | 'already-counted' | 'ineligible' | 'pending'> => {
+		): Promise<
+			| 'counted'
+			| 'already-counted'
+			| 'ineligible'
+			| 'not_applicable'
+			| 'pending'
+		> => {
 			const [purchase] = await tx
 				.select({
 					couponId: purchases.couponId,
-					counted: sql<number>`JSON_CONTAINS_PATH(${purchases.fields}, 'one', '$.paidCouponUseCounted')`,
+					counted: markerExists,
 					fieldsType: sql<string | null>`JSON_TYPE(${purchases.fields})`,
-					paid: sql<number>`(${purchases.merchantChargeId} IS NOT NULL AND ${purchases.totalAmount} > 0)`,
+					paid: paidCharge,
 					status: purchases.status,
 					bulkCouponId: purchases.bulkCouponId,
 					redeemedBulkCouponId: purchases.redeemedBulkCouponId,
@@ -119,8 +162,8 @@ export async function recordPaidCouponUse(
 			if (['Refunded', 'Banned'].includes(purchase.status)) return 'ineligible'
 			// The paid checkout adapter writes couponId with the purchase, not at settlement.
 			if (!purchase.couponId) return 'ineligible'
-			if (!purchase.paid || !activePurchaseStatuses.includes(purchase.status))
-				return 'pending'
+			if (!purchase.paid) return 'not_applicable'
+			if (!activePurchaseStatuses.includes(purchase.status)) return 'pending'
 
 			const [row] = await tx
 				.select({ id: coupon.id, maxUses: coupon.maxUses })
@@ -141,15 +184,11 @@ export async function recordPaidCouponUse(
 				.update(coupon)
 				.set({ usedCount: sql`${coupon.usedCount} + 1` })
 				.where(eq(coupon.id, row.id))
-			await tx
-				.update(purchases)
-				.set({
-					fields: sql`JSON_SET(
-						CASE WHEN JSON_TYPE(${purchases.fields}) = 'OBJECT' THEN ${purchases.fields} ELSE JSON_OBJECT() END,
-						'$.paidCouponUseCounted', true
-					)`,
-				})
-				.where(eq(purchases.id, purchaseId))
+			await updatePurchaseFields({
+				purchaseId,
+				patch: { paidCouponUseCounted: true },
+				executor: tx,
+			})
 			return 'counted'
 		},
 	)
