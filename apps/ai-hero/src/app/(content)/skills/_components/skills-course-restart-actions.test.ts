@@ -5,7 +5,18 @@ const mocks = vi.hoisted(() => ({
 	inngestSend: vi.fn(),
 	log: { error: vi.fn(), info: vi.fn() },
 	readRecoveryToken: vi.fn(),
+	requestDoi: vi.fn(),
+	env: { DROVR_API_BASE_URL: 'https://drovr.test', DROVR_API_KEY_ORG_AIHERO: 'test-key' } as Record<string, string | undefined>,
 	standing: vi.fn(),
+}))
+
+vi.mock('@/env.mjs', () => ({ env: mocks.env }))
+vi.mock('next/headers', () => ({
+	cookies: async () => ({ get: () => undefined }),
+	headers: async () => new Headers(),
+}))
+vi.mock('@/lib/subscriber-marketing/drovr-doi-signup.server', () => ({
+	requestDrovrDoiSignup: mocks.requestDoi,
 }))
 
 vi.mock('@/lib/skills-course/recovery-standing', () => ({
@@ -251,6 +262,24 @@ describe('resendSkillsCourseLessonOne', () => {
 			)
 		})
 
+		it('a verified identity without course entry queues DOI, not a resend or hosted redirect', async () => {
+			mocks.standing.mockResolvedValue({
+				state: 'not-found',
+				reason: 'course-entry-not-found',
+			})
+
+			await expect(resendSkillsCourseLessonOne()).resolves.toEqual({
+				success: false,
+				reason: 'confirmation-required',
+				confirmationUrl: '/confirm',
+			})
+			expect(mocks.requestDoi).toHaveBeenCalledOnce()
+			expect(mocks.requestDoi).toHaveBeenCalledWith(
+				expect.objectContaining({ kitFormId: 9376133, entry: 'recovery' }),
+			)
+			expect(mocks.inngestSend).not.toHaveBeenCalled()
+		})
+
 		it('stopped: queues nothing and offers no resubscribe detour', async () => {
 			mocks.standing.mockResolvedValue({
 				state: 'stopped',
@@ -263,6 +292,7 @@ describe('resendSkillsCourseLessonOne', () => {
 				reason: 'stopped',
 			})
 			expect(mocks.inngestSend).not.toHaveBeenCalled()
+			expect(mocks.requestDoi).not.toHaveBeenCalled()
 			expect(mocks.log.info).toHaveBeenCalledWith(
 				'skills.course.lesson_one_recovery_standing',
 				{ state: 'stopped', reason: 'unsubscribed' },

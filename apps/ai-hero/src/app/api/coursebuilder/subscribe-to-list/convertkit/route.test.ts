@@ -1,4 +1,5 @@
 import { createHmac } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import fc from 'fast-check'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { NextRequest } from 'next/server'
@@ -392,7 +393,7 @@ describe('subscribe-to-list convertkit route attribution', () => {
 			}),
 		)
 
-		expect(response.status).toBe(200)
+		expect(response.status).toBe(502)
 		expect(mocks.setFields).toHaveBeenCalledTimes(2)
 		expect(
 			mocks.setFields.mock.calls.map(([args]) => Object.keys(args.fields)),
@@ -886,6 +887,46 @@ describe('Kit form 8447166, the default form, through drovr double opt-in', () =
 		delete mocks.env.CONVERTKIT_SIGNUP_FORM
 	})
 
+	it.each(['page.tsx', '[slug]/page.tsx'])(
+		'dictionary CTA (%s) takes the default form through drovr, not Kit',
+		async (file) => {
+			drovrOn()
+			kitAccepts()
+			const page = readFileSync(
+				new URL(`../../../../(content)/ai-coding-dictionary/${file}`, import.meta.url),
+				'utf8',
+			)
+			const literal = page.match(/<PrimaryNewsletterCta\b[\s\S]*?fields=\{\{([^}]+)\}\}/)?.[1]
+			expect(literal).toContain('aihero_dictionary_')
+			const fields = Object.fromEntries(
+				Array.from(literal!.matchAll(/(\w+): '([^']+)'/g), ([, key, value]) => [key, value]),
+			)
+			const response = await post({ fields })
+
+			expect(mocks.courseBuilderPOST).not.toHaveBeenCalled()
+			expect(drovrEvents()).toHaveLength(1)
+			expect(await response.json()).toMatchObject({ state: 'awaiting-confirmation' })
+		},
+	)
+
+	it('an unconfirmed legacy skills form answer requests DOI before reporting pending', async () => {
+		drovrOn()
+		mocks.reconcile.mockResolvedValue({ status: 'confirmation-required' })
+		mocks.courseBuilderPOST.mockImplementation(async (req: NextRequest) =>
+			subscriberResponse({
+				id: 103,
+				email_address: (await req.json()).email,
+				state: 'inactive',
+				fields: {},
+			}),
+		)
+		const response = await post({ listId: 9376133 })
+
+		expect(drovrEvents()).toHaveLength(1)
+		expect(valuePathEvents()).toHaveLength(0)
+		expect(await response.json()).toMatchObject({ state: 'awaiting-confirmation' })
+	})
+
 	it('new contact: no Kit subscribe, one contact, one drovr skills-newsletter signup, "check your email"', async () => {
 		drovrOn()
 		const response = await post()
@@ -1315,6 +1356,8 @@ describe('subscribe bot defence', () => {
 
 	it('off SUCCESS preserves attribution, shortlink and Inngest writes', async () => {
 		const payload = { ...body, listId: 9376133 }
+		const activeResponse = { ...humanResponse, state: 'active' }
+		mocks.courseBuilderPOST.mockResolvedValueOnce(subscriberResponse(activeResponse))
 		delete mocks.env.DROVR_DOI_FORMS
 		mocks.reconcile.mockResolvedValue({ status: 'active' })
 		mocks.cookieGet.mockImplementation((key: string) =>
@@ -1325,7 +1368,7 @@ describe('subscribe bot defence', () => {
 					: undefined,
 		)
 		const response = await POST(request(payload))
-		expect(await response.json()).toEqual(humanResponse)
+		expect(await response.json()).toEqual(activeResponse)
 		expect(mocks.courseBuilderPOST).toHaveBeenCalledTimes(1)
 		expect(mocks.recordSignupAttribution).toHaveBeenCalledTimes(1)
 		expect(mocks.recordSignupAttribution).toHaveBeenCalledWith({

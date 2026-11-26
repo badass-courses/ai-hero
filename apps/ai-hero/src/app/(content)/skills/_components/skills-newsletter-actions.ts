@@ -40,15 +40,13 @@ import {
 import {
 	doiAppliesTo,
 	parseDrovrDoiConfig,
+	parseDrovrSignupDeliveryConfig,
 } from '@/lib/subscriber-marketing/drovr-doi-signup'
 import { requestDrovrDoiSignup } from '@/lib/subscriber-marketing/drovr-doi-signup.server'
 import { parseOptInAttributionCookie } from '@/lib/subscriber-marketing/opt-in-attribution'
 import { issueSkillsCourseRecoveryToken } from '@/lib/subscriber-marketing/skills-course-recovery-token.server'
 
-import {
-	SKILLS_FORM_ID,
-	SKILLS_HOSTED_RESUBSCRIBE_URL,
-} from './skills-newsletter-config'
+import { SKILLS_FORM_ID } from './skills-newsletter-config'
 
 type SkillsCourseSurface = Extract<
 	ConversionSurface,
@@ -71,6 +69,20 @@ export async function tagSubscriberAsSkills(surface: SkillsCourseSurface) {
 			hasSession: false,
 		})
 		return { success: false, reason: 'not-subscribed' as const }
+	}
+
+	const requestConfirmation = async () => {
+		const [cookieStore, headerStore] = await Promise.all([cookies(), headers()])
+		await requestDrovrDoiSignup({
+			email: identity.email,
+			name: identity.name,
+			kitFormId: SKILLS_FORM_ID,
+			page: headerStore.get('referer') ?? 'https://www.aihero.dev/skills',
+			optInAttribution: parseOptInAttributionCookie(
+				cookieStore.get('ft_attr')?.value,
+			),
+			entry: 'tag-me',
+		})
 	}
 
 	// The owned branch runs before every Kit consent read, subscribe and cookie
@@ -114,20 +126,7 @@ export async function tagSubscriberAsSkills(surface: SkillsCourseSurface) {
 		!(await isSignedInAs(identity))
 	) {
 		try {
-			const [cookieStore, headerStore] = await Promise.all([
-				cookies(),
-				headers(),
-			])
-			await requestDrovrDoiSignup({
-				email: identity.email,
-				name: identity.name,
-				kitFormId: SKILLS_FORM_ID,
-				page: headerStore.get('referer') ?? 'https://www.aihero.dev/skills',
-				optInAttribution: parseOptInAttributionCookie(
-					cookieStore.get('ft_attr')?.value,
-				),
-				entry: 'tag-me',
-			})
+			await requestConfirmation()
 		} catch (error) {
 			await log.error('skills.tagme.doi.failed', {
 				formId: SKILLS_FORM_ID,
@@ -222,10 +221,14 @@ export async function tagSubscriberAsSkills(surface: SkillsCourseSurface) {
 				subscriber: subscribed,
 				intentKey: contract.key,
 			})
+			if (!parseDrovrSignupDeliveryConfig(env)) {
+				return { success: false, reason: 'request-failed' as const }
+			}
+			await requestConfirmation()
 			return {
 				success: false as const,
 				reason: 'confirmation-required' as const,
-				confirmationUrl: SKILLS_HOSTED_RESUBSCRIBE_URL,
+				confirmationUrl: '/confirm',
 			}
 		}
 		await setSubscriberCookie(subscribed)
@@ -253,12 +256,11 @@ export async function tagSubscriberAsSkills(surface: SkillsCourseSurface) {
 
 		return { success: true as const }
 	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error)
 		await log.error('skills.tagme.failed', {
 			subscriberId: subscriber?.id,
 			formId: SKILLS_FORM_ID,
 			via: identity.via,
-			error: message,
+			error: error instanceof Error ? error.name : 'unknown',
 		})
 		return { success: false, reason: 'request-failed' as const }
 	}

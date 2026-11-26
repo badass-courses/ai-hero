@@ -1,6 +1,9 @@
 'use server'
 
 import { createHmac, randomUUID } from 'node:crypto'
+import { cookies, headers } from 'next/headers'
+
+import { env } from '@/env.mjs'
 
 import {
 	SKILLS_COURSE_LESSON_ONE_RECOVERY_REQUESTED_EVENT,
@@ -9,58 +12,80 @@ import {
 	type SkillsCourseRecoverySource,
 } from '@/inngest/events/skills-newsletter'
 import { inngest } from '@/inngest/inngest.server'
-import { readRecoveryStanding } from '@/lib/skills-course/recovery-standing'
+import {
+	readRecoveryStanding,
+	type RecoveryStanding,
+} from '@/lib/skills-course/recovery-standing'
 import { createRecoveryStandingReader } from '@/lib/skills-course/recovery-standing.server'
+import { parseDrovrSignupDeliveryConfig } from '@/lib/subscriber-marketing/drovr-doi-signup'
+import { requestDrovrDoiSignup } from '@/lib/subscriber-marketing/drovr-doi-signup.server'
+import { parseOptInAttributionCookie } from '@/lib/subscriber-marketing/opt-in-attribution'
 import { normalizeSkillsCourseRecoveryEmail } from '@/lib/subscriber-marketing/skills-course-recovery-token'
 import { readSkillsCourseRecoveryToken } from '@/lib/subscriber-marketing/skills-course-recovery-token.server'
-import type { Subscriber } from '@/schemas/subscriber'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
 
-import { SKILLS_HOSTED_RESUBSCRIBE_URL } from './skills-newsletter-config'
+import { SKILLS_FORM_ID } from './skills-newsletter-config'
 
-/**
- * Kit's subscriber, or the off-Kit standing in its shape. `stopped` and
- * `unknown` come only from the standing and never queue a send.
- */
-type RecoverySubscriber = {
-	id: Subscriber['id'] | string
-	state?: Subscriber['state'] | 'stopped' | 'unknown'
-}
-
-type AuthorizedRecovery = {
-	subscriber: RecoverySubscriber
+type RecoveryIdentity = {
+	email: string
+	expectedKitSubscriberId?: string
 	source: SkillsCourseRecoverySource
 }
 
 /** Queues one durable lesson-one recovery without trusting Kit browser cookies. */
 export async function resendSkillsCourseLessonOne() {
 	try {
-		const authorization = await resolveAuthorizedRecovery()
-		if (!authorization) {
+		const identity = await resolveRecoveryIdentity()
+		if (!identity) {
 			return { success: false as const, reason: 'not-identified' as const }
 		}
 
-		const { subscriber, source } = authorization
+		const { email, expectedKitSubscriberId, source } = identity
+		const standing = await resolveRecoveryStanding(email, expectedKitSubscriberId)
 		// A stop is final for this course (no restart after a lift), so it gets
 		// no resubscribe detour. An unanswered stop state is a failed request.
-		if (subscriber.state === 'stopped') {
+		if (standing.state === 'stopped') {
 			return { success: false as const, reason: 'stopped' as const }
 		}
-		if (subscriber.state === 'unknown') {
+		if (standing.state === 'unknown') {
 			return { success: false as const, reason: 'request-failed' as const }
 		}
-		if (subscriber.state !== 'active') {
+		if (standing.state === 'not-found') {
+			// The directory verified the identity but found no course entry.
+			// Missing contacts or mismatched aliases are not authorization.
+			if (standing.reason !== 'course-entry-not-found') {
+				return { success: false as const, reason: 'not-identified' as const }
+			}
+			if (!parseDrovrSignupDeliveryConfig(env)) {
+				return { success: false as const, reason: 'request-failed' as const }
+			}
+			const [cookieStore, headerStore] = await Promise.all([
+				cookies(),
+				headers(),
+			])
+			await requestDrovrDoiSignup({
+				email,
+				kitFormId: SKILLS_FORM_ID,
+				page: headerStore.get('referer') ?? 'https://www.aihero.dev/skills',
+				optInAttribution: parseOptInAttributionCookie(
+					cookieStore.get('ft_attr')?.value,
+				),
+				entry: 'recovery',
+			})
 			return {
 				success: false as const,
 				reason: 'confirmation-required' as const,
-				confirmationUrl: SKILLS_HOSTED_RESUBSCRIBE_URL,
+				confirmationUrl: '/confirm',
 			}
 		}
 
+		const { kitSubscriberId } = standing
+		if (expectedKitSubscriberId && kitSubscriberId !== expectedKitSubscriberId) {
+			return { success: false as const, reason: 'not-identified' as const }
+		}
 		const requestId = randomUUID()
 		const requestedAt = new Date().toISOString()
-		const kitSubscriberId = String(subscriber.id)
 		const recoveryKey = createHmac('sha256', recoverySecret())
 			.update(`skills-course-lesson-one-recovery:${kitSubscriberId}`)
 			.digest('hex')
@@ -86,21 +111,12 @@ export async function resendSkillsCourseLessonOne() {
 	}
 }
 
-async function resolveAuthorizedRecovery(): Promise<AuthorizedRecovery | null> {
+async function resolveRecoveryIdentity(): Promise<RecoveryIdentity | null> {
 	const token = await readSkillsCourseRecoveryToken().catch(() => null)
 	if (token?.valid) {
-		const subscriber = await resolveSubscriberByEmail(
-			token.payload.email,
-			token.payload.kitSubscriberId,
-		)
-		if (
-			!subscriber ||
-			String(subscriber.id) !== token.payload.kitSubscriberId
-		) {
-			return null
-		}
 		return {
-			subscriber,
+			email: normalizeSkillsCourseRecoveryEmail(token.payload.email),
+			expectedKitSubscriberId: token.payload.kitSubscriberId,
 			source: SKILLS_COURSE_RECOVERY_SOURCE.signedRecoveryToken,
 		}
 	}
@@ -108,51 +124,27 @@ async function resolveAuthorizedRecovery(): Promise<AuthorizedRecovery | null> {
 	const auth = await getServerAuthSession().catch(() => null)
 	const sessionEmail = auth?.session?.user?.email
 	if (!sessionEmail) return null
-	const subscriber = await resolveSubscriberByEmail(sessionEmail)
-	return subscriber
-		? {
-				subscriber,
-				source: SKILLS_COURSE_RECOVERY_SOURCE.authenticatedSession,
-			}
-		: null
+	return {
+		email: normalizeSkillsCourseRecoveryEmail(sessionEmail),
+		source: SKILLS_COURSE_RECOVERY_SOURCE.authenticatedSession,
+	}
 }
 
-async function resolveSubscriberByEmail(
+async function resolveRecoveryStanding(
 	email: string,
 	expectedKitSubscriberId?: string,
-): Promise<RecoverySubscriber | null> {
-	const expectedEmail = normalizeSkillsCourseRecoveryEmail(email)
-	return resolveLocalSubscriber(expectedEmail, expectedKitSubscriberId)
-}
-
-/**
- * Off-Kit standing (family 8): the directory, local course entry and local
- * plus drovr stops. Subscribed reads as Kit's `active`; not found is not
- * identified, as a missing Kit subscriber was.
- */
-async function resolveLocalSubscriber(
-	email: string,
-	expectedKitSubscriberId?: string,
-): Promise<RecoverySubscriber | null> {
+): Promise<RecoveryStanding> {
 	const standing = await readRecoveryStanding({
 		email,
 		expectedKitSubscriberId,
 		reader: createRecoveryStandingReader(),
 	})
-	if (standing.state === 'subscribed') {
-		// State only: the positive receipt that the local read served this.
-		await log.info('skills.course.lesson_one_recovery_standing', {
-			state: standing.state,
-		})
-		return { id: standing.kitSubscriberId, state: 'active' }
-	}
 	// No identity in the log line: state and reason only.
 	await log.info('skills.course.lesson_one_recovery_standing', {
 		state: standing.state,
-		reason: standing.reason,
+		...('reason' in standing ? { reason: standing.reason } : {}),
 	})
-	if (standing.state === 'not-found') return null
-	return { id: expectedKitSubscriberId ?? '', state: standing.state }
+	return standing
 }
 
 function recoverySecret() {

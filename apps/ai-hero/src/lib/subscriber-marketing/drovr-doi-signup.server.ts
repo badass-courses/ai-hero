@@ -29,7 +29,7 @@ function contactCreatedAt(value: unknown): string {
 
 /**
  * One double opt-in signup, for any entry point (the form route, the
- * /skills tag-me action): find or create the contact without Kit, then
+ * /skills tag-me and recovery actions): find or create the contact without Kit, then
  * hand drovr the signup durably. drovr sends the confirmation email and
  * births the course on confirmation. Throws on any failure; callers answer
  * their own error and never fall back to Kit.
@@ -41,7 +41,7 @@ export async function requestDrovrDoiSignup(args: {
 	page: string
 	optInAttribution?: OptInAttribution
 	/** Which entry point, for the log. */
-	entry: 'form' | 'tag-me'
+	entry: 'form' | 'tag-me' | 'recovery'
 }): Promise<{ contactId: string }> {
 	const drovrFormId = DOI_DROVR_FORM_IDS.get(args.kitFormId)
 	if (!drovrFormId) {
