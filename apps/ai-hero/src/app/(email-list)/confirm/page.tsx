@@ -72,8 +72,12 @@ export default async function ConfirmSubscriptionPage({
 							</>
 						) : (
 							<p>
-								Check your inbox for a confirmation link. If one arrives,
-								click it to finish your subscription.
+								We sent an email to{' '}
+								<Suspense>
+									<Email />
+								</Suspense>{' '}
+								with a confirmation link. Click the link to finish your
+								subscription.
 							</p>
 						)}
 						<p>
