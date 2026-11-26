@@ -908,6 +908,10 @@ export {
 
 export { drovrOutbox } from './drovr-outbox-schema'
 export { integrationToken } from './integration-token-schema'
+export {
+	couponBatch, couponBatchAlert, couponBatchControl, couponBatchDay,
+	couponBatchGrant, couponBatchIntent, couponBatchItem,
+} from './coupon-batch-schema'
 
 export {
 	evergreenOfferJourneyAttempt,

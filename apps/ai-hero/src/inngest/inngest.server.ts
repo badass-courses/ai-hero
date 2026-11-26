@@ -305,6 +305,7 @@ export type Events = {
 	[CREATE_PPP_CREDIT_COUPONS_FOR_PURCHASERS_EVENT]: CreatePPPCreditCouponsForPurchasersEvent
 	[RESOURCE_CREATED_EVENT]: ResourceCreated
 	[RESOURCE_UPDATED_EVENT]: ResourceUpdated
+	'commerce/coupon-batches.wake': { data: Record<string, never> }
 	[SKILL_CHANGELOG_PUBLISHED_EVENT]: SkillChangelogPublished
 	[SKILLS_NEWSLETTER_SUBSCRIBED_EVENT]:
 		| SkillsNewsletterSubscribed

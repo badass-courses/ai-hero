@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { redactCompBearer } from '@/lib/coupon-batches/telemetry'
 import {
 	createRequestContext,
 	log,
@@ -39,7 +40,7 @@ function redactSearchParams(params: URLSearchParams): URLSearchParams {
 	const safeEntries: [string, string][] = Array.from(params.entries()).map(
 		([key, value]) => [
 			key,
-			SENSITIVE_QUERY_KEY_PATTERN.test(key) ? '[REDACTED]' : value,
+			SENSITIVE_QUERY_KEY_PATTERN.test(key) ? '[REDACTED]' : redactCompBearer(value),
 		],
 	)
 	return new URLSearchParams(safeEntries)

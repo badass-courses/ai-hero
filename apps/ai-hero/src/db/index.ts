@@ -3,6 +3,7 @@ import { mysqlTable } from '@/db/mysql-table'
 import { withDefaultCouponInvalidation } from '@/lib/default-coupon-invalidation'
 import { withPurchaseCountInvalidation } from '@/lib/purchase-count-invalidation'
 import { guardLegendGiftCouponPaths } from '@/lib/legend-gift-coupon-guard'
+import { guardC5CompSelectors } from '@/lib/coupon-batches/free-selector'
 import { withSessionAccessBusts } from '@/server/session-access-busts'
 import { bustSessionAccessForUser } from '@/server/session-access-runtime'
 import { eq } from 'drizzle-orm'
@@ -26,11 +27,11 @@ export {
 } from './client'
 
 const drizzleAdapter = withSessionAccessBusts(
-	withDefaultCouponInvalidation(withPurchaseCountInvalidation(guardLegendGiftCouponPaths(DrizzleAdapter<MySqlDatabase<any, any, any>>(
+	withDefaultCouponInvalidation(withPurchaseCountInvalidation(guardC5CompSelectors(guardLegendGiftCouponPaths(DrizzleAdapter<MySqlDatabase<any, any, any>>(
 		db,
 		mysqlTable,
 		stripeProvider,
-	)))),
+	)), db))),
 	{
 		bustUser: bustSessionAccessForUser,
 		findMembershipUserId: async (membershipId) =>

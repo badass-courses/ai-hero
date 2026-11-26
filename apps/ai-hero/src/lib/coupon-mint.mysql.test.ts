@@ -1,5 +1,19 @@
 import { randomUUID } from 'node:crypto'
 import { eq, inArray } from 'drizzle-orm'
+import { CourseBuilder } from '@coursebuilder/server/http'
+import { getCouponForCode } from '@coursebuilder/commerce/props-for-commerce'
+import { couponBatchHandlers } from './coupon-batches/http'
+import {
+	c5CompPresentation,
+	guardC5CompSelectors,
+} from './coupon-batches/free-selector'
+import { withPrivateCompClaim } from './coupon-batches/free-claim-request'
+import { CONTROL_ID, createCouponBatchService } from './coupon-batches/service'
+import {
+	COUPON_BATCH_MINT_SCOPE,
+	COUPON_BATCH_READ_SCOPE,
+	createPersonalAccessToken,
+} from './personal-access-tokens'
 import type { MySqlDatabase } from 'drizzle-orm/mysql-core'
 import { drizzle } from 'drizzle-orm/mysql2'
 import mysql, { type Pool } from 'mysql2/promise'
@@ -14,11 +28,91 @@ import { DrizzleAdapter } from '@coursebuilder/adapter-drizzle'
 
 // Minting and redemption run for real against MySQL; only Stripe is a stub,
 // and a 100% mint must never touch it.
-const state = vi.hoisted(() => ({ database: undefined as unknown }))
+const state = vi.hoisted(() => ({
+	database: undefined as unknown,
+	adapter: undefined as unknown,
+	logger: {
+		debug: vi.fn(),
+		info: vi.fn(),
+		warn: vi.fn(),
+		error: vi.fn(),
+		flush: vi.fn(),
+	},
+}))
 vi.mock('@/db', () => ({
 	get db() {
 		return state.database
 	},
+	get courseBuilderAdapter() {
+		return state.adapter
+	},
+}))
+vi.mock('@/server/logger', () => ({ log: state.logger }))
+vi.mock('@coursebuilder/utils/logger', () => ({ logger: state.logger }))
+vi.mock('@/env.mjs', () => ({
+	env: { NEXT_PUBLIC_URL: 'https://example.test' },
+}))
+vi.mock('@/config', () => ({ default: {} }))
+vi.mock('@/inngest/inngest.server', () => ({
+	inngest: {
+		createFunction: (
+			_config: unknown,
+			_trigger: unknown,
+			handler: unknown,
+		) => ({ handler }),
+	},
+}))
+vi.mock('@/emails/live-office-hours-invitation', () => ({
+	default: vi.fn(),
+	generateICSAttachments: vi.fn(),
+}))
+vi.mock('@/emails/welcome-archive-email', () => ({ default: vi.fn() }))
+vi.mock('@/emails/welcome-cohort-email-team', () => ({ default: vi.fn() }))
+vi.mock('@/emails/welcome-workshop-email-team', () => ({ default: vi.fn() }))
+vi.mock('@coursebuilder/utils/send-an-email', () => ({
+	sendAnEmail: vi.fn(async () => {
+		throw new Error('Email forbidden')
+	}),
+}))
+vi.mock('@/inngest/config/product-types', () => ({
+	ENTITLEMENT_CONFIG: { cohort: { resourceType: 'cohort' } },
+	PRODUCT_TYPE_CONFIG: {
+		cohort: {
+			logPrefix: 'cohort',
+			contentAccess: 'cohort_content_access',
+			discordRole: 'cohort_discord_role',
+			createEntitlement: async (
+				...args: Parameters<
+					typeof import('./entitlements').createCohortEntitlement
+				>
+			) => (await import('./entitlements')).createCohortEntitlement(...args),
+		},
+	},
+	gatherResourceContexts: async () => [
+		{
+			resourceId: 'cohort-xdy1m',
+			resourceType: 'cohort',
+			productType: 'cohort',
+		},
+	],
+	getResourceData: async () => ({
+		id: 'cohort-xdy1m',
+		type: 'cohort',
+		fields: { title: 'C5', slug: 'c5-fixture' },
+		resources: [
+			{
+				resource: {
+					id: 'fixture-c5-workshop',
+					type: 'workshop',
+					fields: {
+						title: 'Synthetic C5 Workshop',
+						slug: 'fixture-c5-workshop',
+					},
+				},
+			},
+		],
+	}),
+	getDiscordRoleId: () => null,
 }))
 
 import {
@@ -63,7 +157,7 @@ const deps: CouponMintDeps = {
 suite('coupon minting against real MySQL', () => {
 	let pool: Pool
 	let db: MySqlDatabase<any, any, typeof schema>
-	let adapter: ReturnType<typeof guardLegendGiftCouponPaths>
+	let adapter: ReturnType<typeof DrizzleAdapter<MySqlDatabase<any, any, any>>>
 
 	beforeAll(async () => {
 		pool = preserveQueryResultShape(
@@ -75,9 +169,13 @@ suite('coupon minting against real MySQL', () => {
 		)
 		db = drizzle(pool, { schema, mode: 'planetscale' }) as any
 		state.database = db
-		adapter = guardLegendGiftCouponPaths(
-			DrizzleAdapter<MySqlDatabase<any, any, any>>(db, mysqlTable),
+		adapter = guardC5CompSelectors(
+			guardLegendGiftCouponPaths(
+				DrizzleAdapter<MySqlDatabase<any, any, any>>(db, mysqlTable),
+			),
+			db as unknown as typeof import('@/db/client').db,
 		)
+		state.adapter = adapter
 		await db.insert(schema.products).values({
 			id: product,
 			name: 'Synthetic C5',
@@ -194,5 +292,341 @@ suite('coupon minting against real MySQL', () => {
 			{ store: drizzleCouponMintStore, inviteUrl: deps.inviteUrl },
 		)
 		expect(listed.totals).toMatchObject({ coupons: 3, unused: 2, usedUp: 1 })
+	})
+
+	it('opens an exported C5 selector through the normal free claim and fulfills one C5 purchase', async () => {
+		const c5 = 'product-s00zs'
+		const workshop = 'product-ma254'
+		const fixtureAccount = {
+			id: `comp-desk-${run}`,
+			email: `comp-desk-${run}@example.test`,
+		}
+		const first = {
+			id: `comp-student-${run}`,
+			email: `comp-student-${run}@example.test`,
+		}
+		const second = {
+			id: `comp-stranger-${run}`,
+			email: `comp-stranger-${run}@example.test`,
+		}
+		await db.insert(schema.users).values([fixtureAccount, first, second])
+		for (const user of [first, second]) {
+			const organizationId = `personal-${user.id}`
+			await db.insert(schema.organization).values({
+				id: organizationId,
+				name: `Personal ${user.email}`,
+				personalOrganizationUserId: user.id,
+			})
+			await db.insert(schema.organizationMemberships).values({
+				id: `member-${user.id}`,
+				organizationId,
+				userId: user.id,
+				invitedById: user.id,
+			})
+		}
+		await db
+			.insert(schema.products)
+			.values([
+				{
+					id: c5,
+					name: 'Synthetic sold-out C5',
+					type: 'cohort',
+					quantityAvailable: 0,
+					status: 1,
+					fields: { slug: 'c5-fixture' },
+				},
+				{
+					id: workshop,
+					name: 'Synthetic included workshop',
+					type: 'self-paced',
+					status: 1,
+					fields: { slug: 'workshop-fixture' },
+				},
+			])
+			.onDuplicateKeyUpdate({ set: { status: 1 } })
+		await db
+			.insert(schema.contentResource)
+			.values([
+				{
+					id: 'cohort-xdy1m',
+					type: 'cohort',
+					fields: { title: 'C5', slug: 'c5-fixture' },
+					createdById: fixtureAccount.id,
+				},
+				{
+					id: 'workshop-2ozd9',
+					type: 'workshop',
+					fields: {},
+					createdById: fixtureAccount.id,
+				},
+			])
+			.onDuplicateKeyUpdate({ set: { deletedAt: null } })
+		await db
+			.insert(schema.contentResourceProduct)
+			.values([
+				{ productId: c5, resourceId: 'cohort-xdy1m' },
+				{ productId: workshop, resourceId: 'workshop-2ozd9' },
+			])
+			.onDuplicateKeyUpdate({ set: { deletedAt: null } })
+		await db
+			.insert(schema.entitlementTypes)
+			.values([
+				{
+					id: 'coupon-test-cohort-access',
+					name: 'cohort_content_access',
+					description: 'C5 test',
+				},
+				{
+					id: 'coupon-test-workshop-access',
+					name: 'workshop_content_access',
+					description: 'C5 bundle test',
+				},
+			])
+			.onDuplicateKeyUpdate({ set: { description: 'Coupon fixture' } })
+		const tokenSecret = 'synthetic-token-secret'
+		const operator = createPersonalAccessToken({
+			userId: fixtureAccount.id,
+			name: 'test desk',
+			scopes: [COUPON_BATCH_MINT_SCOPE, COUPON_BATCH_READ_SCOPE],
+			hashSecret: tokenSecret,
+			expiresAt: new Date(Date.now() + 3600_000),
+		})
+		await db.insert(schema.personalAccessToken).values(operator.record)
+		await db
+			.insert(schema.couponBatchGrant)
+			.values({ principalId: operator.record.userId, canMint: 1, canRead: 1 })
+		await db
+			.insert(schema.couponBatchControl)
+			.values({ id: CONTROL_ID, enabled: 1, paceMs: 0 })
+			.onDuplicateKeyUpdate({
+				set: { enabled: 1, paceMs: 0, nextChunkAt: null },
+			})
+		const service = createCouponBatchService({
+			db: db as unknown as typeof import('@/db/client').db,
+			enabled: () => true,
+			patSecret: () => tokenSecret,
+			batchSecret: () => 'synthetic-batch-secret',
+		})
+		const api = couponBatchHandlers(service, vi.fn())
+		const request = (input: unknown) =>
+			new Request('https://example.test/api/commerce/coupon-batches', {
+				method: 'POST',
+				headers: {
+					Authorization: `Bearer ${operator.rawToken}`,
+					'Idempotency-Key': `free-claim-${run}`,
+				},
+				body: JSON.stringify(input),
+			})
+		const body = {
+			campaignRef: `claim-${run}`,
+			templateId: 'c5-comp-v1',
+			template: {
+				productId: c5,
+				percentageDiscount: 1,
+				maxUses: 1,
+				deadlineAt: new Date(
+					Math.ceil(Date.now() / 1000) * 1000 + 300_000,
+				).toISOString(),
+			},
+			items: [{ intentKey: `first-${run}` }, { intentKey: `expire-${run}` }],
+		}
+		const preview = await api.preview(request(body))
+		expect(preview.status).toBe(200)
+		const submitted = await api.submit(
+			request({
+				...body,
+				previewReceipt: (await preview.json()).previewReceipt,
+			}),
+		)
+		expect(submitted.status).toBe(200)
+		const exported = await api.exportPage(
+			request({ batchId: (await submitted.json()).batchId }),
+		)
+		expect(exported.status).toBe(200)
+		const [live, expired] = (await exported.json()).outcomes as {
+			code: string
+			couponRef: string
+		}[]
+		if (!live || !expired) throw new Error('missing synthetic selectors')
+		const presentationDb = db as unknown as typeof import('@/db/client').db
+		const opened = await getCouponForCode(
+			live.code,
+			[c5],
+			c5CompPresentation(adapter, presentationDb, c5),
+		)
+		expect(opened).toMatchObject({
+			isRedeemable: true,
+			fields: { bypassSoldOut: true },
+		})
+		expect(
+			await getCouponForCode(
+				live.code,
+				[workshop],
+				c5CompPresentation(adapter, presentationDb, workshop),
+			),
+		).toBeUndefined()
+		const rawLegacy = await mintCoupons(
+			{
+				actor,
+				idempotencyKey: `legacy-claim-${run}-000000`,
+				request: {
+					productId: product,
+					percentageDiscount: 1,
+					label: `legacy-${run}`,
+				},
+			},
+			deps,
+		)
+		if (!('coupons' in rawLegacy)) throw new Error('legacy fixture mint failed')
+		expect(
+			await getCouponForCode(rawLegacy.coupons[0]!.id, [product], adapter),
+		).toMatchObject({ isRedeemable: true })
+
+		const events: { name: string; data: { purchaseId: string } }[] = []
+		const send = vi.fn(async (event: (typeof events)[number]) => {
+			events.push(event)
+			return { ids: [] }
+		})
+		const redeem = (couponId: string, email: string, productId = c5) =>
+			withPrivateCompClaim(
+				new Request('https://example.test/api/coursebuilder/redeem/coupon', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({
+						couponId,
+						email,
+						productIds: [productId],
+						sendEmail: false,
+					}),
+				}),
+				(request) =>
+					CourseBuilder(request, {
+						baseUrl: 'https://example.test',
+						basePath: '/api/coursebuilder',
+						adapter,
+						providers: [],
+						authConfig: {} as never,
+						inngest: { send } as never,
+						logger: state.logger,
+					}),
+			).then(async (response) => response.json())
+		await db
+			.update(schema.coupon)
+			.set({ expires: new Date(Date.now() - 60_000) })
+			.where(eq(schema.coupon.id, expired.couponRef))
+		const legacyAliasedId = `c5comp_${'f'.repeat(32)}${run}`
+		await db.insert(schema.coupon).values({
+			id: legacyAliasedId,
+			percentageDiscount: '1.00',
+			restrictedToProductId: c5,
+			status: 1,
+			maxUses: 1,
+		})
+		for (const denial of [
+			await redeem(live.code, first.email, workshop),
+			await redeem(expired.code, first.email),
+			await redeem(live.couponRef, first.email),
+			await redeem(legacyAliasedId, first.email),
+		]) {
+			expect(denial).toMatchObject({
+				purchase: null,
+				error: { message: 'coupon-is-invalid' },
+			})
+		}
+		const results = await Promise.all([
+			redeem(live.code, first.email),
+			redeem(live.code.toUpperCase(), second.email),
+		])
+		const winners = results.filter((result) => result.purchase)
+		expect(winners).toHaveLength(1)
+		expect(await redeem(live.code, second.email)).toMatchObject({
+			purchase: null,
+			error: { message: 'coupon-is-invalid' },
+		})
+		const purchases = await db
+			.select()
+			.from(schema.purchases)
+			.where(inArray(schema.purchases.userId, [first.id, second.id]))
+		expect(purchases).toHaveLength(1)
+		const purchase = purchases[0]!
+		expect(purchase).toMatchObject({
+			id: winners[0].purchase.id,
+			productId: c5,
+			couponId: live.couponRef,
+			status: 'Valid',
+			merchantChargeId: null,
+		})
+		expect(Number(purchase.totalAmount)).toBe(0)
+		expect(events).toHaveLength(1)
+		expect(events[0]).toMatchObject({
+			name: 'commerce/full-price-coupon-redeemed',
+			data: { purchaseId: purchase.id, productType: 'cohort' },
+		})
+		const used = await db.query.coupon.findFirst({
+			where: eq(schema.coupon.id, live.couponRef),
+		})
+		expect(used?.usedCount).toBe(1)
+		const { postPurchaseWorkflow } =
+			await import('@/inngest/functions/post-purchase-workflow')
+		const handler = (
+			postPurchaseWorkflow as unknown as {
+				handler: (args: Record<string, unknown>) => Promise<unknown>
+			}
+		).handler
+		await handler({
+			event: events[0],
+			db: adapter,
+			paymentProvider: {
+				options: { paymentsAdapter: { getCheckoutSession: stripe } },
+			},
+			runId: 'coupon-test',
+			step: {
+				run: async (_id: string, work: () => Promise<unknown>) => work(),
+				sendEvent: vi.fn(),
+			},
+		})
+		const entitlements = await db
+			.select()
+			.from(schema.entitlements)
+			.where(eq(schema.entitlements.sourceId, purchase.id))
+		expect(entitlements.map((row) => row.entitlementType).sort()).toEqual([
+			'coupon-test-cohort-access',
+			'coupon-test-workshop-access',
+		])
+		expect(
+			entitlements.every(
+				(row) => row.userId === purchase.userId && row.deletedAt === null,
+			),
+		).toBe(true)
+		const { hasEntitlementForResource } = await import('./entitlements-query')
+		expect(
+			await hasEntitlementForResource(purchase.userId!, 'cohort-xdy1m'),
+		).toBe(true)
+		expect(
+			await hasEntitlementForResource(purchase.userId!, 'workshop-2ozd9'),
+		).toBe(true)
+		expect(
+			await hasEntitlementForResource(
+				purchase.userId === first.id ? second.id : first.id,
+				'cohort-xdy1m',
+			),
+		).toBe(false)
+		const legacyClaim = await redeem(
+			rawLegacy.coupons[0]!.id,
+			second.email,
+			product,
+		)
+		expect(legacyClaim.purchase).toMatchObject({
+			productId: product,
+			status: 'Valid',
+		})
+		expect(stripe).not.toHaveBeenCalled()
+		const wire = JSON.stringify({
+			results,
+			events,
+			traces: Object.values(state.logger).map((fn) => fn.mock.calls),
+		})
+		for (const coupon of [live, expired])
+			expect(wire.toLowerCase().includes(coupon.code)).toBe(false)
 	})
 })

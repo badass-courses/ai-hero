@@ -7,6 +7,8 @@ import { courseBuilderAdapter } from '@/db'
 import { env } from '@/env.mjs'
 import { inngest } from '@/inngest/inngest.server'
 import { createUserWithPersonalOrg } from '@/lib/find-or-create-user'
+import { withPrivateCompClaim } from '@/lib/coupon-batches/free-claim-request'
+import { NextRequest } from 'next/server'
 import { authOptions, getServerAuthSession } from '@/server/auth'
 
 import { userSchema } from '@coursebuilder/core/schemas'
@@ -44,6 +46,12 @@ export const courseBuilderConfig: NextCourseBuilderConfig = {
 }
 
 export const {
-	handlers: { POST, GET },
+	handlers: { POST: post, GET },
 	coursebuilder,
 } = NextCourseBuilder(courseBuilderConfig)
+
+export function POST(request: NextRequest) {
+	return withPrivateCompClaim(request, (safe) =>
+		post(safe === request ? request : new NextRequest(safe)),
+	)
+}

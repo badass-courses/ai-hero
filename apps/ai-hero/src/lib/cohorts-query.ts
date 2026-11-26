@@ -17,6 +17,7 @@ import { ownsProductForBuyBox } from '@/lib/owns-product-for-buy-box'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
 import { getCachedDefaultCoupon } from '@/lib/default-coupon'
+import { c5CompPresentation } from '@/lib/coupon-batches/free-selector'
 import { getPurchaseCount } from '@/lib/purchase-count'
 import { and, asc, eq, gt, isNull, or, sql } from 'drizzle-orm'
 import { z } from 'zod'
@@ -327,7 +328,7 @@ export async function loadCohortPageData(
 						products: [product],
 						countryCode,
 					},
-					courseBuilderAdapter,
+					c5CompPresentation(courseBuilderAdapter, db, product.id),
 				),
 				getPurchaseCount(product.id),
 				db
