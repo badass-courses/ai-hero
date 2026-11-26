@@ -118,10 +118,7 @@ export default async function DictionaryPage() {
 						isHiddenForSubscribers
 						className="not-prose border-t py-16"
 						actionLabel="Get AI Hero updates"
-						fields={{
-							interest: 'dictionary',
-							source: 'aihero_dictionary_page',
-						}}
+						fields={{ source: 'aihero_dictionary_page' }}
 						trackProps={{
 							event: 'subscribed',
 							params: { location: 'dictionary' },

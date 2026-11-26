@@ -95,6 +95,23 @@ describe('SkillsNewsletterCta course variant', () => {
 		})
 	})
 
+	it.each(['awaiting-confirmation', 'inactive'])(
+		'keeps the %s skill updates signup on AI Hero',
+		(state) => {
+			const assign = vi.fn()
+			vi.stubGlobal('window', { location: { assign } })
+			try {
+				renderToStaticMarkup(<SkillsNewsletterCta forceState="fresh" />)
+				mocks.formProps?.onSuccess({ state })
+				expect(assign).not.toHaveBeenCalled()
+				expect(mocks.push).toHaveBeenCalledWith('/confirm')
+				expect(mocks.setCtaState).not.toHaveBeenCalled()
+			} finally {
+				vi.unstubAllGlobals()
+			}
+		},
+	)
+
 	it('sends an active course signup to the course confirmation flow', () => {
 		renderToStaticMarkup(
 			<SkillsNewsletterCta

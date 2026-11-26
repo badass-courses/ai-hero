@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { completeSkillsCourseSignup } from './skills-course-signup'
-import { SKILLS_HOSTED_RESUBSCRIBE_URL } from './skills-newsletter-config'
 
 const subscriber = (state: string) =>
 	({
@@ -51,12 +50,12 @@ describe('completeSkillsCourseSignup', () => {
 		expect(url).not.toContain('ck_subscriber_id')
 	})
 
-	it('sends an inactive subscriber to the hosted resubscribe flow', () => {
+	it('keeps an inactive subscriber on AI Hero without a stale Kit id', () => {
 		const onEnrolled = vi.fn()
 		completeSkillsCourseSignup(subscriber('inactive'), { push }, onEnrolled)
 
-		expect(assign).toHaveBeenCalledWith(SKILLS_HOSTED_RESUBSCRIBE_URL)
-		expect(push).not.toHaveBeenCalled()
+		expect(assign).not.toHaveBeenCalled()
+		expect(push).toHaveBeenCalledWith('/confirm')
 		expect(onEnrolled).not.toHaveBeenCalled()
 	})
 

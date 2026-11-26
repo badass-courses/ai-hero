@@ -216,7 +216,17 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 				const optInAttribution = parseOptInAttributionCookie(
 					cookieStore.get('ft_attr')?.value,
 				)
-				if (optIn.status === 'confirmation-required') {
+				if (
+					optIn.status === 'confirmation-required' ||
+					subscriber.state !== 'active'
+				) {
+					// The legacy enrollment reply is not consent. Request drovr DOI
+					// even if the flag didn't route the original post to drovr.
+					if (parseDrovrSignupDeliveryConfig(env)) {
+						return await doiSignup(req, body, subscriberEmail, 9376133)
+					}
+					// Preserve legacy evidence for the Kit confirmation reconciler,
+					// but don't tell the reader we requested a confirmation.
 					// Enrollment happens later, from Kit data, via the confirmation
 					// reconciler — this request is the only moment the browser's
 					// attribution exists, so stash it on the Kit subscriber now.
@@ -285,6 +295,10 @@ const subscribeWithAttribution = async (req: NextRequest) => {
 						attributionStashed,
 						optInAttribution,
 					})
+					return Response.json(
+						{ error: 'Subscription could not be confirmed' },
+						{ status: 502 },
+					)
 				} else {
 					const event: SkillsNewsletterSubscribed = {
 						name: SKILLS_NEWSLETTER_SUBSCRIBED_EVENT,
@@ -533,8 +547,9 @@ async function recordJoinAttribution(email: string, listId: unknown) {
 /**
  * A double opt-in signup: no Kit subscribe and no value-path entry. Find or
  * create the contact, hand drovr the signup durably (it sends the
- * confirmation email and births the course on confirmation), and tell the
- * form to show "check your email". A failure answers the same 502 the Kit
+ * confirmation email when needed and births the course on confirmation).
+ * The response acknowledges queueing, not drovr's eventual delivery result.
+ * A failure answers the same 502 the Kit
  * path uses; it never falls back to Kit, which (with Kit's own double
  * opt-in off at go-live) would subscribe someone who never confirmed.
  */

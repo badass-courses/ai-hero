@@ -1,8 +1,6 @@
 import { redirectUrlBuilder } from '@/convertkit'
 import type { Subscriber } from '@/schemas/subscriber'
 
-import { SKILLS_HOSTED_RESUBSCRIBE_URL } from './skills-newsletter-config'
-
 /** The form route's answer for a drovr double opt-in signup. */
 export const DOI_AWAITING_CONFIRMATION = 'awaiting-confirmation'
 
@@ -11,9 +9,9 @@ export const DOI_AWAITING_CONFIRMATION = 'awaiting-confirmation'
  * enrols in the free course must go through here, because both branches are
  * easy to get wrong from memory:
  *
- * - An inactive Kit subscriber cannot be re-enrolled by the form alone — they
- *   have to go through Kit's hosted resubscribe flow, or nothing arrives.
- * - An active one goes to `/confirm?flow=course`. The `flow` param is what
+ * - A pending drovr signup goes to the generic confirmation page. A raw
+ *   inactive reply uses that page too, without passing a legacy Kit id.
+ * - An active subscriber goes to `/confirm?flow=course`. The `flow` param is what
  *   keeps that page from promising "a confirmation link" — the course sends
  *   lesson one directly and no such email exists, so the generic copy strands
  *   the reader (support threads cnv_1oh8twdh, cnv_1ohy6w4l).
@@ -35,7 +33,7 @@ export function completeSkillsCourseSignup(
 		return
 	}
 	if (subscriber.state !== 'active') {
-		window.location.assign(SKILLS_HOSTED_RESUBSCRIBE_URL)
+		router.push('/confirm')
 		return
 	}
 	onEnrolled?.()

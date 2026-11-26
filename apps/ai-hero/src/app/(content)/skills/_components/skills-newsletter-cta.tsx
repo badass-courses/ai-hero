@@ -21,7 +21,6 @@ import {
 } from './skills-course-restart-button'
 import {
 	SKILLS_FORM_ID,
-	SKILLS_HOSTED_RESUBSCRIBE_URL,
 	SKILLS_INTEREST_FIELDS,
 } from './skills-newsletter-config'
 
@@ -134,7 +133,7 @@ export function SkillsNewsletterCta({
 			return
 		}
 		if (subscriber.state !== 'active') {
-			window.location.assign(SKILLS_HOSTED_RESUBSCRIBE_URL)
+			router.push('/confirm')
 			return
 		}
 		track('subscribed', { location: source })

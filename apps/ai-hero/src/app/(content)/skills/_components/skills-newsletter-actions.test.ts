@@ -435,15 +435,35 @@ describe('tagSubscriberAsSkills', () => {
 		)
 	})
 
-	it('stashes browser evidence before returning for Kit confirmation', async () => {
+	it('queues drovr DOI for a legacy unconfirmed result rather than returning a hosted form', async () => {
+		mocks.env.DROVR_API_BASE_URL = 'https://drovr.test'
+		mocks.env.DROVR_API_KEY_ORG_AIHERO = 'drovr_key'
+		mocks.requestDoi.mockResolvedValueOnce({ contactId: 'contact-doi' })
+		mocks.reconcile.mockResolvedValue({ status: 'confirmation-required' })
+		try {
+			await expect(tagSubscriberAsSkills('skills-post')).resolves.toEqual({
+				success: false,
+				reason: 'confirmation-required',
+				confirmationUrl: '/confirm',
+			})
+			expect(mocks.requestDoi).toHaveBeenCalledOnce()
+			expect(mocks.requestDoi).toHaveBeenCalledWith(
+				expect.objectContaining({ kitFormId: 9376133, entry: 'tag-me' }),
+			)
+			expect(mocks.inngestSend).not.toHaveBeenCalled()
+		} finally {
+			delete mocks.env.DROVR_API_BASE_URL
+			delete mocks.env.DROVR_API_KEY_ORG_AIHERO
+		}
+	})
+
+	it('preserves legacy evidence but reports failure when DOI is not configured', async () => {
 		mocks.reconcile.mockResolvedValue({ status: 'confirmation-required' })
 
 		const result = await tagSubscriberAsSkills('skills-post')
 
-		expect(result).toMatchObject({
-			success: false,
-			reason: 'confirmation-required',
-		})
+		expect(result).toEqual({ success: false, reason: 'request-failed' })
+		expect(mocks.requestDoi).not.toHaveBeenCalled()
 		expect(mocks.setSubscriberFields).toHaveBeenCalledWith(
 			expect.objectContaining({
 				fields: expect.objectContaining({
