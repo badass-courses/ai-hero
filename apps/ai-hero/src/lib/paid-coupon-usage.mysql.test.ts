@@ -664,7 +664,8 @@ describe.skipIf(!uri)(
 				{
 					query: { code: key('code') },
 					products: [await adapter().getProduct(productId)].filter(
-						(product) => product !== null,
+						(product): product is NonNullable<typeof product> =>
+							product !== null,
 					),
 					userId: undefined,
 				},
