@@ -89,12 +89,12 @@ export default async function RootLayout({
 					/>
 					{process.env.NODE_ENV === 'development' && (
 						<>
-						<Script
-							src="//unpkg.com/react-grab/dist/index.global.js"
-							crossOrigin="anonymous"
-							strategy="beforeInteractive"
-						/>
-						{/* <Script
+							<Script
+								src="//unpkg.com/react-grab/dist/index.global.js"
+								crossOrigin="anonymous"
+								strategy="beforeInteractive"
+							/>
+							{/* <Script
 							src="http://127.0.0.1:43127/agent-feedback.js"
 							crossOrigin="anonymous"
 							strategy="beforeInteractive"

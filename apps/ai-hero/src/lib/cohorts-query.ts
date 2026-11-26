@@ -337,9 +337,7 @@ export async function loadCohortPageData(
 					.then((res) => res[0]),
 			])
 
-		const couponResult = await getCachedDefaultCoupon([
-			product.id,
-		])
+		const couponResult = await getCachedDefaultCoupon([product.id])
 		const defaultCouponFromAdapter = couponResult?.defaultCoupon ?? null
 
 		commerceProps = {

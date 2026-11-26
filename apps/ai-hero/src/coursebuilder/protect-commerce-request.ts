@@ -104,6 +104,7 @@ export const protectCommerceRequest = async (
 	request: NextRequest | Response
 	userId?: string
 	paidCouponUsedUp?: true
+	authoritativeQuote?: true
 }> => {
 	if (!isProtectedCommerceRequest(request)) return { request }
 
@@ -123,7 +124,11 @@ export const protectCommerceRequest = async (
 		coupon?: { id: string; type?: string | null } | null
 	} = {}
 	let paidCouponUsedUp: true | undefined
+	let authoritativeQuote: true | undefined
 	const guarded = await protectCourseBuilderRequest(request, {
+		onAuthoritativeQuote: () => {
+			authoritativeQuote = true
+		},
 		onPaidCouponUsedUp: () => {
 			paidCouponUsedUp = true
 		},
@@ -217,5 +222,6 @@ export const protectCommerceRequest = async (
 		request: guarded,
 		userId,
 		...(paidCouponUsedUp && { paidCouponUsedUp }),
+		...(authoritativeQuote && { authoritativeQuote }),
 	}
 }

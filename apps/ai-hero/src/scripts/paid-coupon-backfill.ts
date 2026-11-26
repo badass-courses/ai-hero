@@ -1,5 +1,8 @@
 import { closeDatabasePool, db } from '@/db/client'
-import { previewPaidCouponBackfill } from '@/lib/paid-coupon-usage'
+import {
+	previewPaidCouponBackfill,
+	previewPaidCouponFlips,
+} from '@/lib/paid-coupon-usage'
 
 async function main() {
 	if (process.argv.length !== 3 || process.argv[2] !== '--dry-run') {
@@ -8,11 +11,15 @@ async function main() {
 		return
 	}
 	try {
-		const counts = await previewPaidCouponBackfill(db)
+		const [counts, flips] = await Promise.all([
+			previewPaidCouponBackfill(db),
+			previewPaidCouponFlips(db),
+		])
 		console.log(
 			JSON.stringify({
 				total: counts.reduce((sum, row) => sum + row.count, 0),
 				counts,
+				flips,
 			}),
 		)
 	} finally {

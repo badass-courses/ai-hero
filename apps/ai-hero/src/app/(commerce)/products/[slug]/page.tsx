@@ -183,11 +183,10 @@ async function ProductCommerce({
 	productProps = baseProps
 
 	if (user && purchaseForProduct) {
-		const { existingPurchase } =
-			await courseBuilderAdapter.getPurchaseDetails(
-				purchaseForProduct.id,
-				user.id,
-			)
+		const { existingPurchase } = await courseBuilderAdapter.getPurchaseDetails(
+			purchaseForProduct.id,
+			user.id,
+		)
 
 		productProps = {
 			...baseProps,

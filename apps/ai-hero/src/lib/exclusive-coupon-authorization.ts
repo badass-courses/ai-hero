@@ -181,6 +181,23 @@ export async function authorizeExclusiveCouponSelection({
 		requestedSiteCoupon?.paidCouponUsedUp &&
 		couponPermitsProduct(requestedSiteCoupon, productId)
 	) {
+		// A regional selector is consent, not authority. Drop the spent link and
+		// let the existing PPP path recompute the offer from trusted country.
+		const selectedMerchantCoupon = requestedMerchantCouponId
+			? await adapter.getMerchantCoupon(requestedMerchantCouponId)
+			: null
+		if (
+			selectedMerchantCoupon?.type === 'ppp' &&
+			selectedMerchantCoupon.status === 1
+		) {
+			return {
+				authorized: false,
+				protectedMerchantCoupon: true,
+				protectedSiteCoupon,
+				paidCouponUsedUp: true,
+				requestedPPP: true,
+			}
+		}
 		// Treat the exhausted link as absent when resolving independent credits.
 		const entitlement = await findEntitlementCoupon({
 			adapter,

@@ -156,7 +156,9 @@ export async function resolveLoggedInCheckoutPricing({
 		: trustedCountry
 	const serverComputedCoupon =
 		!couponAuthorization.authorized &&
-		(!couponAuthorization.paidCouponUsedUp || quantity >= 2)
+		(!couponAuthorization.paidCouponUsedUp ||
+			couponAuthorization.requestedPPP ||
+			quantity >= 2)
 			? await resolveServerComputedCheckoutCoupon({
 					adapter,
 					productId: checkoutParams.productId,

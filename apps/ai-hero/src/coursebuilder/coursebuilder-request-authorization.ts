@@ -15,6 +15,7 @@ type ProtectCourseBuilderRequestOptions = {
 	}
 	verifiedUserId?: string
 	onPaidCouponUsedUp?: () => void
+	onAuthoritativeQuote?: () => void
 	/**
 	 * Products the app's authoritative-price hook prices. Their only client
 	 * input is the PPP consent (`AUTHORITATIVE_PPP_OFFER_ID`); every coupon
@@ -125,6 +126,7 @@ const protectPricesFormattedRequest = async (
 		verifiedUserId,
 		authoritativeProductIds,
 		onPaidCouponUsedUp,
+		onAuthoritativeQuote,
 	}: ProtectCourseBuilderRequestOptions,
 ) => {
 	const body = await parsePricesFormattedBody(request)
@@ -137,6 +139,7 @@ const protectPricesFormattedRequest = async (
 	if (!productId) return requestWithJsonBody(request, body)
 
 	if (authoritativeProductIds?.has(productId)) {
+		onAuthoritativeQuote?.()
 		// The hook decides the price. The PPP toggle echoes the offer id as the
 		// buyer's consent; nothing else the client sends selects a discount.
 		const merchantCoupon = isRecord(body.merchantCoupon)
@@ -260,7 +263,7 @@ const protectCheckoutRequest = async (
 		url.searchParams.delete('usedCouponId')
 
 		const serverComputedCoupon =
-			decision.paidCouponUsedUp && quantity < 2
+			decision.paidCouponUsedUp && !decision.requestedPPP && quantity < 2
 				? null
 				: await resolveServerComputedMerchantCoupon?.({
 						productId,

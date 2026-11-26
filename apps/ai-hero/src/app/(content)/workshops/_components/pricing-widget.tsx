@@ -14,13 +14,7 @@ import { C5_PRODUCT_ID } from '@/lib/c5-pricing/products'
 import { APP_REASONS } from '@/lib/c5-pricing/reasons'
 import { EARLY_BIRD_CODE_REASONS } from '@/lib/c5-pricing/early-bird-code'
 import { formatDeadline } from '@/utils/discount-formatter'
-import {
-	ArrowUpRight,
-	Mail,
-	Minus,
-	Plus,
-	ShieldCheck,
-} from 'lucide-react'
+import { ArrowUpRight, Mail, Minus, Plus, ShieldCheck } from 'lucide-react'
 import type { CountdownRenderProps } from 'react-countdown'
 
 import { useCoupon } from '@coursebuilder/commerce-next/coupons/use-coupon'
@@ -421,7 +415,10 @@ export function EarlyBirdCodeNotice({
 		)
 	if (reasons?.includes(EARLY_BIRD_CODE_REASONS.ended))
 		return (
-			<p role="status" className={cn(TYPE.metaSm, 'text-muted-foreground mt-2')}>
+			<p
+				role="status"
+				className={cn(TYPE.metaSm, 'text-muted-foreground mt-2')}
+			>
 				This early-bird code has ended.
 			</p>
 		)
@@ -595,7 +592,9 @@ const SaleCountdownBox = ({
 
 	const expires = formattedPrice?.defaultCoupon?.expires
 	const deadline = formatDeadline(expires, 'short')
-	const endsLabel = deadline ? `Price goes up ${deadline}` : 'Price goes up soon'
+	const endsLabel = deadline
+		? `Price goes up ${deadline}`
+		: 'Price goes up soon'
 	const blocks: Array<[number, string]> = [
 		[days, 'days'],
 		[hours, 'hours'],
@@ -701,7 +700,6 @@ export const RegionalPricingBox = () => {
 				isTeamPurchaseActive: false,
 			}),
 		})
-
 
 	const rawDiscount = pppCoupon?.percentageDiscount as
 		| string

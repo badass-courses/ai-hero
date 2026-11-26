@@ -98,30 +98,20 @@ const mocks = vi.hoisted(() => {
 			return true
 		},
 	)
-	const failRetryable = vi.fn(
-		async (input: { claim: { userId: string } }) => {
-			if (
-				lifecycleState !== 'consuming' ||
-				boundUserId !== input.claim.userId
-			) {
-				return false
-			}
-			lifecycleState = 'failed_retryable'
-			return true
-		},
-	)
-	const failTerminal = vi.fn(
-		async (input: { claim: { userId: string } }) => {
-			if (
-				lifecycleState !== 'consuming' ||
-				boundUserId !== input.claim.userId
-			) {
-				return false
-			}
-			lifecycleState = 'failed_terminal'
-			return true
-		},
-	)
+	const failRetryable = vi.fn(async (input: { claim: { userId: string } }) => {
+		if (lifecycleState !== 'consuming' || boundUserId !== input.claim.userId) {
+			return false
+		}
+		lifecycleState = 'failed_retryable'
+		return true
+	})
+	const failTerminal = vi.fn(async (input: { claim: { userId: string } }) => {
+		if (lifecycleState !== 'consuming' || boundUserId !== input.claim.userId) {
+			return false
+		}
+		lifecycleState = 'failed_terminal'
+		return true
+	})
 	const getServerAuthSession = vi.fn(async () => ({
 		session: { user: { id: 'user-actual' } },
 	}))
@@ -174,12 +164,13 @@ vi.mock('@/coursebuilder/stripe-provider', () => ({
 }))
 vi.mock('@/db', () => ({
 	courseBuilderAdapter: {
-		getMerchantCoupon: vi.fn(async (id: string) =>
-			[
-				mocks.merchantCoupon,
-				mocks.pppMerchantCoupon,
-				mocks.inactivePppMerchantCoupon,
-			].find((coupon) => coupon.id === id) ?? null,
+		getMerchantCoupon: vi.fn(
+			async (id: string) =>
+				[
+					mocks.merchantCoupon,
+					mocks.pppMerchantCoupon,
+					mocks.inactivePppMerchantCoupon,
+				].find((coupon) => coupon.id === id) ?? null,
 		),
 		getCoupon: vi.fn(async (id: string) =>
 			id === mocks.coupon.id ? mocks.coupon : null,
@@ -264,9 +255,7 @@ describe('logged-in checkout coupon authorization', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 		mocks.browserSession = 'browser-session-a'
-		mocks.resetLifecycle(
-			hashCheckoutLoginBrowserSession(mocks.browserSession),
-		)
+		mocks.resetLifecycle(hashCheckoutLoginBrowserSession(mocks.browserSession))
 		mocks.getServerAuthSession.mockResolvedValue({
 			session: { user: { id: 'user-actual' } },
 		})
@@ -296,13 +285,16 @@ describe('logged-in checkout coupon authorization', () => {
 			usedCount: 1,
 			paidCouponUsedUp: true,
 		}
-		vi.mocked(courseBuilderAdapter.getCoupon).mockResolvedValueOnce(exhausted as never)
+		vi.mocked(courseBuilderAdapter.getCoupon).mockResolvedValueOnce(
+			exhausted as never,
+		)
 
 		await LoginPage({ searchParams: Promise.resolve(searchParams) })
 
 		expect(mocks.createCheckoutSession).toHaveBeenCalledWith(
 			expect.objectContaining({ couponId: undefined, usedCouponId: undefined }),
-			expect.anything(), expect.anything(),
+			expect.anything(),
+			expect.anything(),
 		)
 	})
 

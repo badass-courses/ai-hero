@@ -91,6 +91,77 @@ const protect = (
 	})
 
 describe('protectCourseBuilderRequest', () => {
+	it.each([undefined, entitlement.userId])(
+		'preserves regional pricing consent on a spent link (buyer: %s)',
+		async (verifiedUserId) => {
+			const base = createAdapter()
+			const productId = 'product-crash-course'
+			const adapter = {
+				...base,
+				getCouponForDisplay: async () => ({
+					...publicCoupon,
+					maxUses: 1,
+					usedCount: 1,
+					paidCouponUsedUp: true as const,
+				}),
+			}
+			const onPaidCouponUsedUp = vi.fn()
+			const resolveServerComputedMerchantCoupon = vi.fn(async () => ({
+				id: 'server-regional',
+				type: 'ppp',
+			}))
+			const options = {
+				adapter,
+				verifiedUserId,
+				onPaidCouponUsedUp,
+				resolveServerComputedMerchantCoupon,
+			}
+			const headers = {
+				'x-vercel-ip-country': 'IN',
+				'content-type': 'application/json',
+			}
+			const quote = await protectCourseBuilderRequest(
+				new NextRequest(
+					'https://example.test/api/coursebuilder/prices-formatted',
+					{
+						method: 'POST',
+						headers,
+						body: JSON.stringify({
+							productId,
+							quantity: 1,
+							couponId: publicCoupon.id,
+							merchantCoupon: pppMerchantCoupon,
+							autoApplyPPP: false,
+						}),
+					},
+				),
+				options,
+			)
+			const body = await quote.json()
+			expect(body).toMatchObject({ autoApplyPPP: true })
+			expect(body).not.toHaveProperty('couponId')
+			expect(body).not.toHaveProperty('merchantCoupon')
+			const checkout = await protectCourseBuilderRequest(
+				new NextRequest(
+					`https://example.test/api/coursebuilder/checkout/stripe?productId=${productId}&quantity=1&couponId=${pppMerchantCoupon.id}&usedCouponId=${publicCoupon.id}&country=BR`,
+					{ method: 'POST', headers },
+				),
+				options,
+			)
+			expect(resolveServerComputedMerchantCoupon).toHaveBeenCalledWith({
+				productId,
+				quantity: 1,
+				verifiedUserId,
+				country: 'IN',
+			})
+			expect(checkout.nextUrl.searchParams.get('couponId')).toBe(
+				'server-regional',
+			)
+			expect(checkout.nextUrl.searchParams.has('usedCouponId')).toBe(false)
+			expect(checkout.nextUrl.searchParams.has('country')).toBe(false)
+			expect(onPaidCouponUsedUp).toHaveBeenCalledTimes(2)
+		},
+	)
 	it('replaces both spent selectors with the buyer’s independently entitled credit', async () => {
 		const base = createAdapter({ entitled: true })
 		const adapter = {

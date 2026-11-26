@@ -1,8 +1,24 @@
 import type { DbExecutor } from '@/db/client'
-import { coupon, purchases } from '@/db/schema'
+import {
+	coupon,
+	entitlements,
+	entitlementTypes,
+	merchantCoupon,
+	purchases,
+} from '@/db/schema'
 import { cloneAdapter } from '@/lib/paid-coupon-pricing-view'
 import { updatePurchaseFields } from '@/lib/purchase-fields-write'
-import { and, eq, gt, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm'
+import {
+	and,
+	eq,
+	gt,
+	inArray,
+	isNotNull,
+	isNull,
+	lt,
+	or,
+	sql,
+} from 'drizzle-orm'
 
 import type { CouponPort } from '@coursebuilder/core/ports'
 
@@ -41,6 +57,71 @@ export function previewPaidCouponBackfill(db: Pick<DbExecutor, 'select'>) {
 		)
 		.groupBy(coupon.id)
 		.orderBy(couponHash)
+}
+
+/** Count only currently usable coupons whose raw counter has not reached its cap. */
+export async function previewPaidCouponFlips(
+	db: Pick<DbExecutor, 'select'>,
+	now = new Date(),
+) {
+	const kind = sql<'evergreenMa254' | 'creditSource' | 'other'>`CASE
+		WHEN ${merchantCoupon.type} IN ('special credit', 'special credit bulk') OR EXISTS (
+			SELECT 1 FROM ${entitlements}
+			JOIN ${entitlementTypes} ON ${entitlementTypes.id} = ${entitlements.entitlementType}
+			WHERE ${entitlements.sourceType} = 'COUPON' AND ${entitlements.sourceId} = ${coupon.id}
+			AND ${entitlementTypes.name} = 'apply_special_credit'
+		) THEN 'creditSource'
+		WHEN ${coupon.restrictedToProductId} = 'product-ma254'
+			AND JSON_TYPE(JSON_EXTRACT(${coupon.fields}, '$.evergreenOffer')) = 'OBJECT' THEN 'evergreenMa254'
+		ELSE 'other' END`.as('kind')
+	const byCoupon = db
+		.select({
+			kind,
+			atDeploy:
+				sql<number>`COUNT(CASE WHEN ${purchases.productId} = ${coupon.restrictedToProductId} THEN 1 END) >= ${coupon.maxUses}`.as(
+					'atDeploy',
+				),
+			atBackfill:
+				sql<number>`(${coupon.usedCount} + COUNT(CASE WHEN COALESCE(${markerExists}, 0) = 0 THEN 1 END)) >= ${coupon.maxUses}`.as(
+					'atBackfill',
+				),
+		})
+		.from(coupon)
+		.innerJoin(purchases, eq(purchases.couponId, coupon.id))
+		.leftJoin(merchantCoupon, eq(merchantCoupon.id, coupon.merchantCouponId))
+		.where(
+			and(
+				eq(coupon.status, 1),
+				or(isNull(coupon.expires), gt(coupon.expires, now)),
+				gt(coupon.maxUses, 0),
+				lt(coupon.usedCount, coupon.maxUses),
+				paidCharge,
+				inArray(purchases.status, activePurchaseStatuses),
+				noTeamProvenance,
+				notATeamCoupon(coupon.id),
+			),
+		)
+		.groupBy(coupon.id, merchantCoupon.type)
+		.as('byCoupon')
+	const rows = await db
+		.select({
+			kind: byCoupon.kind,
+			atDeploy: sql<number>`SUM(${byCoupon.atDeploy})`.mapWith(Number),
+			additionalAfterBackfill:
+				sql<number>`SUM(NOT ${byCoupon.atDeploy} AND ${byCoupon.atBackfill})`.mapWith(
+					Number,
+				),
+		})
+		.from(byCoupon)
+		.groupBy(byCoupon.kind)
+	const zeros = () => ({ evergreenMa254: 0, creditSource: 0, other: 0 })
+	const atDeploy = zeros()
+	const additionalAfterBackfill = zeros()
+	for (const row of rows) {
+		atDeploy[row.kind] = row.atDeploy
+		additionalAfterBackfill[row.kind] = row.additionalAfterBackfill
+	}
+	return { atDeploy, additionalAfterBackfill }
 }
 
 type Usage = {

@@ -30,11 +30,14 @@ export const evergreenOfferStatusHandler = createEvergreenOfferStatusHandler({
 		const { db } = await import('@/db')
 		const { coupon } = await import('@/db/schema')
 		const { eq } = await import('drizzle-orm')
-		const [row] = await db.select().from(coupon).where(eq(coupon.id, id)).limit(1)
+		const [row] = await db
+			.select()
+			.from(coupon)
+			.where(eq(coupon.id, id))
+			.limit(1)
 		if (!row) return null
-		const { withEffectivePaidCouponUsage } = await import(
-			'@/lib/paid-coupon-usage'
-		)
+		const { withEffectivePaidCouponUsage } =
+			await import('@/lib/paid-coupon-usage')
 		return withEffectivePaidCouponUsage(db, row)
 	},
 	now: () => new Date().toISOString(),

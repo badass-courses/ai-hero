@@ -1,5 +1,5 @@
 import { performance } from 'node:perf_hooks'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { NextRequest } from 'next/server'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
@@ -14,10 +14,6 @@ import {
 	couponDisplayView,
 	paidCouponPricingView,
 } from './paid-coupon-pricing-view'
-import {
-	previewPaidCouponBackfill,
-	recordPaidCouponUse,
-} from './paid-coupon-usage'
 import { propsForCommerce } from './coupon-display'
 import {
 	coupon,
@@ -32,21 +28,25 @@ import {
 	users,
 } from '@/db/schema'
 
+const runId = crypto.randomUUID().slice(0, 8)
 const stripeSession = vi.hoisted(() =>
 	vi.fn(
 		async (params: {
 			metadata?: Record<string, string>
 			discounts?: Array<{ promotion_code: string }>
 		}) => ({
-			id: 'cs_coupon_test',
+			id: key('cs'),
 			url: 'https://checkout.example.test/session',
 			amount_subtotal: 29_900,
 			total_details: {
-				amount_discount:
-					new Map([
-						['promo_paid-coupon-test-stripe', 10_000],
-						['promo_sale_coupon_test', 5_000],
-					]).get(params.discounts?.[0]?.promotion_code ?? '') ?? 0,
+				amount_discount: params.discounts?.[0]?.promotion_code.endsWith(
+					'-regional-discount',
+				)
+					? 22_425
+					: (new Map([
+							[`promo_${key('stripe')}`, 10_000],
+							[`promo_${key('sale-discount')}`, 5_000],
+						]).get(params.discounts?.[0]?.promotion_code ?? '') ?? 0),
 			},
 		}),
 	),
@@ -62,14 +62,15 @@ vi.mock('@/coursebuilder/stripe-provider', async () => {
 			paymentsAdapter: {
 				getPrice: async (id: string) => ({
 					id,
-					product: 'prod_coupon_test',
+					product: key('stripe-product'),
 					active: true,
 					currency: 'usd',
 					billing_scheme: 'per_unit',
 					unit_amount: 29900,
 					recurring: null,
 				}),
-				getCouponPercentOff: async () => 0,
+				getCouponPercentOff: async (id: string) =>
+					id.endsWith('-regional-discount') ? 75 : 0,
 				createPromotionCode: async ({ coupon }: { coupon: string }) =>
 					`promo_${coupon}`,
 				createCheckoutSession: stripeSession,
@@ -116,9 +117,9 @@ vi.mock('@/lib/purchase-disputes', () => ({
 
 // The coupon-mint CI step installs the real app schema before running this file.
 const uri = process.env.AIH_COUPON_MINT_MYSQL_URL
-const productId = 'product-ma254'
-const merchantId = 'paid-coupon-test-merchant'
-const key = (name: string) => `paid-coupon-test-${name}`
+const key = (name: string) => `paid-coupon-test-${runId}-${name}`
+const productId = key('crash-course')
+const merchantId = key('merchant')
 
 function safeTestUrl(raw: string) {
 	const url = new URL(raw)
@@ -136,6 +137,7 @@ describe.skipIf(!uri)(
 	'paid coupon usage through the app adapter and real schema',
 	() => {
 		let runtime: typeof import('@/db')
+		let usage: typeof import('./paid-coupon-usage')
 		let protectCommerceRequest: typeof import('@/coursebuilder/protect-commerce-request').protectCommerceRequest
 		const adapter = () => runtime.courseBuilderAdapter
 		const deps = {
@@ -146,6 +148,7 @@ describe.skipIf(!uri)(
 		beforeAll(async () => {
 			vi.stubEnv('DATABASE_URL', safeTestUrl(uri!))
 			runtime = await import('@/db')
+			usage = await import('./paid-coupon-usage')
 			protectCommerceRequest = (
 				await import('@/coursebuilder/protect-commerce-request')
 			).protectCommerceRequest
@@ -237,6 +240,15 @@ describe.skipIf(!uri)(
 				paidCouponUsedUp: result.paidCouponUsedUp,
 			}
 		}
+
+		it('quotes $199 when there are zero purchases for an unused code', async () => {
+			const id = key('zero-purchases')
+			await createCoupon(id)
+			expect(await price(id)).toMatchObject({
+				calculatedPrice: 199,
+				usedCouponId: id,
+			})
+		})
 
 		it.each(['Valid', 'Restricted'])(
 			'quotes $299 with a notice and allows undiscounted checkout after a %s purchase, before accounting',
@@ -338,9 +350,9 @@ describe.skipIf(!uri)(
 			const id = key(`free-${options.totalAmount}`)
 			await createCoupon(id)
 			await createPurchase(`${id}-purchase`, id, options)
-			expect(await recordPaidCouponUse(runtime.db, `${id}-purchase`)).toBe(
-				'not_applicable',
-			)
+			expect(
+				await usage.recordPaidCouponUse(runtime.db, `${id}-purchase`),
+			).toBe('not_applicable')
 		})
 
 		it('records once on concurrent replay and can count a purchase once payment settles', async () => {
@@ -350,7 +362,7 @@ describe.skipIf(!uri)(
 			await createCoupon(id, { maxUses: 2 })
 			await createPurchase(first, id)
 			const record = (purchaseId: string) =>
-				recordPaidCouponUse(runtime.db, purchaseId)
+				usage.recordPaidCouponUse(runtime.db, purchaseId)
 			expect(
 				(await Promise.all([record(first), record(first)])).sort(),
 			).toEqual(['already-counted', 'counted'])
@@ -396,28 +408,31 @@ describe.skipIf(!uri)(
 				productId,
 				merchantAccountId: account,
 				status: 1,
-				identifier: 'prod_coupon_test',
+				identifier: key('stripe-product'),
 			})
 			await runtime.db.insert(merchantPrice).values({
 				id: key('merchant-price'),
 				priceId: key('price'),
 				merchantProductId: product,
 				merchantAccountId: account,
-				identifier: 'price_coupon_test',
+				identifier: key('stripe-price'),
 				status: 1,
 			})
 			await runtime.db
 				.insert(users)
-				.values({ id: user, email: 'coupon-fixture@example.test' })
+				.values({ id: user, email: `${key('buyer')}@example.test` })
 			await runtime.db.insert(merchantCustomer).values({
 				id: customer,
 				userId: user,
 				merchantAccountId: account,
-				identifier: 'cus_coupon_test',
+				identifier: key('stripe-customer'),
 			})
 			await createCoupon(id, { code: key('code') })
-			const open = async (input: NextRequest) => {
-				const guarded = await protectCommerceRequest(input, deps)
+			const open = async (input: NextRequest, userId?: string) => {
+				const guarded = await protectCommerceRequest(input, {
+					...deps,
+					session: async () => ({ userId }),
+				})
 				expect(guarded.request).toBeInstanceOf(NextRequest)
 				const response = await commercePricingHandlers.POST(
 					guarded.request as NextRequest,
@@ -442,7 +457,7 @@ describe.skipIf(!uri)(
 				await magicLinkIdentity.couponForIdOrCode({ couponId: id }),
 			).toMatchObject({ id })
 			const settledSession = {
-				id: 'cs_coupon_test',
+				id: key('cs'),
 				object: 'checkout.session',
 				mode: 'payment',
 				payment_status: 'paid',
@@ -454,7 +469,7 @@ describe.skipIf(!uri)(
 				custom_fields: [],
 				customer_details: {
 					address: null,
-					email: 'coupon-fixture@example.test',
+					email: `${key('buyer')}@example.test`,
 					name: 'Fixture Buyer',
 				},
 				livemode: false,
@@ -477,8 +492,8 @@ describe.skipIf(!uri)(
 					userId: user,
 				},
 				customer: {
-					id: 'cus_coupon_test',
-					email: 'coupon-fixture@example.test',
+					id: key('stripe-customer'),
+					email: `${key('buyer')}@example.test`,
 					name: 'Fixture Buyer',
 				},
 				line_items: {
@@ -488,7 +503,7 @@ describe.skipIf(!uri)(
 							discounts: [],
 							price: {
 								product: {
-									id: 'prod_coupon_test',
+									id: key('stripe-product'),
 									name: 'Synthetic Crash Course',
 								},
 							},
@@ -496,8 +511,8 @@ describe.skipIf(!uri)(
 					],
 				},
 				payment_intent: {
-					id: 'pi_coupon_open_session',
-					latest_charge: { id: 'ch_coupon_open_session', amount: 19900 },
+					id: key('stripe-payment-intent'),
+					latest_charge: { id: key('stripe-charge'), amount: 19900 },
 				},
 			}
 			const sendEvent = vi.fn(async () => undefined)
@@ -506,14 +521,14 @@ describe.skipIf(!uri)(
 					name: 'stripe/checkout-session-completed',
 					data: {
 						stripeEvent: {
-							id: 'evt_coupon_open_session',
+							id: key('stripe-event'),
 							created: Math.floor(Date.now() / 1000),
 							type: 'checkout.session.completed',
 							data: {
 								object: {
 									...settledSession,
-									customer: 'cus_coupon_test',
-									payment_intent: 'pi_coupon_open_session',
+									customer: key('stripe-customer'),
+									payment_intent: key('stripe-payment-intent'),
 								},
 							},
 						},
@@ -537,15 +552,72 @@ describe.skipIf(!uri)(
 				}),
 			)
 			expect(latePurchase.couponId).toBe(id)
-			expect(await recordPaidCouponUse(runtime.db, latePurchase.id)).toBe(
+			expect(await usage.recordPaidCouponUse(runtime.db, latePurchase.id)).toBe(
 				'counted',
 			)
+			const pppId = key('regional-merchant')
+			const regionalBuyer = key('regional-buyer')
+			await runtime.db
+				.insert(users)
+				.values({ id: regionalBuyer, email: `${regionalBuyer}@example.test` })
+			await runtime.db.insert(merchantCustomer).values({
+				id: key('regional-customer'),
+				userId: regionalBuyer,
+				merchantAccountId: account,
+				identifier: key('regional-provider-customer'),
+			})
+			await runtime.db.insert(merchantCoupon).values({
+				id: pppId,
+				merchantAccountId: account,
+				identifier: key('regional-discount'),
+				type: 'ppp',
+				status: 1,
+				percentageDiscount: '0.75',
+			})
+			for (const userId of [undefined, regionalBuyer]) {
+				const headers = {
+					'x-vercel-ip-country': 'IN',
+					'content-type': 'application/json',
+				}
+				const quote = await protectCommerceRequest(
+					request('/prices-formatted', {
+						method: 'POST',
+						headers,
+						body: JSON.stringify({
+							productId,
+							quantity: 1,
+							couponId: id,
+							merchantCoupon: { id: pppId },
+							autoApplyPPP: false,
+						}),
+					}),
+					{ ...deps, session: async () => ({ userId }) },
+				)
+				expect(quote.paidCouponUsedUp).toBe(true)
+				expect(
+					await (
+						await commercePricingHandlers.POST(quote.request as NextRequest)
+					).json(),
+				).toMatchObject({
+					calculatedPrice: 74.75,
+					appliedMerchantCoupon: { type: 'ppp' },
+				})
+				const session = await open(
+					request(
+						`/checkout/stripe?productId=${productId}&quantity=1&couponId=${pppId}&usedCouponId=${id}&country=US&cancelUrl=https%3A%2F%2Fexample.test`,
+						{ method: 'POST', headers },
+					),
+					userId,
+				)
+				expect(session.metadata?.expectedTotalCents).toBe('7475')
+				expect(session.metadata?.usedCouponId).not.toBe(id)
+			}
 			await runtime.db.insert(merchantCoupon).values({
 				id: saleMerchant,
 				type: 'special',
 				status: 1,
 				amountDiscount: 5000,
-				identifier: 'sale_coupon_test',
+				identifier: key('sale-discount'),
 				merchantAccountId: account,
 			})
 			await createCoupon(sale, {
@@ -592,7 +664,7 @@ describe.skipIf(!uri)(
 			expect(nextSession.metadata?.usedCouponId).not.toBe(id)
 			expect(nextSession.metadata?.expectedTotalCents).toBe('24900')
 			expect(nextSession.discounts).toEqual([
-				{ promotion_code: 'promo_sale_coupon_test' },
+				{ promotion_code: `promo_${key('sale-discount')}` },
 			])
 		})
 
@@ -624,7 +696,7 @@ describe.skipIf(!uri)(
 			await createPurchase(`${id}-free`, id, { merchantChargeId: null })
 			await createPurchase(`${id}-eligible`, id, { fields: null })
 			const hash = createHash('sha256').update(id).digest('hex')
-			const preview = await previewPaidCouponBackfill(runtime.db)
+			const preview = await usage.previewPaidCouponBackfill(runtime.db)
 			expect(preview.find((row) => row.couponHash === hash)).toEqual({
 				couponHash: hash,
 				count: 1,
@@ -637,6 +709,71 @@ describe.skipIf(!uri)(
 					})
 				)?.fields,
 			).toBeNull()
+		})
+
+		it('classifies deploy and backfill flips without exposing the underlying rows', async () => {
+			const original = await usage.previewPaidCouponFlips(runtime.db)
+			const evergreen = key('flip-evergreen')
+			await createCoupon(evergreen, {
+				restrictedToProductId: 'product-ma254',
+				fields: { evergreenOffer: {} },
+			})
+			await createPurchase(`${evergreen}-purchase`, evergreen, {
+				productId: 'product-ma254',
+			})
+			const credit = key('flip-credit')
+			const creditMerchant = key('flip-credit-merchant')
+			await runtime.db.insert(merchantCoupon).values({
+				id: creditMerchant,
+				type: 'special credit',
+				status: 1,
+				amountDiscount: 10000,
+				merchantAccountId: key('account'),
+			})
+			await createCoupon(credit, { merchantCouponId: creditMerchant })
+			await createPurchase(`${credit}-purchase`, credit)
+			const other = key('flip-other')
+			await createCoupon(other, { restrictedToProductId: null })
+			await createPurchase(`${other}-purchase`, other)
+			const summary = await usage.previewPaidCouponFlips(runtime.db)
+			expect(summary).toEqual({
+				atDeploy: {
+					...original.atDeploy,
+					evergreenMa254: original.atDeploy.evergreenMa254 + 1,
+					creditSource: original.atDeploy.creditSource + 1,
+				},
+				additionalAfterBackfill: {
+					...original.additionalAfterBackfill,
+					other: original.additionalAfterBackfill.other + 1,
+				},
+			})
+		})
+
+		it('writes an archive policy to an existing JSON-null Purchase.fields', async () => {
+			const id = key('archive-purchase')
+			await runtime.db.insert(purchases).values({
+				id,
+				productId,
+				status: 'Valid',
+				totalAmount: '199',
+				fields: sql`CAST('null' AS JSON)`,
+			})
+			const [before] = await runtime.db
+				.select({ kind: sql<string>`JSON_TYPE(${purchases.fields})` })
+				.from(purchases)
+				.where(eq(purchases.id, id))
+			expect(before?.kind).toBe('NULL')
+			const { persistArchivePolicySnapshot } =
+				await import('@/lib/archive-products')
+			const policy = { availableAfterDays: 15, accessDurationDays: 365 }
+			await persistArchivePolicySnapshot({ purchaseId: id, policy })
+			expect(
+				(
+					await runtime.db.query.purchases.findFirst({
+						where: eq(purchases.id, id),
+					})
+				)?.fields,
+			).toEqual({ archivePolicy: policy })
 		})
 
 		it('honors the stored counter, excludes refunded rows, and leaves bulk seats alone', async () => {
@@ -672,7 +809,7 @@ describe.skipIf(!uri)(
 				'team-provenance-a',
 				'refund-purchase',
 			]) {
-				expect(await recordPaidCouponUse(runtime.db, key(id))).toBe(
+				expect(await usage.recordPaidCouponUse(runtime.db, key(id))).toBe(
 					'ineligible',
 				)
 			}

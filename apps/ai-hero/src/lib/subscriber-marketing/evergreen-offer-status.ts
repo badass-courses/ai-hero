@@ -4,7 +4,10 @@ import {
 	type CommerceCouponRow,
 } from './evergreen-offer-journey/coupon-authority'
 import type { EvergreenOfferStatus } from './evergreen-offer-notice'
-import { formatOfferDeadline, offerDeadlineFromEvidence } from './offer-deadline'
+import {
+	formatOfferDeadline,
+	offerDeadlineFromEvidence,
+} from './offer-deadline'
 
 export {
 	evergreenOfferEndedText,

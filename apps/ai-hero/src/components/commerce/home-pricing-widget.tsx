@@ -59,6 +59,7 @@ export const PricingWidget: React.FC<{
 		>
 			<BuyPathPricingBeacon productId={product.id} />
 			<Pricing.Product className="w-full">
+				<UsedCouponNotice coupon={couponFromCode} />
 				<Pricing.Purchased className="gap-1">
 					<Link
 						className="hover:underline"
@@ -74,7 +75,6 @@ export const PricingWidget: React.FC<{
 					<Pricing.BuyMoreSeats className="pt-5">
 						<Pricing.TeamQuantityInput className="mb-0" label="Quantity" />
 						<Pricing.Price className="scale-75" />
-						<UsedCouponNotice coupon={couponFromCode} />
 						<GatedBuyButton className="via-primary bg-linear-to-b mt-3 from-blue-500 to-blue-700 shadow-sm">
 							Buy Additional Seats
 						</GatedBuyButton>
