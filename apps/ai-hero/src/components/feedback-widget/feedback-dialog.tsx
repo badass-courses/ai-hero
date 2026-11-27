@@ -258,7 +258,7 @@ export function FeedbackForm({ location }: { location: string }) {
 
 			{error ? (
 				<p className="text-destructive text-sm" role="alert">
-					We could not send your feedback. Please try again.
+					{error}
 				</p>
 			) : null}
 		</form>
