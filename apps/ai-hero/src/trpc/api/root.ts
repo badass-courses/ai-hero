@@ -4,7 +4,6 @@ import { contentResourceRouter } from '@/trpc/api/routers/contentResources'
 import { cohortsRouter } from '@/trpc/api/routers/cohorts'
 import { deviceVerificationRouter } from '@/trpc/api/routers/device-verification'
 import { eventsRouter } from '@/trpc/api/routers/events'
-import { imageResourceRouter } from '@/trpc/api/routers/imageResource'
 import { lessonsRouter } from '@/trpc/api/routers/lessons'
 import { pricingRouter } from '@/trpc/api/routers/pricing'
 import { progressRouter } from '@/trpc/api/routers/progress'
@@ -28,7 +27,6 @@ import { typesenseRouter } from './routers/typesense'
  */
 export const appRouter = createTRPCRouter({
 	ability: abilityRouter,
-	imageResources: imageResourceRouter,
 	users: usersRouter,
 	videoResources: videoResourceRouter,
 	videos: videosRouter,

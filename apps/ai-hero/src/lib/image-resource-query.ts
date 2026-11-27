@@ -90,8 +90,7 @@ async function assertCanUpdateContent() {
  * Newest-first image page for the media library. `limit` is a PER-PAGE
  * clamp (200 — same ceiling as the video picker query, not a total cap);
  * `offset` (default 0) pages past it — the Media tab's "Load more" fetches
- * the next offset page and appends. (`getAllImageResources` stays unbounded
- * for the legacy tRPC routers.)
+ * the next offset page and appends.
  */
 export async function listImageResources({
 	limit,
@@ -122,31 +121,6 @@ export async function listImageResources({
         createdAt DESC
       LIMIT ${capped}
       OFFSET ${skip}
-    `
-	return db.execute(query).then((result) => {
-		const parsed = z.array(ImageResourceSchema).safeParse(result.rows)
-		return parsed.success ? parsed.data : []
-	})
-}
-
-export async function getAllImageResources() {
-	const query = sql`
-      SELECT    
-        id as id,
-        JSON_EXTRACT (${contentResource.fields}, "$.url") AS url,
-        JSON_EXTRACT (${contentResource.fields}, "$.alt") AS alt,
-        JSON_EXTRACT (${contentResource.fields}, "$.name") AS name,
-        JSON_EXTRACT (${contentResource.fields}, "$.width") AS width,
-        JSON_EXTRACT (${contentResource.fields}, "$.height") AS height,
-        JSON_EXTRACT (${contentResource.fields}, "$.bytes") AS bytes,
-        JSON_EXTRACT (${contentResource.fields}, "$.format") AS format,
-        createdAt as createdAt
-      FROM
-        ${contentResource}
-      WHERE
-        type = 'imageResource'
-      ORDER BY
-        createdAt DESC
     `
 	return db.execute(query).then((result) => {
 		const parsed = z.array(ImageResourceSchema).safeParse(result.rows)

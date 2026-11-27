@@ -1,6 +1,5 @@
 import { db } from '@/db'
 import { contentResource } from '@/db/schema'
-import { getList } from '@/lib/lists-query'
 import { ListResourcesForPickerInputSchema } from '@/lib/resources'
 import {
 	getResourceParents,
@@ -17,15 +16,6 @@ import { inArray, sql } from 'drizzle-orm'
 import { z } from 'zod'
 
 export const contentResourceRouter = createTRPCRouter({
-	getList: publicProcedure
-		.input(
-			z.object({
-				slugOrId: z.string(),
-			}),
-		)
-		.query(async ({ input }) => {
-			return await getList(input.slugOrId)
-		}),
 	getAll: protectedProcedure
 		.input(
 			z
