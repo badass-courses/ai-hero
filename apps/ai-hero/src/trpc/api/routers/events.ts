@@ -1,6 +1,7 @@
 import { TRPCError } from '@trpc/server'
 import { db } from '@/db'
-import { products, purchases } from '@/db/schema'
+import { products } from '@/db/schema'
+import { readCapacityPurchaseCount, remainingFromPurchaseCount } from '@/lib/purchase-count'
 import BasicEmail from '@/emails/basic-email'
 import { env } from '@/env.mjs'
 import { NewEmailSchema } from '@/lib/emails'
@@ -23,7 +24,7 @@ import {
 	publicProcedure,
 } from '@/trpc/api/trpc'
 import { sendAnEmail } from '@coursebuilder/utils/send-an-email'
-import { count, desc, eq } from 'drizzle-orm'
+import { desc, eq } from 'drizzle-orm'
 import { Liquid } from 'liquidjs'
 import { requireContentEditor } from '@/trpc/api/require-content-editor'
 import { z } from 'zod'
@@ -48,11 +49,7 @@ export const eventsRouter = createTRPCRouter({
 
 		const liveProductsWithQuantity = await Promise.all(
 			liveProducts.map(async (product) => {
-				const { count: purchaseCount } = await db
-					.select({ count: count() })
-					.from(purchases)
-					.where(eq(purchases.productId, product.id))
-					.then((res) => res[0] ?? { count: 0 })
+				const purchaseCount = await readCapacityPurchaseCount(product.id)
 
 				const productWithQuantityAvailable = await db
 					.select({ quantityAvailable: products.quantityAvailable })
@@ -75,12 +72,11 @@ export const eventsRouter = createTRPCRouter({
 				let quantityAvailable = -1
 
 				if (productWithQuantityAvailable) {
-					quantityAvailable =
-						productWithQuantityAvailable.quantityAvailable - purchaseCount
-				}
-
-				if (quantityAvailable < 0) {
-					quantityAvailable = -1
+					quantityAvailable = remainingFromPurchaseCount(
+						product.id,
+						productWithQuantityAvailable.quantityAvailable,
+						purchaseCount,
+					)
 				}
 
 				let purchase

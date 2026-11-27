@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto'
 import { eq, inArray, sql } from 'drizzle-orm'
+import { userSchema } from '@coursebuilder/core/schemas'
 import { CourseBuilder } from '@coursebuilder/server/http'
 import { getCouponForCode } from './coupon-display'
 import { couponBatchHandlers } from './coupon-batches/http'
 import { c5CompPresentation } from './coupon-batches/free-selector'
-import { guardC5CompSelectors } from './coupon-batches/adapter-guard'
+import { createAppCommerceAdapter } from '@/db/commerce-adapter'
+import { createSessionAccessCache } from '@/server/session-access-cache'
 import { withPrivateCompClaim } from './coupon-batches/free-claim-request'
 import { CONTROL_ID, createCouponBatchService } from './coupon-batches/service'
 import {
@@ -22,10 +24,6 @@ import {
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import * as schema from '@/db/schema'
-import { mysqlTable } from '@/db/mysql-table'
-import { guardLegendGiftCouponPaths } from '@/lib/legend-gift-coupon-guard'
-
-import { DrizzleAdapter } from '@coursebuilder/adapter-drizzle'
 
 // Minting and redemption run for real against MySQL; only Stripe is a stub,
 // and a 100% mint must never touch it.
@@ -158,17 +156,41 @@ const deps: CouponMintDeps = {
 suite('coupon minting against real MySQL', () => {
 	let pool: Pool
 	let db: MySqlDatabase<any, any, typeof schema>
-	let adapter: ReturnType<typeof DrizzleAdapter<MySqlDatabase<any, any, any>>>
+	let adapter: ReturnType<typeof createAppCommerceAdapter>
+	const cacheData = new Map<string, unknown>()
+	const accessCache = createSessionAccessCache({
+		ttlSeconds: 60,
+		getStore: async () => ({
+			mget: async (...keys) => keys.map((key) => cacheData.get(key) ?? null),
+			set: async (key, value) => cacheData.set(key, value),
+			incr: async (key) => {
+				const generation = Number(cacheData.get(key) ?? 0) + 1
+				cacheData.set(key, generation)
+				return generation
+			},
+			expire: async () => true,
+			del: async (...keys) => keys.forEach((key) => cacheData.delete(key)),
+		}),
+	})
+	const committedAtBust = new Set<string>()
+	const bustUser = vi.fn(async (userId: string) => {
+		// A separate SQL read at bust time must see the committed claim.
+		if (
+			await db.query.purchases.findFirst({
+				where: (purchase, { eq }) => eq(purchase.userId, userId),
+			})
+		)
+			committedAtBust.add(userId)
+		await accessCache.bustUser(userId)
+	})
 
 	beforeAll(async () => {
 		pool = createCouponFixturePool(assertLoopbackTestDatabase(uri!))
 		db = drizzle(pool, { schema, mode: 'planetscale' }) as any
 		state.database = db
-		adapter = guardC5CompSelectors(
-			guardLegendGiftCouponPaths(
-				DrizzleAdapter<MySqlDatabase<any, any, any>>(db, mysqlTable),
-			),
-			() => db as unknown as typeof import('@/db/client').db,
+		adapter = createAppCommerceAdapter(
+			db as unknown as typeof import('@/db/client').db,
+			bustUser,
 		)
 		state.adapter = adapter
 		await db.insert(schema.products).values({
@@ -501,6 +523,10 @@ suite('coupon minting against real MySQL', () => {
 						adapter,
 						providers: [],
 						authConfig: {} as never,
+						getCurrentUser: async () => {
+							const signedIn = [first, second].find((user) => user.email === email)
+							return signedIn ? userSchema.parse(signedIn) : null
+						},
 						inngest: { send } as never,
 						logger: state.logger,
 					}),
@@ -548,7 +574,38 @@ suite('coupon minting against real MySQL', () => {
 				error: { message: 'coupon-is-invalid' },
 			})
 		}
-		expect(await redeem(live.couponRef, first.email)).toBe('invalid coupon request')
+		expect(await redeem(live.couponRef, first.email)).toBe(
+			'invalid coupon request',
+		)
+		for (const claimant of [first, second]) {
+			const token = `session-${claimant.id}`
+			const miss = await accessCache.read(token, claimant.id)
+			if (miss.status !== 'miss') throw new Error('expected unprimed session')
+			await accessCache.write(token, claimant.id, miss, {
+				roles: [
+					{
+						id: 'fixture-role',
+						organizationId: null,
+						name: 'user',
+						description: null,
+						active: true,
+						createdAt: null,
+						updatedAt: null,
+						deletedAt: null,
+					},
+				],
+				memberships: [
+					{
+						id: 'fixture-member',
+						organizationId: 'fixture-org',
+						createdAt: null,
+					},
+				],
+				organizationRoles: [],
+				discord: null,
+			})
+			expect((await accessCache.read(token, claimant.id)).status).toBe('hit')
+		}
 		const results = await concurrentlyBehindRowLock(
 			pool,
 			'SELECT id FROM AI_Coupon WHERE id = ? FOR UPDATE',
@@ -580,6 +637,17 @@ suite('coupon minting against real MySQL', () => {
 			merchantChargeId: null,
 		})
 		expect(Number(purchase.totalAmount)).toBe(0)
+		for (const claimant of [first, second]) {
+			const access = await accessCache.read(
+				`session-${claimant.id}`,
+				claimant.id,
+			)
+			expect(access.status).toBe(
+				claimant.id === purchase.userId ? 'miss' : 'hit',
+			)
+		}
+		expect(bustUser.mock.calls).toEqual([[purchase.userId]])
+		expect(committedAtBust.has(purchase.userId!)).toBe(true)
 		// Internal receipt and bulk-purchase reads use the stored reference,
 		// while code resolution and free redemption must not accept it.
 		expect(await adapter.getCoupon(purchase.couponId!)).toMatchObject({

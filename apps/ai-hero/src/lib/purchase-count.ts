@@ -4,6 +4,16 @@ import { products, purchases } from "@/db/schema";
 import { and, count, eq } from "drizzle-orm";
 import { capacityPurchaseFilter, excludeC5CompsFromCapacity } from "./coupon-batches/capacity";
 
+import { PRODUCT as C5_PRODUCT } from './coupon-batches/namespace';
+
+/** Keep the legacy display rule for other products. A capped C5 product
+ * never turns into the unlimited sentinel after the flag goes off. */
+export function remainingFromPurchaseCount(productId: string, cap: number, count: number) {
+  if (cap < 0) return -1;
+  const remaining = cap - count;
+  return remaining >= 0 ? remaining : productId === C5_PRODUCT ? 0 : -1;
+}
+
 export const PURCHASE_COUNTS_TAG = "purchase-counts";
 export const PURCHASE_COUNT_REVALIDATE_SECONDS = 30;
 

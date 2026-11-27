@@ -8,7 +8,7 @@ import Link from 'next/link'
 import { PricingWidget } from '@/app/(content)/workshops/_components/pricing-widget'
 import { courseBuilderAdapter, db } from '@/db'
 import { products } from '@/db/schema'
-import { getPurchaseCount } from '@/lib/purchase-count'
+import { getPurchaseCount, remainingFromPurchaseCount } from '@/lib/purchase-count'
 import { ownsProductForBuyBox } from '@/lib/owns-product-for-buy-box'
 import { getPricingData } from '@/lib/pricing-query'
 import { getProduct } from '@/lib/products-query'
@@ -156,12 +156,11 @@ async function ProductCommerce({
 	let quantityAvailable = -1
 
 	if (productWithQuantityAvailable) {
-		quantityAvailable =
-			productWithQuantityAvailable.quantityAvailable - purchaseCount
-	}
-
-	if (quantityAvailable < 0) {
-		quantityAvailable = -1
+		quantityAvailable = remainingFromPurchaseCount(
+			product.id,
+			productWithQuantityAvailable.quantityAvailable,
+			purchaseCount,
+		)
 	}
 
 	const purchaseForProduct = commerceProps.purchases?.find(

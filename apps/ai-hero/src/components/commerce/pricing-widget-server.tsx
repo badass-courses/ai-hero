@@ -5,7 +5,7 @@ import { CohortPricingWidgetContainer } from '@/app/(content)/cohorts/[slug]/_co
 import { PricingWidget } from '@/app/(content)/workshops/_components/pricing-widget'
 import { courseBuilderAdapter, db } from '@/db'
 import { products } from '@/db/schema'
-import { getPurchaseCount } from '@/lib/purchase-count'
+import { getPurchaseCount, remainingFromPurchaseCount } from '@/lib/purchase-count'
 import { env } from '@/env.mjs'
 import { getCohort } from '@/lib/cohorts-query'
 import { isOnCohortWaitlist } from '@/lib/cta-gating'
@@ -84,12 +84,11 @@ export async function PricingWidgetServer({
 	let quantityAvailable = -1
 
 	if (productWithQuantityAvailable) {
-		quantityAvailable =
-			productWithQuantityAvailable.quantityAvailable - purchaseCount
-	}
-
-	if (quantityAvailable < 0) {
-		quantityAvailable = -1
+		quantityAvailable = remainingFromPurchaseCount(
+			product.id,
+			productWithQuantityAvailable.quantityAvailable,
+			purchaseCount,
+		)
 	}
 
 	const purchaseForProduct = commerceProps.purchases?.find(

@@ -1,5 +1,4 @@
 import type { CouponPort, PurchasePort } from '@coursebuilder/core/ports'
-import type { db } from '@/db/client'
 import { inRowNamespace, isPrivateCompReference } from './namespace'
 
 type Paths = Pick<
@@ -14,7 +13,7 @@ type Paths = Pick<
 /** Receipt readers resolve stored row IDs; selectors may only enter the free claim. */
 export function guardC5CompSelectors<T extends Paths>(
 	adapter: T,
-	claimDatabase: () => typeof db,
+	redeemComp: PurchasePort['redeemFullPriceCoupon'],
 ): T {
 	const redeem = adapter.redeemFullPriceCoupon.bind(adapter)
 	const settle = adapter.createMerchantChargeAndPurchase.bind(adapter)
@@ -52,8 +51,7 @@ export function guardC5CompSelectors<T extends Paths>(
 			input: Parameters<PurchasePort['redeemFullPriceCoupon']>[0],
 		) {
 			if (!isPrivateCompReference(input.couponId)) return redeem(input)
-			const { redeemPrivateComp } = await import('./free-selector')
-			return redeemPrivateComp(claimDatabase(), input)
+			return redeemComp(input)
 		},
 	})
 }

@@ -1,14 +1,12 @@
 import 'server-only'
 import type { DbExecutor } from '@/db/client'
-import { mysqlTable } from '@/db/mysql-table'
 import { coupon } from '@/db/schema'
 import { cloneAdapter } from '@/lib/paid-coupon-pricing-view'
-import { DrizzleAdapter } from '@coursebuilder/adapter-drizzle'
+import { log } from '@/server/logger'
 import type { CouponPort, PurchasePort } from '@coursebuilder/core/ports'
 import { couponSchema } from '@coursebuilder/core/schemas'
 import { createPersonalOrganizationService } from '@coursebuilder/organizations'
 import { and, eq, getTableColumns, sql } from 'drizzle-orm'
-import type { MySqlDatabase } from 'drizzle-orm/mysql-core'
 
 import {
 	PRODUCT,
@@ -105,6 +103,13 @@ export function c5CompPresentation<
 export async function redeemPrivateComp(
 	db: BatchCouponDb,
 	input: Parameters<PurchasePort['redeemFullPriceCoupon']>[0],
+	adapterFor: (
+		executor: DbExecutor,
+	) => Parameters<
+		typeof createPersonalOrganizationService
+	>[0]['organizations'] &
+		Pick<PurchasePort, 'redeemFullPriceCoupon'> &
+		Pick<import('@coursebuilder/core/ports').IdentityPort, 'findOrCreateUser'>,
 ) {
 	if (
 		input.couponId !== INTERNAL_COMP_CLAIM ||
@@ -119,16 +124,13 @@ export async function redeemPrivateComp(
 		return await db.transaction(async (tx) => {
 			const [row] = await lookup(tx, digest).for('update')
 			if (!row || !isComp(row)) return invalid()
-			const txAdapter = DrizzleAdapter<MySqlDatabase<any, any, any>>(
-				tx,
-				mysqlTable,
-			)
+			const txAdapter = adapterFor(tx)
 			// Provision atomically: a losing or rolled-back claim creates no user or org.
 			const { user, isNewUser } = await txAdapter.findOrCreateUser(input.email)
 			if (isNewUser) {
 				await createPersonalOrganizationService({
 					organizations: txAdapter,
-					logger: { info: () => {}, error: () => {} },
+					logger: log,
 				}).ensurePersonalOrganization(user)
 			}
 			const result = await txAdapter.redeemFullPriceCoupon({

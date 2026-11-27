@@ -24,10 +24,11 @@ export function capacityPurchaseFilter(productId: string, alias?: 'p') {
 	return sql`not exists (
 		select 1 from ${coupon} capacity_comp
 		where capacity_comp.id = ${column('couponId')}
-			and capacity_comp.id like ${`${ROW_PREFIX}%`}
-			and capacity_comp.restrictedToProductId = ${PRODUCT}
+			and cast(capacity_comp.id as binary) = cast(${column('couponId')} as binary)
+			and cast(capacity_comp.id as binary) like ${`${ROW_PREFIX}%`}
+			and cast(capacity_comp.restrictedToProductId as binary) = ${PRODUCT}
 			and capacity_comp.merchantCouponId is null
-			and json_unquote(json_extract(capacity_comp.fields, '$.couponBatchTemplate')) = ${TEMPLATE}
+			and cast(json_unquote(json_extract(capacity_comp.fields, '$.couponBatchTemplate')) as binary) = ${TEMPLATE}
 			and ${column('totalAmount')} = 0
 			and ${column('merchantChargeId')} is null
 			and ${column('bulkCouponId')} is null

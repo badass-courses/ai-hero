@@ -11,7 +11,7 @@ import config from '@/config'
 import { courseBuilderAdapter, db } from '@/db'
 import { products } from '@/db/schema'
 import { getCachedDefaultCoupon } from '@/lib/default-coupon'
-import { getPurchaseCount } from '@/lib/purchase-count'
+import { getPurchaseCount, remainingFromPurchaseCount } from '@/lib/purchase-count'
 import { env } from '@/env.mjs'
 import type { Event } from '@/lib/events'
 import { getEvent } from '@/lib/events-query'
@@ -159,12 +159,11 @@ export default async function EventPage(props: {
 		let quantityAvailable = -1
 
 		if (productWithQuantityAvailable) {
-			quantityAvailable =
-				productWithQuantityAvailable.quantityAvailable - purchaseCount
-		}
-
-		if (quantityAvailable < 0) {
-			quantityAvailable = -1
+			quantityAvailable = remainingFromPurchaseCount(
+				product.id,
+				productWithQuantityAvailable.quantityAvailable,
+				purchaseCount,
+			)
 		}
 
 		// Get sale banner data if there's a default coupon
