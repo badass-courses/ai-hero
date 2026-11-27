@@ -11,6 +11,8 @@ import {
 	type FormatPricesForProductOptions,
 } from '@coursebuilder/commerce/types'
 
+import { excludeC5CompsFromCapacity } from './coupon-batches/capacity'
+import { PRODUCT as C5_COMP_PRODUCT } from './coupon-batches/namespace'
 import { paidCouponPricingView } from './paid-coupon-pricing-view'
 import { getProducts } from './products-query'
 import { getSeatsTaken, seatsLeft } from './seats-taken-query'
@@ -59,39 +61,49 @@ export async function getPricingData(
 	}
 }
 
-const getCachedPublicPricingProps = unstable_cache(
-	async () => {
-		const products = await getProducts()
-		const product = products[0]
-		if (!product) return null
+const publicPricingPropsCache = (key: string) =>
+	unstable_cache(
+		async () => {
+			const products = await getProducts()
+			const product = products[0]
+			if (!product) return null
 
-		const [pricingData, commerceProps] = await Promise.all([
-			getPricingData({ productId: product.id }),
-			propsForCommerce(
-				{
-					query: {},
-					userId: undefined,
-					products: products as any,
-					countryCode: process.env.DEFAULT_COUNTRY || 'US',
-				},
-				courseBuilderAdapter,
-			),
-		])
+			const [pricingData, commerceProps] = await Promise.all([
+				getPricingData({ productId: product.id }),
+				propsForCommerce(
+					{
+						query: {},
+						userId: undefined,
+						products: products as any,
+						countryCode: process.env.DEFAULT_COUNTRY || 'US',
+					},
+					courseBuilderAdapter,
+				),
+			])
 
-		return {
-			allowPurchase: product.fields.visibility === 'public',
-			commerceProps,
-			pricingData,
-			product,
-		}
-	},
-	['public-pricing-props-v1'],
-	{ revalidate: 600, tags: ['products', 'pricing'] },
+			return {
+				allowPurchase: product.fields.visibility === 'public',
+				commerceProps,
+				pricingData,
+				product,
+			}
+		},
+		[key],
+		{ revalidate: 600, tags: ['products', 'pricing'] },
+	)
+
+const getCachedPublicPricingProps = publicPricingPropsCache(
+	'public-pricing-props-v1',
+)
+const getCachedPublicPricingPropsWithCompCapacity = publicPricingPropsCache(
+	'public-pricing-props-c5-comp-capacity-v1',
 )
 
 /** Anonymous-safe pricing state for prerendered pages. */
 export async function getPublicPricingProps() {
-	return getCachedPublicPricingProps()
+	return excludeC5CompsFromCapacity(C5_COMP_PRODUCT)
+		? getCachedPublicPricingPropsWithCompCapacity()
+		: getCachedPublicPricingProps()
 }
 
 export async function getPricingProps({

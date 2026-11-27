@@ -6,6 +6,7 @@ import {
 	isArchiveProductType,
 	summarizeArchiveEntitlements,
 } from '@/lib/archive-entitlements'
+import { capacityPurchaseFilter } from '@/lib/coupon-batches/capacity'
 import { log } from '@/server/logger'
 import { TYPESENSE_COLLECTION_NAME } from '@/utils/typesense-instantsearch-adapter'
 import type {
@@ -232,6 +233,7 @@ export const integration: SupportIntegration = {
 				and(
 					eq(purchases.productId, product.id),
 					inArray(purchases.status, ['Valid', 'Restricted']),
+					capacityPurchaseFilter(product.id),
 				),
 			)
 

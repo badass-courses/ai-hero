@@ -53,6 +53,7 @@ import { drovrProfileRestatementSweep } from './functions/drovr-profile-restatem
 import { drovrOwnerBirthGuard } from './functions/drovr-owner-birth-guard'
 import { drovrSuppressionPull } from './functions/drovr-suppression-pull'
 import { drovrEvergreenSender } from './functions/drovr-evergreen-sender'
+import { couponBatchAlarms, couponBatchDrain } from './functions/coupon-batch-drain'
 import { drovrSignupDeliver } from './functions/drovr-signup-deliver'
 import { drovrOutboxReplay } from './functions/drovr-outbox-replay'
 import { kitDirectoryIngest } from './functions/kit-directory-ingest'
@@ -200,6 +201,8 @@ const allFunctions = [
 	drovrEventsDeliver,
 	drovrEventsDeliverBulk,
 	drovrEvergreenSender,
+	couponBatchDrain,
+	couponBatchAlarms,
 	drovrContactProfileSync,
 	drovrContactSyncReconcile,
 	drovrProfileRestatementSweep,

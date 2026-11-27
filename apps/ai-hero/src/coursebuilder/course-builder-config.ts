@@ -7,11 +7,13 @@ import { courseBuilderAdapter, rawCourseBuilderAdapter } from '@/db'
 import { env } from '@/env.mjs'
 import { inngest } from '@/inngest/inngest.server'
 import { createUserWithPersonalOrg } from '@/lib/find-or-create-user'
+import { withPrivateCompClaim } from '@/lib/coupon-batches/free-claim-request'
 import {
 	cloneAdapter,
 	paidCouponPricingView,
 } from '@/lib/paid-coupon-pricing-view'
 import { authOptions, getServerAuthSession } from '@/server/auth'
+import { NextRequest } from 'next/server'
 
 import { userSchema } from '@coursebuilder/core/schemas'
 import NextCourseBuilder, {
@@ -50,9 +52,31 @@ export const courseBuilderConfig = {
 } satisfies NextCourseBuilderConfig
 
 export const {
-	handlers: { POST, GET },
+	handlers: { POST: post, GET },
 	coursebuilder,
 } = NextCourseBuilder(courseBuilderConfig)
+
+export type CourseBuilderRouteContext = {
+	params: Promise<{ nextCourseBuilder: string[] }>
+}
+type CourseBuilderRouteHandler = (
+	request: NextRequest,
+	context?: CourseBuilderRouteContext,
+) => Promise<Response>
+
+export function POST(
+	request: NextRequest,
+	context?: CourseBuilderRouteContext,
+) {
+	// The dependency's declaration omits context. Forward the Next argument
+	// regardless, including for unchanged Stripe requests.
+	return withPrivateCompClaim(request, (safe) =>
+		(post as CourseBuilderRouteHandler)(
+			safe === request ? request : new NextRequest(safe),
+			context,
+		),
+	)
+}
 
 // Separate HTTP pricing handlers; purchase/webhook writes retain the raw adapter.
 export const { handlers: commercePricingHandlers } = NextCourseBuilder({

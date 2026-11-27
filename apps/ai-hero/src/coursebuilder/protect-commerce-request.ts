@@ -5,6 +5,10 @@ import { syntheticCheckoutRefusal } from '@/coursebuilder/synthetic-checkout'
 import { courseBuilderAdapter, db } from '@/db'
 import { purchases } from '@/db/schema'
 import { AUTHORITATIVE_PRODUCT_IDS } from '@/lib/c5-pricing/decision'
+import {
+	hasReservedCouponField,
+	readCouponRequestBody,
+} from '@/lib/coupon-batches/coupon-request-fields'
 import { REGIONAL_UPGRADE_PATH } from '@/lib/c5-pricing/products'
 import { getProduct } from '@/lib/products-query'
 import {
@@ -20,6 +24,22 @@ import { and, eq, inArray } from 'drizzle-orm'
 import type { NextRequest } from 'next/server'
 
 import { AUTHORITATIVE_PPP_OFFER_ID } from '@coursebuilder/commerce/authoritative-price'
+
+async function hasCompCheckoutInput(request: NextRequest) {
+	// couponId and usedCouponId are also selector fields in the Stripe handoff.
+	if (
+		hasReservedCouponField(request.nextUrl.searchParams, [
+			'coupon',
+			'code',
+			'couponId',
+			'usedCouponId',
+		])
+	)
+		return true
+	return (
+		await readCouponRequestBody(request, ['couponId', 'code', 'usedCouponId'])
+	).reserved
+}
 
 export const isProtectedCommerceRequest = (request: NextRequest) =>
 	request.nextUrl.pathname.endsWith('/prices-formatted') ||
@@ -107,6 +127,13 @@ export const protectCommerceRequest = async (
 	authoritativeQuote?: true
 }> => {
 	if (!isProtectedCommerceRequest(request)) return { request }
+	if (isCheckoutRequest(request) && (await hasCompCheckoutInput(request)))
+		return {
+			request: Response.json('invalid checkout coupon', {
+				status: 400,
+				headers: { 'Cache-Control': 'no-store' },
+			}),
+		}
 
 	const userId = deps.session
 		? (await deps.session()).userId

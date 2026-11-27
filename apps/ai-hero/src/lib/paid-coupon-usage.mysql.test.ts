@@ -1,6 +1,7 @@
 import { performance } from 'node:perf_hooks'
 import { eq, sql } from 'drizzle-orm'
 import { NextRequest } from 'next/server'
+import Stripe from 'stripe'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { formatPricesForProduct } from '@coursebuilder/commerce/format-prices-for-product'
@@ -11,13 +12,20 @@ import {
 	C5_PRODUCT_ID,
 } from '@/lib/c5-pricing/products'
 import {
+	cloneAdapter,
 	couponDisplayView,
 	paidCouponPricingView,
 } from './paid-coupon-pricing-view'
-import { propsForCommerce } from './coupon-display'
+import {
+	propsForCommerce,
+	getCouponForCode as appGetCouponForCode,
+} from './coupon-display'
+import { cohortCouponPresentation } from './coupon-batches/cohort-presentation'
+import { newSelector, selectorDigest } from './coupon-batches/selector'
 import {
 	coupon,
 	merchantAccount,
+	merchantCharge,
 	merchantCoupon,
 	merchantCustomer,
 	merchantPrice,
@@ -29,6 +37,15 @@ import {
 } from '@/db/schema'
 
 const runId = crypto.randomUUID().slice(0, 8)
+// The test harness supplies this fixture to the app's real webhook route.
+const webhookSecret = 'test_webhook_secret'
+const inngestSend = vi.hoisted(() =>
+	vi.fn(async (_event: unknown) => ({ ids: [] })),
+)
+vi.mock('@/inngest/inngest.server', () => ({ inngest: { send: inngestSend } }))
+vi.mock('@/lib/c5-pricing/gift-settlement', () => ({
+	settleGiftSession: vi.fn(),
+}))
 const stripeSession = vi.hoisted(() =>
 	vi.fn(
 		async (params: {
@@ -54,12 +71,18 @@ const stripeSession = vi.hoisted(() =>
 vi.mock('@/coursebuilder/stripe-provider', async () => {
 	const { default: StripeProvider } =
 		await import('@coursebuilder/commerce/stripe-provider')
+	const stripe = new Stripe('sk_test_synthetic_paid_coupon_fixture')
 	return {
 		stripeProvider: StripeProvider({
 			baseSuccessUrl: 'https://example.test',
 			cancelUrl: 'https://example.test',
 			errorRedirectUrl: 'https://example.test/error',
 			paymentsAdapter: {
+				stripe,
+				verifyWebhookSignature: async (body: string, signature: string) =>
+					Boolean(
+						stripe.webhooks.constructEvent(body, signature, webhookSecret),
+					),
 				getPrice: async (id: string) => ({
 					id,
 					product: key('stripe-product'),
@@ -106,7 +129,8 @@ vi.mock('@/coursebuilder/openai-provider', () => ({
 vi.mock('@/coursebuilder/transcript-provider', () => ({
 	transcriptProvider: { id: 'transcript', options: {} },
 }))
-vi.mock('@/server/logger', () => ({
+vi.mock('@/server/logger', async (importOriginal) => ({
+	...(await importOriginal<typeof import('@/server/logger')>()),
 	log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }))
 vi.mock('@/lib/buy-path/server', () => ({ emitBuyPath: vi.fn() }))
@@ -421,6 +445,196 @@ describe.skipIf(!uri)(
 			expect((await adapter().getCoupon(id))?.usedCount).toBe(2)
 		})
 
+		it('redeems a C5 bearer through the real POST wrapper and provisions a first claimant', async () => {
+			const { POST } =
+				await import('@/app/api/coursebuilder/[...nextCourseBuilder]/route')
+			const { rawCourseBuilderAdapter } = runtime
+			const { courseBuilderConfig } =
+				await import('@/coursebuilder/course-builder-config')
+			expect(rawCourseBuilderAdapter.createUser).not.toBe(
+				courseBuilderConfig.adapter.createUser,
+			)
+			expect(adapter().createUser).toBe(rawCourseBuilderAdapter.createUser)
+			const bearer = newSelector()
+			const couponRef = `batch-coupon-${key('free-claim')}`
+			await runtime.db
+				.insert(products)
+				.values({
+					id: C5_PRODUCT_ID,
+					name: 'Synthetic C5',
+					status: 1,
+					type: 'cohort',
+					quantityAvailable: 0,
+				})
+				.onDuplicateKeyUpdate({ set: { quantityAvailable: 0 } })
+			await runtime.db.insert(coupon).values({
+				id: couponRef,
+				code: selectorDigest(bearer),
+				percentageDiscount: '1.00',
+				restrictedToProductId: C5_PRODUCT_ID,
+				status: 1,
+				maxUses: 1,
+				expires: new Date(Date.now() + 300000),
+				fields: { couponBatchTemplate: 'c5-comp-v1', bypassSoldOut: true },
+			})
+			const productionAdapter = cloneAdapter(adapter())
+			Object.defineProperty(productionAdapter, 'getPurchasesForUser', {
+				value: productionAdapter.getPurchasesForUser,
+				enumerable: false,
+			})
+			const previousFlag = process.env.AIH_COUPON_BATCH_ENABLED
+			const presentation = (code: string) =>
+				cohortCouponPresentation(
+					productionAdapter,
+					runtime.db,
+					C5_PRODUCT_ID,
+					code,
+				)
+			let display: typeof productionAdapter
+			try {
+				delete process.env.AIH_COUPON_BATCH_ENABLED
+				expect(await presentation(bearer)).toBe(productionAdapter)
+				process.env.AIH_COUPON_BATCH_ENABLED = 'true'
+				display = await presentation(bearer)
+			} finally {
+				if (previousFlag === undefined)
+					delete process.env.AIH_COUPON_BATCH_ENABLED
+				else process.env.AIH_COUPON_BATCH_ENABLED = previousFlag
+			}
+			const comp = await appGetCouponForCode(bearer, [C5_PRODUCT_ID], display)
+			expect(comp).toMatchObject({ isRedeemable: true })
+			const c5 = await productionAdapter.getProduct(C5_PRODUCT_ID)
+			if (!c5) throw new Error('missing C5 product fixture')
+			const displayProps = async (userId: string) =>
+				propsForCommerce(
+					{
+						query: { code: bearer },
+						userId,
+						products: [c5],
+					},
+					display,
+				)
+			expect(await displayProps(key('no-purchases'))).toMatchObject({
+				couponFromCode: { id: bearer, isRedeemable: true },
+				purchases: [],
+			})
+			const ordinary = ['off', 'on'].map((flag) =>
+				key(`regular-free-coupon-${flag}`),
+			)
+			for (const id of ordinary)
+				await createCoupon(id, {
+					restrictedToProductId: C5_PRODUCT_ID,
+					merchantCouponId: null,
+					amountDiscount: null,
+					percentageDiscount: '1.00',
+				})
+			const regular = await appGetCouponForCode(
+				ordinary[0]!,
+				[C5_PRODUCT_ID],
+				display,
+			)
+			expect(regular).toMatchObject({ isRedeemable: true })
+			const { cohortCallsToAction } =
+				await import('@/app/(content)/cohorts/[slug]/_components/cohort-coming-soon')
+			const closed = {
+				phase: 'closed',
+				productState: 'published',
+				allowPurchase: false,
+				hasCohortAccess: false,
+				isOnWaitlist: false,
+				hasActiveProduct: true,
+			} as const
+			expect(
+				cohortCallsToAction({
+					...closed,
+					bypassSoldOut: regular?.fields?.bypassSoldOut === true,
+				}).canEnroll,
+			).toBe(false)
+			expect(
+				cohortCallsToAction({
+					...closed,
+					bypassSoldOut: comp?.fields?.bypassSoldOut === true,
+				}).canEnroll,
+			).toBe(true)
+			const claim = (
+				couponId: string,
+				claimant: string,
+				mediaType = 'application/json',
+			) =>
+				POST(
+					request('/redeem/coupon', {
+						method: 'POST',
+						headers: { 'content-type': mediaType },
+						body: JSON.stringify({
+							couponId,
+							email: `${key(claimant)}@example.test`,
+							productIds: [C5_PRODUCT_ID],
+							sendEmail: false,
+						}),
+					}),
+				)
+			let response: Response
+			try {
+				for (const [index, id] of ordinary.entries()) {
+					if (index === 0) delete process.env.AIH_COUPON_BATCH_ENABLED
+					else process.env.AIH_COUPON_BATCH_ENABLED = 'true'
+					// Main's direct legacy free claim does not consult the seat cap.
+					const legacy = await claim(id, `c5comp_legacy-claimant-${index}`)
+					expect(legacy.status).toBe(200)
+					expect(await legacy.json()).toMatchObject({
+						purchase: { couponId: id, status: 'Valid' },
+					})
+					expect((await rawCourseBuilderAdapter.getCoupon(id))?.usedCount).toBe(
+						1,
+					)
+				}
+				response = await claim(
+					bearer,
+					'first-claimant',
+					'application/json; charset=utf-8',
+				)
+			} finally {
+				if (previousFlag === undefined)
+					delete process.env.AIH_COUPON_BATCH_ENABLED
+				else process.env.AIH_COUPON_BATCH_ENABLED = previousFlag
+			}
+			expect(response.status).toBe(200)
+			const { purchase } = await response.json()
+			expect(purchase).toMatchObject({ couponId: couponRef, status: 'Valid' })
+			const organization =
+				await rawCourseBuilderAdapter.getPersonalOrganization(purchase.userId)
+			expect(organization).not.toBeNull()
+			expect(purchase.organizationId).toBe(organization?.id)
+			expect(await rawCourseBuilderAdapter.getCoupon(couponRef)).toMatchObject({
+				id: couponRef,
+				code: null,
+				usedCount: 1,
+			})
+			expect(
+				await rawCourseBuilderAdapter.getPurchaseWithUser(purchase.id),
+			).toMatchObject({ id: purchase.id })
+
+			const secondBearer = newSelector()
+			const secondCouponRef = `batch-coupon-${key('owner-refusal')}`
+			await runtime.db.insert(coupon).values({
+				id: secondCouponRef, code: selectorDigest(secondBearer),
+				percentageDiscount: '1.00', restrictedToProductId: C5_PRODUCT_ID,
+				status: 1, maxUses: 1, expires: new Date(Date.now() + 300000),
+				fields: { couponBatchTemplate: 'c5-comp-v1', bypassSoldOut: true },
+			})
+			const alreadyOwned = await claim(secondBearer, 'first-claimant')
+			expect(alreadyOwned.status).toBe(200)
+			const refusal = await alreadyOwned.text()
+			expect(JSON.parse(refusal)).toEqual({
+				purchase: null, redeemingForCurrentUser: true,
+				error: { message: 'already-purchased-c5' },
+			})
+			expect(refusal).not.toContain(secondBearer)
+			expect(refusal).not.toContain('@example.test')
+			expect(await rawCourseBuilderAdapter.getCoupon(secondCouponRef)).toMatchObject({ usedCount: 0 })
+			expect(await rawCourseBuilderAdapter.getPurchasesForUser(purchase.userId)).toHaveLength(1)
+		})
+
 		it('uses the real HTTP pricing handlers for Stripe session creation and preserves late fulfillment', async () => {
 			const { commercePricingHandlers } =
 				await import('@/coursebuilder/course-builder-config')
@@ -476,9 +690,71 @@ describe.skipIf(!uri)(
 				)
 				return stripeSession.mock.lastCall![0]
 			}
+			const noPaidRef = `batch-coupon-${key('paid-selector-test')}`
+			const noPaidBearer = newSelector()
+			// Deliberately give the reserved test row a paid merchant discount.
+			// Neither the saved ID nor the code may select it on a paid path.
+			await createCoupon(noPaidRef, { code: noPaidBearer })
+			expect(
+				await runtime.rawCourseBuilderAdapter.getCoupon(noPaidRef),
+			).toMatchObject({ id: noPaidRef })
+			for (const selector of [noPaidRef, noPaidBearer]) {
+				const quote = await protectCommerceRequest(
+					request('/prices-formatted', {
+						method: 'POST',
+						headers: { 'content-type': 'application/json' },
+						body: JSON.stringify({
+							productId,
+							quantity: 1,
+							couponId: selector,
+							code: selector,
+							autoApplyPPP: false,
+						}),
+					}),
+					deps,
+				)
+				expect(
+					await (
+						await commercePricingHandlers.POST(quote.request as NextRequest)
+					).json(),
+				).toMatchObject({ calculatedPrice: 299 })
+				const { POST } = await import('@/app/api/coursebuilder/[...nextCourseBuilder]/route')
+				const route = `/checkout/stripe?productId=${productId}&quantity=1&cancelUrl=https%3A%2F%2Fexample.test`
+				const before = stripeSession.mock.calls.length
+				for (const input of [
+					request(`${route}&couponId=${selector}&usedCouponId=${selector}&code=${selector}`, { method: 'POST' }),
+					request(route, {
+						method: 'POST', headers: { 'content-type': 'application/json' },
+						body: JSON.stringify({ couponId: selector, usedCouponId: selector }),
+					}),
+				]) {
+					const response = await POST(input)
+					expect(response.status).toBe(400)
+					expect(await response.text()).not.toContain(selector)
+				}
+				expect(stripeSession.mock.calls.length).toBe(before)
+			}
 			const openSession = await open(checkout(id))
 			expect(openSession.metadata?.usedCouponId).toBe(id)
 			await createPurchase(key('first-session-paid'), id)
+			const usedCount = async (couponId: string) => {
+				const [row] = await runtime.db
+					.select({ used: coupon.usedCount })
+					.from(coupon)
+					.where(eq(coupon.id, couponId))
+				return row?.used
+			}
+			const paidMarker = async (purchaseId: string) => {
+				const [row] = await runtime.db
+					.select({
+						type: sql<string>`JSON_TYPE(JSON_EXTRACT(${purchases.fields}, '$.paidCouponUseCounted'))`,
+						value: sql<string>`JSON_UNQUOTE(JSON_EXTRACT(${purchases.fields}, '$.paidCouponUseCounted'))`,
+					})
+					.from(purchases)
+					.where(eq(purchases.id, purchaseId))
+				return row
+			}
+			expect(await usedCount(id)).toBe(0)
 			const { courseBuilderCoreFunctions } =
 				await import('@coursebuilder/server')
 			const { findCheckoutHandler } =
@@ -524,7 +800,7 @@ describe.skipIf(!uri)(
 						]),
 					),
 					userId: user,
-				},
+				} as Record<string, string>,
 				customer: {
 					id: key('stripe-customer'),
 					email: `${key('buyer')}@example.test`,
@@ -549,36 +825,70 @@ describe.skipIf(!uri)(
 					latest_charge: { id: key('stripe-charge'), amount: 19900 },
 				},
 			}
-			const sendEvent = vi.fn(async () => undefined)
-			const { purchase: latePurchase } = (await fulfill({
-				event: {
-					name: 'stripe/checkout-session-completed',
+			const { POST } =
+				await import('@/app/api/coursebuilder/[...nextCourseBuilder]/route')
+			const { stripeProvider } = await import('@/coursebuilder/stripe-provider')
+			const { stripe } = stripeProvider.options.paymentsAdapter as unknown as {
+				stripe: Stripe
+			}
+			const retrieve = vi
+				.spyOn(stripe.checkout.sessions, 'retrieve')
+				.mockRejectedValue(new Error('unseeded fixture session'))
+			const throughWebhook = async (
+				session: typeof settledSession,
+				suffix: string,
+			) => {
+				retrieve.mockResolvedValueOnce(session as never)
+				inngestSend.mockClear()
+				const payload = JSON.stringify({
+					id: key(`stripe-event-${suffix}`),
+					created: Math.floor(Date.now() / 1000),
+					type: 'checkout.session.completed',
 					data: {
-						stripeEvent: {
-							id: key('stripe-event'),
-							created: Math.floor(Date.now() / 1000),
-							type: 'checkout.session.completed',
-							data: {
-								object: {
-									...settledSession,
-									customer: key('stripe-customer'),
-									payment_intent: key('stripe-payment-intent'),
-								},
-							},
+						object: {
+							...session,
+							customer: session.customer.id,
+							payment_intent: session.payment_intent.id,
 						},
 					},
-				},
-				step: {
-					run: async (_: string, fn: () => Promise<unknown>) => fn(),
-					sendEvent,
-				},
-				db: magicLinkIdentity,
-				paymentProvider: {
-					options: {
-						paymentsAdapter: { getCheckoutSession: async () => settledSession },
+				})
+				const signature = stripe.webhooks.generateTestHeaderString({
+					payload,
+					secret: webhookSecret,
+				})
+				const response = await POST(
+					request('/webhook/stripe', {
+						method: 'POST',
+						headers: {
+							'stripe-signature': signature,
+							'content-type': 'application/json',
+						},
+						body: payload,
+					}),
+				)
+				expect(response.status).toBe(200)
+				const event = inngestSend.mock.calls
+					.map(([value]) => value as { name: string; data: unknown })
+					.find((value) => value.name === 'stripe/checkout-session-completed')
+				expect(event).toBeDefined()
+				return event
+			}
+			const sendEvent = vi.fn(async () => undefined)
+			const settle = async (session: typeof settledSession, suffix: string) =>
+				(await fulfill({
+					event: await throughWebhook(session, suffix),
+					step: {
+						run: async (_: string, fn: () => Promise<unknown>) => fn(),
+						sendEvent,
 					},
-				},
-			})) as { purchase: { id: string; couponId: string } }
+					db: magicLinkIdentity,
+					paymentProvider: {
+						options: {
+							paymentsAdapter: { getCheckoutSession: async () => session },
+						},
+					},
+				})) as { purchase: { id: string; couponId: string } }
+			const { purchase: latePurchase } = await settle(settledSession, 'new')
 			expect(sendEvent).toHaveBeenCalledWith(
 				'commerce/new-purchase-created',
 				expect.objectContaining({
@@ -586,9 +896,72 @@ describe.skipIf(!uri)(
 				}),
 			)
 			expect(latePurchase.couponId).toBe(id)
+			expect(await usedCount(id)).toBe(1)
 			expect(await usage.recordPaidCouponUse(runtime.db, latePurchase.id)).toBe(
-				'counted',
+				'already-counted',
 			)
+			expect(await usedCount(id)).toBe(1)
+			expect(await usage.recordPaidCouponUse(runtime.db, latePurchase.id)).toBe(
+				'already-counted',
+			)
+			expect(await usedCount(id)).toBe(1)
+			const liveMarker = await paidMarker(latePurchase.id)
+			expect(liveMarker).toEqual({ type: 'BOOLEAN', value: 'true' })
+
+			// A purchase written before the adapter upgrade is marked by the same
+			// function the desk uses for backfill. Replaying its charge on 3.3.0
+			// must find the old purchase without adding a second coupon use.
+			const historicalCoupon = key('backfill-coupon')
+			const historicalPurchase = key('backfill-purchase')
+			const historicalCharge = key('backfill-charge')
+			const providerCharge = key('backfill-stripe-charge')
+			await createCoupon(historicalCoupon)
+			const settledCharge = await runtime.db.query.merchantCharge.findFirst({
+				where: eq(
+					merchantCharge.identifier,
+					settledSession.payment_intent.latest_charge.id,
+				),
+			})
+			if (!settledCharge) throw new Error('fixture charge missing')
+			await runtime.db.insert(merchantCharge).values({
+				id: historicalCharge,
+				identifier: providerCharge,
+				userId: user,
+				merchantAccountId: settledCharge.merchantAccountId,
+				merchantProductId: settledCharge.merchantProductId,
+				merchantCustomerId: settledCharge.merchantCustomerId,
+			})
+			await createPurchase(historicalPurchase, historicalCoupon, {
+				userId: user,
+				merchantChargeId: historicalCharge,
+			})
+			expect(await usedCount(historicalCoupon)).toBe(0)
+			expect(
+				await usage.recordPaidCouponUse(runtime.db, historicalPurchase),
+			).toBe('counted')
+			expect(await usedCount(historicalCoupon)).toBe(1)
+			expect(await paidMarker(historicalPurchase)).toEqual(liveMarker)
+			const { purchase: replayed } = await settle(
+				{
+					...settledSession,
+					id: key('backfill-session'),
+					metadata: {
+						...settledSession.metadata,
+						usedCouponId: historicalCoupon,
+					},
+					payment_intent: {
+						id: key('backfill-payment-intent'),
+						latest_charge: { id: providerCharge, amount: 19900 },
+					},
+				},
+				'backfill-replay',
+			)
+			expect(replayed.id).toBe(historicalPurchase)
+			expect(
+				await usage.recordPaidCouponUse(runtime.db, historicalPurchase),
+			).toBe('already-counted')
+			expect(await usedCount(historicalCoupon)).toBe(1)
+			expect(await paidMarker(historicalPurchase)).toEqual(liveMarker)
 			const pppId = key('regional-merchant')
 			const regionalBuyer = key('regional-buyer')
 			await runtime.db
@@ -701,6 +1074,24 @@ describe.skipIf(!uri)(
 			expect(nextSession.discounts).toEqual([
 				{ promotion_code: `promo_${key('sale-discount')}` },
 			])
+
+			// A signed legacy session might already carry metadata. Preserve the
+			// paid purchase without ever associating or counting the comp row.
+			const paid = await runtime.rawCourseBuilderAdapter.createMerchantChargeAndPurchase({
+				userId: user,
+				productId,
+				merchantAccountId: account,
+				merchantProductId: product,
+				merchantCustomerId: customer,
+				stripeChargeId: key('charge-reserved-metadata'),
+				checkoutSessionId: key('session-reserved-metadata'),
+				stripeChargeAmount: 29_900,
+				usedCouponId: noPaidRef,
+				upgradedFromPurchaseId: undefined,
+				appliedPPPStripeCouponId: undefined,
+			})
+			expect(paid.couponId).toBeNull()
+			expect(await usedCount(noPaidRef)).toBe(0)
 		})
 
 		it('strips a spent code but retains the requested team quantity', async () => {

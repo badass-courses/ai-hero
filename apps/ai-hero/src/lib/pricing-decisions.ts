@@ -1,5 +1,6 @@
 // Pure pricing-display and seat-count decisions. Client-safe: no server code.
 
+import { PRODUCT, ROW_PREFIX, TEMPLATE } from './coupon-batches/namespace'
 import { regionalAllowedForQuantity } from './purchase-guardrails'
 
 /** Everything the regional-pricing offer is gated on, desktop and mobile alike. */
@@ -66,7 +67,9 @@ export function showRegionalReason(input: {
 	quantity: number
 	regionalOfferExists: boolean
 }): boolean {
-	return input.regionalOfferExists && !regionalAllowedForQuantity(input.quantity)
+	return (
+		input.regionalOfferExists && !regionalAllowedForQuantity(input.quantity)
+	)
 }
 
 /** The inline buy button's label: a sold-out product never says "Buy Now". */
@@ -83,6 +86,16 @@ export type SeatRow = {
 	bulkCouponMaxUses?: number | null
 	/** Set when the purchase is a redeemed team seat of someone's bulk coupon. */
 	redeemedBulkCouponId?: string | null
+	couponId?: string | null
+	totalAmount?: string | number | null
+	merchantChargeId?: string | null
+	/** The persisted coupon joined by couponId, not fields on the purchase. */
+	coupon?: {
+		id: string
+		restrictedToProductId: string | null
+		merchantCouponId: string | null
+		fields: { couponBatchTemplate?: string } | null
+	} | null
 }
 
 /** Statuses that hold a seat. Refunded and every other status free it. */
@@ -104,7 +117,10 @@ const holdsSeat = (status: string | null | undefined) =>
  *   refunded, the redeemer still holds a seat and counts 1.
  * - Any other holding purchase counts 1.
  */
-export function seatsTaken(rows: readonly SeatRow[]): number {
+export function seatsTaken(
+	rows: readonly SeatRow[],
+	{ excludeC5Comps = false }: { excludeC5Comps?: boolean } = {},
+): number {
 	const bulkCoupons = new Map<string, number>()
 	for (const row of rows) {
 		if (!holdsSeat(row.status) || !row.bulkCouponId) continue
@@ -122,6 +138,21 @@ export function seatsTaken(rows: readonly SeatRow[]): number {
 	for (const row of rows) {
 		if (!holdsSeat(row.status) || row.bulkCouponId) continue
 		if (row.redeemedBulkCouponId && bulkCoupons.has(row.redeemedBulkCouponId))
+			continue
+		const coupon = row.coupon
+		if (
+			excludeC5Comps &&
+			row.bulkCouponId == null &&
+			row.redeemedBulkCouponId == null &&
+			row.merchantChargeId == null &&
+			row.totalAmount != null &&
+			Number(row.totalAmount) === 0 &&
+			coupon?.id === row.couponId &&
+			coupon?.id.startsWith(ROW_PREFIX) &&
+			coupon.restrictedToProductId === PRODUCT &&
+			coupon.merchantCouponId === null &&
+			coupon.fields?.couponBatchTemplate === TEMPLATE
+		)
 			continue
 		taken += 1
 	}

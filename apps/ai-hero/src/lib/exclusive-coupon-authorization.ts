@@ -1,3 +1,4 @@
+import { isPrivateCompReference } from './coupon-batches/namespace'
 import {
 	readCouponEvidence,
 	type CommerceCouponRow,
@@ -170,9 +171,24 @@ export async function authorizeExclusiveCouponSelection({
 	requestedSiteCouponId,
 	now = new Date(),
 }: AuthorizeExclusiveCouponSelectionInput): Promise<ExclusiveCouponAuthorizationDecision> {
-	const getCoupon = (adapter.getCouponForDisplay ?? adapter.getCoupon).bind(
-		adapter,
-	)
+	if (
+		isPrivateCompReference(requestedMerchantCouponId) ||
+		isPrivateCompReference(requestedSiteCouponId)
+	) {
+		return {
+			authorized: false,
+			protectedMerchantCoupon: true,
+			protectedSiteCoupon: true,
+		}
+	}
+	const getCoupon = async (key: string) => {
+		if (isPrivateCompReference(key)) return null
+		const row = await (adapter.getCouponForDisplay ?? adapter.getCoupon).call(
+			adapter,
+			key,
+		)
+		return row && !isPrivateCompReference(row.id) ? row : null
+	}
 	const requestedSiteCoupon = requestedSiteCouponId
 		? await getCoupon(requestedSiteCouponId)
 		: null

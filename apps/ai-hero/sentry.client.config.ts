@@ -3,12 +3,15 @@
 // https://docs.sentry.io/platforms/javascript/guides/nextjs/
 
 import * as Sentry from '@sentry/nextjs'
+import { discardCompReplayEvent, scrubCouponTelemetry } from './src/lib/coupon-batches/telemetry'
 
 Sentry.init({
 	dsn: 'https://936f0f7cc2484582b9a4ed2b8381248d@o1184810.ingest.sentry.io/6763299',
 
 	// Adjust this value in production, or use tracesSampler for greater control
 	tracesSampleRate: 1,
+	beforeSend: (event) => scrubCouponTelemetry(event),
+	beforeSendTransaction: (event) => scrubCouponTelemetry(event),
 
 	// Setting this option to true will print useful information to the console while you're setting up Sentry.
 	debug: false,
@@ -21,6 +24,7 @@ Sentry.init({
 	// You can remove this option if you're not planning to use the Sentry Session Replay feature:
 	integrations: [
 		Sentry.replayIntegration({
+			beforeAddRecordingEvent: discardCompReplayEvent,
 			// Additional Replay configuration goes in here, for example:
 			maskAllText: true,
 			blockAllMedia: true,

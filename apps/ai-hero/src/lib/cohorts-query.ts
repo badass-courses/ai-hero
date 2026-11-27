@@ -17,6 +17,7 @@ import { ownsProductForBuyBox } from '@/lib/owns-product-for-buy-box'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
 import { getCachedDefaultCoupon } from '@/lib/default-coupon'
+import { cohortCouponPresentation } from '@/lib/coupon-batches/cohort-presentation'
 import { getPurchaseCount } from '@/lib/purchase-count'
 import { and, asc, eq, gt, isNull, or, sql } from 'drizzle-orm'
 import { z } from 'zod'
@@ -318,6 +319,9 @@ export async function loadCohortPageData(
 			process.env.DEFAULT_COUNTRY ||
 			'US'
 
+		const presentationAdapter = await cohortCouponPresentation(
+			courseBuilderAdapter, db, product.id, searchParams.code,
+		)
 		const [commercePropsResult, purchaseCountResult, productQuantityResult] =
 			await Promise.all([
 				propsForCommerce(
@@ -327,7 +331,7 @@ export async function loadCohortPageData(
 						products: [product],
 						countryCode,
 					},
-					courseBuilderAdapter,
+					presentationAdapter,
 				),
 				getPurchaseCount(product.id),
 				db

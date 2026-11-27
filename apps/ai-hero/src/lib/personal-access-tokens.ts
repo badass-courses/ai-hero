@@ -10,6 +10,11 @@ import { z } from 'zod'
 
 export const PERSONAL_ACCESS_TOKEN_PREFIX = 'aih_pat' as const
 export const ANALYTICS_READ_SCOPE = 'analytics:read' as const
+// Commerce grants are provisioned by ops only. Never add them to the
+// self-service mint schema or the learner/content ability map.
+export const COUPON_BATCH_MINT_SCOPE = 'commerce:coupons:mint'
+export const COUPON_BATCH_READ_SCOPE = 'commerce:coupons:read'
+export type CouponBatchScope = typeof COUPON_BATCH_MINT_SCOPE | typeof COUPON_BATCH_READ_SCOPE
 export const PERSONAL_ACCESS_TOKEN_SCOPES = [
 	ANALYTICS_READ_SCOPE,
 	'analytics:chat',
@@ -105,7 +110,7 @@ export type VerifyPersonalAccessTokenResult =
 export function createPersonalAccessToken(input: {
 	userId: string
 	name: string
-	scopes: PersonalAccessTokenScope[]
+	scopes: (PersonalAccessTokenScope | CouponBatchScope)[]
 	hashSecret: string
 	expiresAt?: Date | null
 	now?: Date
@@ -234,7 +239,7 @@ export function hashPersonalAccessTokenSecret(
 export function verifyPersonalAccessToken(input: {
 	rawToken: string
 	record: PersonalAccessTokenRecord | null | undefined
-	requiredScope: PersonalAccessTokenScope
+	requiredScope: PersonalAccessTokenScope | CouponBatchScope
 	hashSecret: string
 	now?: Date
 }): VerifyPersonalAccessTokenResult {

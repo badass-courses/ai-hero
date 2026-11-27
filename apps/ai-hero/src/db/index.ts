@@ -1,21 +1,12 @@
 import { stripeProvider } from '@/coursebuilder/stripe-provider'
-import { mysqlTable } from '@/db/mysql-table'
-import { withDefaultCouponInvalidation } from '@/lib/default-coupon-invalidation'
-import { withPurchaseCountInvalidation } from '@/lib/purchase-count-invalidation'
-import { guardLegendGiftCouponPaths } from '@/lib/legend-gift-coupon-guard'
 import { withPaidCouponUsage } from '@/lib/paid-coupon-usage'
-import { withSessionAccessBusts } from '@/server/session-access-busts'
 import { bustSessionAccessForUser } from '@/server/session-access-runtime'
-import { eq } from 'drizzle-orm'
-import type { MySqlDatabase } from 'drizzle-orm/mysql-core'
 
-import { DrizzleAdapter } from '@coursebuilder/adapter-drizzle'
 import type { RequiredPricingAuthority } from '@coursebuilder/commerce/types'
 import type { AuthoritativePriceRequest } from '@coursebuilder/core/schemas'
 
-import * as schema from './schema'
-
 import { db } from './client'
+import { createAppCommerceAdapter } from './commerce-adapter'
 
 export {
 	db,
@@ -26,28 +17,10 @@ export {
 	type DbExecutor,
 } from './client'
 
-const drizzleAdapter = withSessionAccessBusts(
-	withDefaultCouponInvalidation(
-		withPurchaseCountInvalidation(
-			guardLegendGiftCouponPaths(
-				DrizzleAdapter<MySqlDatabase<any, any, any>>(
-					db,
-					mysqlTable,
-					stripeProvider,
-				),
-			),
-		),
-	),
-	{
-		bustUser: bustSessionAccessForUser,
-		findMembershipUserId: async (membershipId) =>
-			(
-				await db.query.organizationMemberships.findFirst({
-					where: eq(schema.organizationMemberships.id, membershipId),
-					columns: { userId: true },
-				})
-			)?.userId ?? null,
-	},
+const drizzleAdapter = createAppCommerceAdapter(
+	db,
+	bustSessionAccessForUser,
+	stripeProvider,
 )
 
 /**

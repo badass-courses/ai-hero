@@ -1,5 +1,6 @@
+import { scrubCouponSpans } from './lib/coupon-batches/trace-telemetry'
+
 declare global {
-	// eslint-disable-next-line no-var
 	var __aiHeroAxiomOtelRegistered: boolean | undefined
 }
 
@@ -26,6 +27,13 @@ async function registerAxiomTracing() {
 		import('@opentelemetry/semantic-conventions'),
 	])
 
+	const axiomExporter = new OTLPTraceExporter({
+		url: `https://${host}/v1/traces`,
+		headers: {
+			Authorization: `Bearer ${token}`,
+			'X-Axiom-Dataset': dataset,
+		},
+	})
 	const provider = new NodeTracerProvider({
 		resource: resourceFromAttributes({
 			[ATTR_SERVICE_NAME]: 'ai-hero',
@@ -33,15 +41,11 @@ async function registerAxiomTracing() {
 				process.env.VERCEL_ENV || process.env.NODE_ENV || 'development',
 		}),
 		spanProcessors: [
-			new BatchSpanProcessor(
-				new OTLPTraceExporter({
-					url: `https://${host}/v1/traces`,
-					headers: {
-						Authorization: `Bearer ${token}`,
-						'X-Axiom-Dataset': dataset,
-					},
-				}),
-			),
+			new BatchSpanProcessor({
+				export: (spans, done) =>
+					axiomExporter.export(scrubCouponSpans(spans), done),
+				shutdown: () => axiomExporter.shutdown(),
+			}),
 		],
 	})
 
