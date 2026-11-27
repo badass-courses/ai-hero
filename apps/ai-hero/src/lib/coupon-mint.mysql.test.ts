@@ -541,7 +541,6 @@ suite('coupon minting against real MySQL', () => {
 		for (const denial of [
 			await redeem(live.code, first.email, workshop),
 			await redeem(expired.code, first.email),
-			await redeem(live.couponRef, first.email),
 			await redeem(legacyAliasedId, first.email),
 		]) {
 			expect(denial).toMatchObject({
@@ -549,6 +548,7 @@ suite('coupon minting against real MySQL', () => {
 				error: { message: 'coupon-is-invalid' },
 			})
 		}
+		expect(await redeem(live.couponRef, first.email)).toBe('invalid coupon request')
 		const results = await concurrentlyBehindRowLock(
 			pool,
 			'SELECT id FROM AI_Coupon WHERE id = ? FOR UPDATE',

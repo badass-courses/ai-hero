@@ -193,7 +193,7 @@ const config = {
 			...homepageDiscoveryHeaders,
 			{
 				source: '/cohorts/:slug',
-				has: [{ type: 'query', key: 'code' }],
+				has: [{ type: 'query', key: 'code', value: '[cC]5[cC][oO][mM][pP]_[0-9a-fA-F]{40}' }],
 				headers: [
 					{ key: 'Cache-Control', value: 'private, no-store' },
 					{ key: 'Referrer-Policy', value: 'no-referrer' },

@@ -9,6 +9,12 @@ export const COUPON_BATCH_WAKE = 'commerce/coupon-batches.wake' as const
 export const couponBatchEnabled = () =>
 	process.env.AIH_COUPON_BATCH_ENABLED === 'true'
 
+// Retain monitoring while issuance is stopped. The provisioned key is also
+// the rollout marker: an untouched deployment need not reach the new tables.
+export const couponBatchAlertsEnabled = () =>
+	couponBatchEnabled() ||
+	Buffer.byteLength(process.env.AIH_COUPON_BATCH_SECRET ?? '') >= 32
+
 const auth = {
 	enabled: couponBatchEnabled,
 	patSecret: () => process.env.PERSONAL_ACCESS_TOKEN_SECRET,

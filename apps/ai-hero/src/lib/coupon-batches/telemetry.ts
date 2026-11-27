@@ -1,7 +1,8 @@
 // Shared with Edge and browser telemetry. Keep Node-only selector code out.
 const bearer = /c5comp_[0-9a-f]{40}/gi
-const privatePath =
-	/\/api\/commerce\/coupon-batches(?:[/?]|$)|\/api\/coursebuilder\/redeem(?:[/?]|$)/
+const privatePath = /\/api\/commerce\/coupon-batches(?:[/?]|$)/
+const redeemPath = /\/api\/coursebuilder\/redeem(?:[/?]|$)/
+const hasBearer = /c5comp_[0-9a-f]{40}/i
 const privateField =
 	/^(?:authorization|cookie|cookies|headers|body|data|query_string)$|(?:\.|_)body(?:\.|_|$)|\.header\./i
 
@@ -12,11 +13,40 @@ export function redactCompBearer(value: string) {
 /** Do not serialize a private API body (in either direction), PAT, or cookie
  * into SDK errors or request spans. Scrub bearer text in all app-owned traces,
  * including the legacy C5 page URL and any referer that points back to it. */
-export function isPrivateCouponPath(value: string) {
-	return privatePath.test(value)
+export function isPrivateCouponPath(value: string, hasSelector = false) {
+	return privatePath.test(value) || (hasSelector && redeemPath.test(value))
+}
+
+// Do not clone or reshape ordinary events. Scan only to determine whether a
+// private event needs the redact pass, including after minting has been stopped.
+export function containsCouponTelemetry(
+	value: unknown,
+	includeBatchPath = true,
+) {
+	let seen: WeakSet<object> | undefined
+	function test(node: unknown): boolean {
+		if (typeof node === 'string')
+			return (
+				hasBearer.test(node) || (includeBatchPath && privatePath.test(node))
+			)
+		if (!node || typeof node !== 'object' || node instanceof Date) return false
+		if (node instanceof URL) return test(node.href)
+		seen ??= new WeakSet()
+		if (seen.has(node)) return false
+		seen.add(node)
+		if (node instanceof Error)
+			return test(node.message) || test(node.stack) || test(node.cause)
+		return Object.entries(node).some(([key, child]) => test(key) || test(child))
+	}
+	return test(value)
+}
+
+export function discardCompReplayEvent<T>(event: T): T | null {
+	return containsCouponTelemetry(event, false) ? null : event
 }
 
 export function scrubCouponTelemetry<T>(value: T, privateRequest = false): T {
+	if (!privateRequest && !containsCouponTelemetry(value)) return value
 	const seen = new WeakMap<object, unknown>()
 	function walk(node: unknown, privateRequest = false): unknown {
 		if (typeof node === 'string') return redactCompBearer(node)
@@ -53,7 +83,7 @@ export function scrubCouponTelemetry<T>(value: T, privateRequest = false): T {
 						key,
 					) &&
 					typeof value === 'string' &&
-					privatePath.test(value),
+					isPrivateCouponPath(value, true),
 			)
 		const out: Record<string, unknown> = Object.create(null)
 		seen.set(node, out)

@@ -1,31 +1,97 @@
-import { expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { INTERNAL_COMP_CLAIM, withPrivateCompClaim } from './free-claim-request'
+import { cohortCouponPresentation } from './cohort-presentation'
+import { PRODUCT } from './namespace'
 
 const path = 'https://example.test/api/coursebuilder/redeem/coupon'
 const code = 'c5comp_' + 'a'.repeat(40)
+const ordinary = { couponId: 'ordinary-free', productIds: [PRODUCT] }
 
-it('does not dispatch an unsupported redeem body to Course Builder', async () => {
-	const dispatch = vi.fn(async () => new Response(null))
-	const body = new FormData()
-	body.set('couponId', code)
-	const response = await withPrivateCompClaim(
-		new Request(path, { method: 'POST', body }),
-		dispatch,
-	)
-	expect(response.status).toBe(415)
-	expect(await response.text()).not.toContain(code)
-	expect(dispatch).not.toHaveBeenCalled()
+beforeEach(() => {
+	vi.stubEnv('AIH_COUPON_BATCH_ENABLED', '')
+	delete process.env.AIH_COUPON_BATCH_ENABLED
+})
+afterEach(() => {
+	vi.unstubAllEnvs()
 })
 
-it('forwards a supported form only after replacing its bearer', async () => {
+it.each([
+	['absent', new TextEncoder().encode(JSON.stringify(ordinary)), undefined],
+	['implicit text/plain', JSON.stringify(ordinary), undefined],
+	['real client JSON', JSON.stringify(ordinary), 'application/json'],
+	[
+		'legacy form',
+		new URLSearchParams({ couponId: ordinary.couponId }),
+		undefined,
+	],
+	['malformed ordinary JSON', '{broken', 'application/json'],
+] as const)(
+	'passes ordinary flag-off redeem unchanged: %s',
+	async (_, body, contentType) => {
+		const request = new Request(path, {
+			method: 'POST',
+			body,
+			headers: contentType ? { 'content-type': contentType } : {},
+		})
+		const response = new Response(null)
+		const dispatch = vi.fn(async (received: Request) => {
+			expect(received).toBe(request)
+			expect(received.bodyUsed).toBe(false)
+			return response
+		})
+		expect(await withPrivateCompClaim(request, dispatch)).toBe(response)
+		expect(dispatch).toHaveBeenCalledOnce()
+	},
+)
+
+it('passes the ordinary flag-off cohort adapter through by identity', async () => {
+	const adapter = { getCoupon: vi.fn() }
+	for (const ordinaryCode of [undefined, 'ordinary-free', 'legacy-promotion'])
+		expect(
+			await cohortCouponPresentation(
+				adapter,
+				undefined as never,
+				PRODUCT,
+				ordinaryCode,
+			),
+		).toBe(adapter)
+	expect(adapter.getCoupon).not.toHaveBeenCalled()
+})
+
+it.each([
+	() => {
+		const form = new FormData()
+		form.set('couponId', code)
+		return form
+	},
+	() => new URLSearchParams({ couponId: code, productIds: PRODUCT }),
+])(
+	'refuses non-JSON comp claims without dispatching or echoing the selector',
+	async (form) => {
+		const dispatch = vi.fn(async () => new Response(null))
+		const response = await withPrivateCompClaim(
+			new Request(path, { method: 'POST', body: form() }),
+			dispatch,
+		)
+		expect(response.status).toBe(415)
+		expect(await response.text()).not.toContain(code)
+		expect(dispatch).not.toHaveBeenCalled()
+	},
+)
+
+it('preserves the JSON productId array and replaces only the comp selector', async () => {
 	const dispatch = vi.fn(async (request: Request) => {
-		expect((await request.formData()).get('couponId')).toBe(INTERNAL_COMP_CLAIM)
+		expect(await request.json()).toEqual({
+			...ordinary,
+			couponId: INTERNAL_COMP_CLAIM,
+		})
 		return new Response(null)
 	})
 	await withPrivateCompClaim(
 		new Request(path, {
 			method: 'POST',
-			body: new URLSearchParams({ couponId: code }),
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ ...ordinary, couponId: code }),
 		}),
 		dispatch,
 	)

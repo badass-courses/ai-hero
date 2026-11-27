@@ -9,6 +9,9 @@ export const inSelectorNamespace = (value: unknown): value is string =>
 	typeof value === 'string' && value.toLowerCase().startsWith(SELECTOR_PREFIX)
 export const inRowNamespace = (value: unknown): boolean =>
 	typeof value === 'string' && value.toLowerCase().startsWith(ROW_PREFIX)
+export const containsCompReference = (value: string) =>
+	/\b(?:c5comp_|batch-coupon-|c5hash_)[\w-]+/i.test(value)
+
 export const isPrivateCompReference = (value: unknown) =>
 	inRowNamespace(value) ||
 	inSelectorNamespace(value) ||

@@ -1,7 +1,8 @@
 import 'server-only'
 import type { DbExecutor } from '@/db/client'
 import { mysqlTable } from '@/db/mysql-table'
-import { coupon } from '@/db/schema'
+import { coupon, products, purchases } from '@/db/schema'
+import { cloneAdapter } from '@/lib/paid-coupon-pricing-view'
 import { DrizzleAdapter } from '@coursebuilder/adapter-drizzle'
 import type { CouponPort, PurchasePort } from '@coursebuilder/core/ports'
 import { couponSchema } from '@coursebuilder/core/schemas'
@@ -94,7 +95,37 @@ export function c5CompPresentation<
 			throw new Error('c5_comp_lookup_unavailable')
 		}
 	}
-	return { ...adapter, getCoupon: display, getCouponForDisplay: display }
+	return Object.assign(cloneAdapter(adapter), {
+		getCoupon: display,
+		getCouponForDisplay: display,
+	})
+}
+
+/** The ordinary claim cannot borrow the comp template's sold-out exception.
+ * Called only when the batch feature is enabled; flag-off preserves legacy redemption. */
+export async function refuseUnreservedSoldOutC5Claim(
+	db: BatchCouponDb,
+	input: Parameters<PurchasePort['redeemFullPriceCoupon']>[0],
+	getCoupon: CouponPort['getCouponWithBulkPurchases'],
+) {
+	if (!input.couponId) return
+	const row = await getCoupon(input.couponId)
+	if (!row || Number(row.percentageDiscount) < 1) return
+	if ((row.restrictedToProductId || input.redeemingProductId) !== PRODUCT)
+		return
+	const [product] = await db
+		.select({
+			cap: products.quantityAvailable,
+			count:
+				sql<number>`(SELECT COUNT(*) FROM ${purchases} WHERE ${purchases.productId} = ${PRODUCT})`.mapWith(
+					Number,
+				),
+		})
+		.from(products)
+		.where(eq(products.id, PRODUCT))
+		.limit(1)
+	if (product?.cap != null && product.cap >= 0 && product.count >= product.cap)
+		return { ...invalid(), error: { message: 'product-sold-out' } }
 }
 
 /** The coupon row is locked on the normal app connection for the whole claim. */

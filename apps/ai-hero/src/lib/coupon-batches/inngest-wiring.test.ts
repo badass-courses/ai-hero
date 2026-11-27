@@ -1,9 +1,8 @@
 import { readFileSync } from 'node:fs'
 import ts from 'typescript'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 const fixture = vi.hoisted(() => ({
-	enabled: vi.fn(() => true),
 	runChunk: vi.fn(),
 	drainAlerts: vi.fn(),
 	warn: vi.fn(async () => {}),
@@ -22,9 +21,8 @@ vi.mock('@/inngest/inngest.server', () => ({
 		},
 	},
 }))
-vi.mock('@/lib/coupon-batches/runtime', () => ({
-	COUPON_BATCH_WAKE: 'commerce/coupon-batches.wake',
-	couponBatchEnabled: fixture.enabled,
+vi.mock('@/lib/coupon-batches/runtime', async (original) => ({
+	...(await original<typeof import('./runtime')>()),
 	couponBatchWorker: () => fixture,
 }))
 vi.mock('@/server/logger', () => ({ log: { warn: fixture.warn } }))
@@ -50,6 +48,10 @@ function invoke(id: string) {
 	return { result: registered.handler({ step }), step }
 }
 
+beforeEach(() => {
+	vi.stubEnv('AIH_COUPON_BATCH_ENABLED', 'true')
+	vi.stubEnv('AIH_COUPON_BATCH_SECRET', '')
+})
 afterEach(() => {
 	vi.unstubAllEnvs()
 	vi.unstubAllGlobals()
@@ -84,19 +86,22 @@ it('includes both registered functions in the served list and runs a paced drain
 	expect(step.sleep).toHaveBeenCalledWith('pace-1', 1200)
 })
 
-it('both cron handlers exit before steps when the feature is off', async () => {
-	fixture.enabled.mockReturnValue(false)
-	try {
-		await expect(invoke('coupon-batch-drain').result).resolves.toEqual({ state: 'disabled' })
-		await expect(invoke('coupon-batch-alarms').result).resolves.toEqual({ state: 'disabled' })
-		expect(fixture.runChunk).not.toHaveBeenCalled()
-		expect(fixture.drainAlerts).not.toHaveBeenCalled()
-	} finally {
-		fixture.enabled.mockReturnValue(true)
-	}
+it('both cron handlers exit before steps on an untouched deployment', async () => {
+	delete process.env.AIH_COUPON_BATCH_SECRET
+	delete process.env.AIH_COUPON_BATCH_ENABLED
+	await expect(invoke('coupon-batch-drain').result).resolves.toEqual({
+		state: 'disabled',
+	})
+	await expect(invoke('coupon-batch-alarms').result).resolves.toEqual({
+		state: 'disabled',
+	})
+	expect(fixture.runChunk).not.toHaveBeenCalled()
+	expect(fixture.drainAlerts).not.toHaveBeenCalled()
 })
 
-it('invokes the registered alarm without network and sends a stable dedupe key', async () => {
+it('sends a stable dedupe key from the registered alarm while minting is off', async () => {
+	delete process.env.AIH_COUPON_BATCH_ENABLED
+	vi.stubEnv('AIH_COUPON_BATCH_SECRET', 'f'.repeat(32))
 	const fetchFixture = vi.fn(async () => new Response(null, { status: 204 }))
 	vi.stubGlobal('fetch', fetchFixture)
 	vi.stubEnv('AIH_COUPON_BATCH_PAGE_URL', 'https://127.0.0.1/fixture-pager')

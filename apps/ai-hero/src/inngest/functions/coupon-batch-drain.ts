@@ -1,6 +1,7 @@
 import { inngest } from '@/inngest/inngest.server'
 import {
 	COUPON_BATCH_WAKE,
+	couponBatchAlertsEnabled,
 	couponBatchEnabled,
 	couponBatchWorker,
 } from '@/lib/coupon-batches/runtime'
@@ -51,7 +52,7 @@ export const couponBatchAlarms = inngest.createFunction(
 	},
 	[{ event: COUPON_BATCH_WAKE }, { cron: '* * * * *' }],
 	async ({ step }) => {
-		if (!couponBatchEnabled()) return { state: 'disabled' }
+		if (!couponBatchAlertsEnabled()) return { state: 'disabled' }
 		return step.run('deliver-coupon-batch-alerts', async () => {
 			const attempted = await couponBatchWorker().drainAlerts(
 				async (row) => {

@@ -1,4 +1,4 @@
-import { scrubCouponSpan } from './lib/coupon-batches/trace-telemetry'
+import { scrubCouponSpans } from './lib/coupon-batches/trace-telemetry'
 
 declare global {
 	var __aiHeroAxiomOtelRegistered: boolean | undefined
@@ -43,7 +43,7 @@ async function registerAxiomTracing() {
 		spanProcessors: [
 			new BatchSpanProcessor({
 				export: (spans, done) =>
-					axiomExporter.export(spans.map(scrubCouponSpan), done),
+					axiomExporter.export(scrubCouponSpans(spans), done),
 				shutdown: () => axiomExporter.shutdown(),
 			}),
 		],

@@ -17,7 +17,7 @@ import { ownsProductForBuyBox } from '@/lib/owns-product-for-buy-box'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
 import { getCachedDefaultCoupon } from '@/lib/default-coupon'
-import { inSelectorNamespace, PRODUCT as C5_COMP_PRODUCT } from '@/lib/coupon-batches/namespace'
+import { cohortCouponPresentation } from '@/lib/coupon-batches/cohort-presentation'
 import { getPurchaseCount } from '@/lib/purchase-count'
 import { and, asc, eq, gt, isNull, or, sql } from 'drizzle-orm'
 import { z } from 'zod'
@@ -319,10 +319,9 @@ export async function loadCohortPageData(
 			process.env.DEFAULT_COUNTRY ||
 			'US'
 
-		const presentationAdapter =
-			product.id === C5_COMP_PRODUCT && inSelectorNamespace(searchParams.code)
-				? (await import('@/lib/coupon-batches/free-selector')).c5CompPresentation(courseBuilderAdapter, db, product.id)
-				: courseBuilderAdapter
+		const presentationAdapter = await cohortCouponPresentation(
+			courseBuilderAdapter, db, product.id, searchParams.code,
+		)
 		const [commercePropsResult, purchaseCountResult, productQuantityResult] =
 			await Promise.all([
 				propsForCommerce(

@@ -55,7 +55,6 @@ import {
 } from './_components/cohort-coming-soon'
 import { CohortCertificateProgress } from './_components/cohort-certificate-progress'
 import { CohortContents } from './_components/cohort-contents'
-import { ClearCompSelector } from './_components/clear-comp-selector'
 import { CohortEnrollPrice } from './_components/cohort-enroll-price'
 import { CohortFactStrip } from './_components/cohort-fact-strip'
 import { CohortBuyerStrip } from './_components/cohort-buyer-strip'
@@ -568,7 +567,6 @@ export async function CohortPageView(props: CohortPageViewProps) {
 	return (
 		<LayoutClient withContainer>
 			<main className="relative">
-				<ClearCompSelector />
 				<C5PastCohortCallout slug={fields.slug ?? cohort.id} />
 				{share && typeof searchParams.via === 'string' ? <GiftShareAttribution slug={searchParams.via} /> : null}
 				{giftBanner ? <section className="border-border bg-muted text-foreground border-b"><p className={`${TYPE.meta} px-[18px] py-4 sm:px-11`}>{giftBanner}</p></section> : null}

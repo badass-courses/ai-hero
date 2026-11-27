@@ -5,6 +5,10 @@ import { syntheticCheckoutRefusal } from '@/coursebuilder/synthetic-checkout'
 import { courseBuilderAdapter, db } from '@/db'
 import { purchases } from '@/db/schema'
 import { AUTHORITATIVE_PRODUCT_IDS } from '@/lib/c5-pricing/decision'
+import {
+	containsCompReference,
+	isPrivateCompReference,
+} from '@/lib/coupon-batches/namespace'
 import { REGIONAL_UPGRADE_PATH } from '@/lib/c5-pricing/products'
 import { getProduct } from '@/lib/products-query'
 import {
@@ -20,6 +24,31 @@ import { and, eq, inArray } from 'drizzle-orm'
 import type { NextRequest } from 'next/server'
 
 import { AUTHORITATIVE_PPP_OFFER_ID } from '@coursebuilder/commerce/authoritative-price'
+
+function hasCompValue(value: unknown): boolean {
+	if (typeof value === 'string') return isPrivateCompReference(value)
+	return (
+		value !== null &&
+		typeof value === 'object' &&
+		Object.values(value).some(hasCompValue)
+	)
+}
+
+async function hasCompCheckoutInput(request: NextRequest) {
+	if (
+		containsCompReference(request.nextUrl.pathname) ||
+		[...request.nextUrl.searchParams.values()].some(isPrivateCompReference)
+	)
+		return true
+	if (!request.body) return false
+	const raw = await request.clone().text()
+	if (containsCompReference(raw)) return true
+	try {
+		return hasCompValue(JSON.parse(raw))
+	} catch {
+		return [...new URLSearchParams(raw).values()].some(isPrivateCompReference)
+	}
+}
 
 export const isProtectedCommerceRequest = (request: NextRequest) =>
 	request.nextUrl.pathname.endsWith('/prices-formatted') ||
@@ -107,6 +136,13 @@ export const protectCommerceRequest = async (
 	authoritativeQuote?: true
 }> => {
 	if (!isProtectedCommerceRequest(request)) return { request }
+	if (isCheckoutRequest(request) && (await hasCompCheckoutInput(request)))
+		return {
+			request: Response.json('invalid checkout coupon', {
+				status: 400,
+				headers: { 'Cache-Control': 'no-store' },
+			}),
+		}
 
 	const userId = deps.session
 		? (await deps.session()).userId

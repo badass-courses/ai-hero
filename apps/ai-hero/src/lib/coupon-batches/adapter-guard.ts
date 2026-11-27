@@ -6,7 +6,10 @@ type Paths = Pick<
 	CouponPort,
 	'getCoupon' | 'getCouponWithBulkPurchases' | 'couponForIdOrCode'
 > &
-	Pick<PurchasePort, 'redeemFullPriceCoupon'>
+	Pick<
+		PurchasePort,
+		'redeemFullPriceCoupon' | 'createMerchantChargeAndPurchase'
+	>
 
 /** Receipt readers resolve stored row IDs; selectors may only enter the free claim. */
 export function guardC5CompSelectors<T extends Paths>(
@@ -14,6 +17,7 @@ export function guardC5CompSelectors<T extends Paths>(
 	claimDatabase: () => typeof db,
 ): T {
 	const redeem = adapter.redeemFullPriceCoupon.bind(adapter)
+	const settle = adapter.createMerchantChargeAndPurchase.bind(adapter)
 	const getCoupon = adapter.getCoupon.bind(adapter)
 	const getBulk = adapter.getCouponWithBulkPurchases.bind(adapter)
 	const lookupLegacy = adapter.couponForIdOrCode.bind(adapter)
@@ -36,10 +40,30 @@ export function guardC5CompSelectors<T extends Paths>(
 				? Promise.resolve(null)
 				: lookupLegacy(input)
 		},
+		createMerchantChargeAndPurchase(
+			input: Parameters<PurchasePort['createMerchantChargeAndPurchase']>[0],
+		) {
+			// Never attach a comp reference to settled money, even on webhook replay.
+			return isPrivateCompReference(input.usedCouponId)
+				? settle({ ...input, usedCouponId: undefined })
+				: settle(input)
+		},
 		async redeemFullPriceCoupon(
 			input: Parameters<PurchasePort['redeemFullPriceCoupon']>[0],
 		) {
-			if (!isPrivateCompReference(input.couponId)) return redeem(input)
+			if (!isPrivateCompReference(input.couponId)) {
+				if (process.env.AIH_COUPON_BATCH_ENABLED === 'true') {
+					const { refuseUnreservedSoldOutC5Claim } =
+						await import('./free-selector')
+					const refusal = await refuseUnreservedSoldOutC5Claim(
+						claimDatabase(),
+						input,
+						getBulk,
+					)
+					if (refusal) return refusal
+				}
+				return redeem(input)
+			}
 			const { redeemPrivateComp } = await import('./free-selector')
 			return redeemPrivateComp(claimDatabase(), input)
 		},
