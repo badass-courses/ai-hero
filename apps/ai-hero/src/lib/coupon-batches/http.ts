@@ -102,7 +102,8 @@ export function couponBatchHandlers(
 			respond(async () => {
 				const token = bearer(request)
 				const issuer = service()
-				await issuer.authorize(token, COUPON_BATCH_MINT_SCOPE)
+				// Keep the cheap auth check before spooling; admit fences new keys only.
+				await issuer.authorize(token, COUPON_BATCH_MINT_SCOPE, true)
 				const idempotencyKey = validate(
 					key,
 					request.headers.get('idempotency-key'),

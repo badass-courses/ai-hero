@@ -20,7 +20,7 @@ import {
 	propsForCommerce,
 	getCouponForCode as appGetCouponForCode,
 } from './coupon-display'
-import { c5CompPresentation } from './coupon-batches/free-selector'
+import { cohortCouponPresentation } from './coupon-batches/cohort-presentation'
 import { newSelector, selectorDigest } from './coupon-batches/selector'
 import {
 	coupon,
@@ -479,28 +479,57 @@ describe.skipIf(!uri)(
 			})
 			const productionAdapter = cloneAdapter(adapter())
 			Object.defineProperty(productionAdapter, 'getPurchasesForUser', {
-				value: productionAdapter.getPurchasesForUser, enumerable: false,
+				value: productionAdapter.getPurchasesForUser,
+				enumerable: false,
 			})
-			const display = c5CompPresentation(productionAdapter, runtime.db, C5_PRODUCT_ID)
+			const previousFlag = process.env.AIH_COUPON_BATCH_ENABLED
+			const presentation = (code: string) =>
+				cohortCouponPresentation(
+					productionAdapter,
+					runtime.db,
+					C5_PRODUCT_ID,
+					code,
+				)
+			let display: typeof productionAdapter
+			try {
+				delete process.env.AIH_COUPON_BATCH_ENABLED
+				expect(await presentation(bearer)).toBe(productionAdapter)
+				process.env.AIH_COUPON_BATCH_ENABLED = 'true'
+				display = await presentation(bearer)
+			} finally {
+				if (previousFlag === undefined)
+					delete process.env.AIH_COUPON_BATCH_ENABLED
+				else process.env.AIH_COUPON_BATCH_ENABLED = previousFlag
+			}
 			const comp = await appGetCouponForCode(bearer, [C5_PRODUCT_ID], display)
 			expect(comp).toMatchObject({ isRedeemable: true })
 			const c5 = await productionAdapter.getProduct(C5_PRODUCT_ID)
 			if (!c5) throw new Error('missing C5 product fixture')
-			const displayProps = async (userId: string) => propsForCommerce({
-				query: { code: bearer }, userId, products: [c5],
-			}, display)
+			const displayProps = async (userId: string) =>
+				propsForCommerce(
+					{
+						query: { code: bearer },
+						userId,
+						products: [c5],
+					},
+					display,
+				)
 			expect(await displayProps(key('no-purchases'))).toMatchObject({
-				couponFromCode: { id: bearer, isRedeemable: true }, purchases: [],
+				couponFromCode: { id: bearer, isRedeemable: true },
+				purchases: [],
 			})
-			const ordinary = key('regular-free-coupon')
-			await createCoupon(ordinary, {
-				restrictedToProductId: C5_PRODUCT_ID,
-				merchantCouponId: null,
-				amountDiscount: null,
-				percentageDiscount: '1.00',
-			})
+			const ordinary = ['off', 'on'].map((flag) =>
+				key(`regular-free-coupon-${flag}`),
+			)
+			for (const id of ordinary)
+				await createCoupon(id, {
+					restrictedToProductId: C5_PRODUCT_ID,
+					merchantCouponId: null,
+					amountDiscount: null,
+					percentageDiscount: '1.00',
+				})
 			const regular = await appGetCouponForCode(
-				ordinary,
+				ordinary[0]!,
 				[C5_PRODUCT_ID],
 				display,
 			)
@@ -527,24 +556,46 @@ describe.skipIf(!uri)(
 					bypassSoldOut: comp?.fields?.bypassSoldOut === true,
 				}).canEnroll,
 			).toBe(true)
-			const email = `${key('first-claimant')}@example.test`
-			const claim = (couponId: string) => POST(request('/redeem/coupon', {
-				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ couponId, email, productIds: [C5_PRODUCT_ID], sendEmail: false }),
-			}))
-			const previousFlag = process.env.AIH_COUPON_BATCH_ENABLED
+			const claim = (
+				couponId: string,
+				claimant: string,
+				mediaType = 'application/json',
+			) =>
+				POST(
+					request('/redeem/coupon', {
+						method: 'POST',
+						headers: { 'content-type': mediaType },
+						body: JSON.stringify({
+							couponId,
+							email: `${key(claimant)}@example.test`,
+							productIds: [C5_PRODUCT_ID],
+							sendEmail: false,
+						}),
+					}),
+				)
 			let response: Response
 			try {
-				process.env.AIH_COUPON_BATCH_ENABLED = 'true'
-				const rejected = await claim(ordinary)
-				expect(await rejected.json()).toMatchObject({
-					purchase: null, error: { message: 'product-sold-out' },
-				})
-				expect((await rawCourseBuilderAdapter.getCoupon(ordinary))?.usedCount).toBe(0)
-				response = await claim(bearer)
+				for (const [index, id] of ordinary.entries()) {
+					if (index === 0) delete process.env.AIH_COUPON_BATCH_ENABLED
+					else process.env.AIH_COUPON_BATCH_ENABLED = 'true'
+					// Main's direct legacy free claim does not consult the seat cap.
+					const legacy = await claim(id, `legacy-claimant-${index}`)
+					expect(legacy.status).toBe(200)
+					expect(await legacy.json()).toMatchObject({
+						purchase: { couponId: id, status: 'Valid' },
+					})
+					expect((await rawCourseBuilderAdapter.getCoupon(id))?.usedCount).toBe(
+						1,
+					)
+				}
+				response = await claim(
+					bearer,
+					'first-claimant',
+					'application/json; charset=utf-8',
+				)
 			} finally {
-				if (previousFlag === undefined) delete process.env.AIH_COUPON_BATCH_ENABLED
+				if (previousFlag === undefined)
+					delete process.env.AIH_COUPON_BATCH_ENABLED
 				else process.env.AIH_COUPON_BATCH_ENABLED = previousFlag
 			}
 			expect(response.status).toBe(200)

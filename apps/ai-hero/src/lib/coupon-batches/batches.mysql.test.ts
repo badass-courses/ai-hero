@@ -202,6 +202,34 @@ describe.skipIf(!uri)(
 			return { ...body, previewReceipt }
 		}
 
+		it('reports an absent control row without querying the pager or exporting', async () => {
+			await db
+				.delete(schema.couponBatchControl)
+				.where(eq(schema.couponBatchControl.id, CONTROL_ID))
+			try {
+				const batchId = `cb_${'0'.repeat(64)}`
+				for (const result of [
+					await api.status(request(undefined), batchId),
+					await api.exportPage(request({ batchId })),
+				]) {
+					expect(result.status).toBe(404)
+					expect(await result.json()).toHaveProperty(
+						'title',
+						'coupon_batch_not_provisioned',
+					)
+				}
+				const send = vi.fn(async () => {})
+				const record = vi.fn(async () => {})
+				await expect(service.drainAlerts(send, record)).resolves.toBe(0)
+				expect(send).not.toHaveBeenCalled()
+				expect(record).not.toHaveBeenCalled()
+			} finally {
+				await db
+					.insert(schema.couponBatchControl)
+					.values({ id: CONTROL_ID, enabled: 0, paceMs: 0 })
+			}
+		})
+
 		it('fails closed, admits no write on preview, and refuses stale or changed receipts', async () => {
 			const b = payload('guards')
 			const before = await counts()
@@ -306,7 +334,22 @@ describe.skipIf(!uri)(
 			expect((await b.json()).batchId).toBe(original.batchId)
 			expect(await counts()).toEqual([before[0]! + 1, before[1]!])
 			await setControl({ enabled: 0 })
+			const replayWhilePaused = () =>
+				api.submit(
+					request({ ...body, previewReceipt: undefined }, `race-${run}`),
+				)
+			for (const enabled of [true, false]) {
+				envEnabled = enabled
+				const readback = await replayWhilePaused()
+				expect(readback.status).toBe(202)
+				expect(await readback.json()).toEqual(original)
+				expect(
+					(await api.submit(request(body, `new-while-paused-${run}`))).status,
+				).toBe(503)
+			}
+			expect(await counts()).toEqual([before[0]! + 1, before[1]!])
 			expect(await service.runChunk()).toEqual({ state: 'paused' })
+			envEnabled = true
 			await setControl({ enabled: 1 })
 			expect((await service.runChunk(original.batchId)).state).toBe('worked')
 			const later = await api.submit(

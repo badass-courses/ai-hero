@@ -20,6 +20,11 @@ it.each([
 	['implicit text/plain', JSON.stringify(ordinary), undefined],
 	['real client JSON', JSON.stringify(ordinary), 'application/json'],
 	[
+		'JSON with charset',
+		JSON.stringify(ordinary),
+		'application/json; charset=utf-8',
+	],
+	[
 		'legacy form',
 		new URLSearchParams({ couponId: ordinary.couponId }),
 		undefined,
@@ -44,15 +49,20 @@ it.each([
 	},
 )
 
-it('passes the ordinary flag-off cohort adapter through by identity', async () => {
+it('does not resolve even a reserved cohort selector while the flag is unset', async () => {
 	const adapter = { getCoupon: vi.fn() }
-	for (const ordinaryCode of [undefined, 'ordinary-free', 'legacy-promotion'])
+	for (const queryCode of [
+		undefined,
+		'ordinary-free',
+		'legacy-promotion',
+		code,
+	])
 		expect(
 			await cohortCouponPresentation(
 				adapter,
 				undefined as never,
 				PRODUCT,
-				ordinaryCode,
+				queryCode,
 			),
 		).toBe(adapter)
 	expect(adapter.getCoupon).not.toHaveBeenCalled()
@@ -79,21 +89,25 @@ it.each([
 	},
 )
 
-it('preserves the JSON productId array and replaces only the comp selector', async () => {
-	const dispatch = vi.fn(async (request: Request) => {
-		expect(await request.json()).toEqual({
-			...ordinary,
-			couponId: INTERNAL_COMP_CLAIM,
+it.each(['application/json', 'Application/JSON; charset=utf-8'])(
+	'accepts comp claims sent as %s and preserves the productId array',
+	async (mediaType) => {
+		const dispatch = vi.fn(async (request: Request) => {
+			expect(request.headers.get('content-type')).toBe('application/json')
+			expect(await request.json()).toEqual({
+				...ordinary,
+				couponId: INTERNAL_COMP_CLAIM,
+			})
+			return new Response(null)
 		})
-		return new Response(null)
-	})
-	await withPrivateCompClaim(
-		new Request(path, {
-			method: 'POST',
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ ...ordinary, couponId: code }),
-		}),
-		dispatch,
-	)
-	expect(dispatch).toHaveBeenCalledOnce()
-})
+		await withPrivateCompClaim(
+			new Request(path, {
+				method: 'POST',
+				headers: { 'content-type': mediaType },
+				body: JSON.stringify({ ...ordinary, couponId: code }),
+			}),
+			dispatch,
+		)
+		expect(dispatch).toHaveBeenCalledOnce()
+	},
+)

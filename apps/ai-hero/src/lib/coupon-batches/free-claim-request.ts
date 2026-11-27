@@ -35,7 +35,8 @@ export async function withPrivateCompClaim<T>(
 		return reject(400)
 	if (!request.body) return run(request)
 	const raw = await request.clone().text()
-	const json = request.headers.get('content-type') === 'application/json'
+	const mediaType = request.headers.get('content-type')?.split(';', 1)[0]
+	const json = mediaType?.trim().toLowerCase() === 'application/json'
 	if (!json) {
 		const form = new URLSearchParams(raw)
 		return containsCompReference(raw) ||
@@ -57,6 +58,9 @@ export async function withPrivateCompClaim<T>(
 	if (!digest) return reject(400)
 	body.couponId = INTERNAL_COMP_CLAIM
 	const headers = new Headers(request.headers)
+	// Course Builder's parser expects the exact media type; normalize only a
+	// rewritten comp request, never an ordinary claim.
+	headers.set('content-type', 'application/json')
 	headers.delete('content-length')
 	return claimDigest.run(digest, () =>
 		run(

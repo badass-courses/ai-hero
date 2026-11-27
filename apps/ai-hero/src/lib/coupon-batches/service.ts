@@ -98,16 +98,25 @@ export function createCouponBatchService(options: ServiceOptions) {
 	const secret = () =>
 		options.batchSecret() || safeProblem(503, 'coupon_batch_unavailable')
 
-	async function now(tx: DbExecutor) {
-		if (options.now) return options.now()
+	async function provisionedTime(tx: DbExecutor) {
 		const [row] = await tx
 			.select({
 				t: sql<string>`DATE_FORMAT(UTC_TIMESTAMP(3), '%Y-%m-%dT%H:%i:%s.%fZ')`,
 			})
 			.from(control)
 			.where(eq(control.id, CONTROL_ID))
-		if (!row) return safeProblem(503, 'coupon_batch_unavailable')
-		return new Date(row.t)
+		return row ? (options.now?.() ?? new Date(row.t)) : null
+	}
+
+	async function requireProvisionedTime(tx: DbExecutor) {
+		return (
+			(await provisionedTime(tx)) ??
+			safeProblem(404, 'coupon_batch_not_provisioned')
+		)
+	}
+
+	async function now(tx: DbExecutor) {
+		return options.now?.() ?? requireProvisionedTime(tx)
 	}
 
 	async function fence(tx: DbExecutor, lock: boolean) {
@@ -169,12 +178,16 @@ export function createCouponBatchService(options: ServiceOptions) {
 		return token
 	}
 
-	async function authorize(raw: string, scope: CouponBatchScope) {
+	async function authorize(
+		raw: string,
+		scope: CouponBatchScope,
+		allowPaused = false,
+	) {
 		// Reject non-PAT callers without parsing or spooling their bodies.
 		if (!parsePersonalAccessToken(raw))
 			safeProblem(401, 'coupon_batch_unauthorized')
-		if (scope === mintScope) await fence(db, false)
-		await authenticate(db, raw, scope, await now(db))
+		if (scope === mintScope && !allowPaused) await fence(db, false)
+		await authenticate(db, raw, scope, await requireProvisionedTime(db))
 	}
 
 	async function preview(raw: string, manifest: Manifest) {
@@ -231,22 +244,38 @@ export function createCouponBatchService(options: ServiceOptions) {
 	}
 
 	async function admit(raw: string, requestKey: string, manifest: Manifest) {
+		const requester = await authenticate(
+			db,
+			raw,
+			mintScope,
+			await requireProvisionedTime(db),
+		)
+		const batchId = batchIdFor(requester.userId, requestKey)
+		const existing = (previous: { fingerprint: string }) => {
+			if (previous.fingerprint !== manifest.fingerprint)
+				return safeProblem(409, 'request_conflict')
+			return { batchId, principalId: requester.userId, initialStatus: null }
+		}
+		const lookup = (executor: DbExecutor) =>
+			executor
+				.select({ fingerprint: batch.fingerprint })
+				.from(batch)
+				.where(eq(batch.id, batchId))
+		const [previous] = await lookup(db)
+		if (previous) return existing(previous)
 		return db.transaction(async (tx) => {
 			await fence(tx, true)
 			const token = await authenticate(tx, raw, mintScope, await now(tx), true)
 			const when = await now(tx)
-			if (!token.expiresAt || token.expiresAt <= when)
+			if (
+				token.userId !== requester.userId ||
+				!token.expiresAt ||
+				token.expiresAt <= when
+			)
 				return safeProblem(401, 'coupon_batch_unauthorized')
-			const batchId = batchIdFor(token.userId, requestKey)
-			const [previous] = await tx
-				.select()
-				.from(batch)
-				.where(eq(batch.id, batchId))
-			if (previous) {
-				if (previous.fingerprint !== manifest.fingerprint)
-					return safeProblem(409, 'request_conflict')
-				return { batchId, principalId: token.userId, initialStatus: null }
-			}
+			// Recheck after the fence: another submit may have won the same key.
+			const [concurrent] = await lookup(tx)
+			if (concurrent) return existing(concurrent)
 			checkDeadline(manifest.terms.deadlineAt, when)
 			confirmPreview(
 				manifest.previewReceipt,
@@ -725,7 +754,7 @@ export function createCouponBatchService(options: ServiceOptions) {
 		run: (tx: DbTransaction, token: Credential, when: Date) => Promise<T>,
 	) {
 		return db.transaction(async (tx) => {
-			const when = await now(tx)
+			const when = await requireProvisionedTime(tx)
 			const token = await authenticate(tx, raw, exportOrRead, when, true)
 			return run(tx, token, when)
 		})
@@ -843,7 +872,8 @@ export function createCouponBatchService(options: ServiceOptions) {
 		send: (row: Alert) => Promise<void>,
 		log: (row: Alert) => Promise<void>,
 	) {
-		const when = await now(db)
+		const when = await provisionedTime(db)
+		if (!when) return 0
 		const ageing = await db
 			.select({ id: batch.id, acceptedAt: batch.acceptedAt })
 			.from(batch)

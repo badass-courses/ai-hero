@@ -51,19 +51,7 @@ export function guardC5CompSelectors<T extends Paths>(
 		async redeemFullPriceCoupon(
 			input: Parameters<PurchasePort['redeemFullPriceCoupon']>[0],
 		) {
-			if (!isPrivateCompReference(input.couponId)) {
-				if (process.env.AIH_COUPON_BATCH_ENABLED === 'true') {
-					const { refuseUnreservedSoldOutC5Claim } =
-						await import('./free-selector')
-					const refusal = await refuseUnreservedSoldOutC5Claim(
-						claimDatabase(),
-						input,
-						getBulk,
-					)
-					if (refusal) return refusal
-				}
-				return redeem(input)
-			}
+			if (!isPrivateCompReference(input.couponId)) return redeem(input)
 			const { redeemPrivateComp } = await import('./free-selector')
 			return redeemPrivateComp(claimDatabase(), input)
 		},

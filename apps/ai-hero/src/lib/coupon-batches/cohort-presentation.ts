@@ -11,7 +11,12 @@ export async function cohortCouponPresentation<
 	productId: string,
 	code: unknown,
 ): Promise<T> {
-	if (productId !== PRODUCT || !inSelectorNamespace(code)) return adapter
+	if (
+		process.env.AIH_COUPON_BATCH_ENABLED !== 'true' ||
+		productId !== PRODUCT ||
+		!inSelectorNamespace(code)
+	)
+		return adapter
 	const { c5CompPresentation } = await import('./free-selector')
 	return c5CompPresentation(adapter, database, productId)
 }
