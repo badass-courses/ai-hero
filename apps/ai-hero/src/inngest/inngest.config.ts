@@ -85,6 +85,7 @@ import { postPurchaseDiscordRole } from './functions/post-purchase-discord-role'
 import { postPurchaseWelcomeEmail } from './functions/post-purchase-welcome-email'
 import { postPurchaseWorkflow } from './functions/post-purchase-workflow'
 import { includedProductEntitlementsRetry } from './functions/included-product-entitlements-retry'
+import { countPaidCouponUse } from './functions/count-paid-coupon-use'
 import {
 	apiProductTransferWorkflow,
 	productTransferWorkflow,
@@ -153,6 +154,7 @@ const allFunctions = [
 	addSubscriptionRoleDiscord,
 	removePurchaseRoleDiscord,
 	postPurchaseWorkflow,
+	countPaidCouponUse,
 	includedProductEntitlementsRetry,
 	teamPurchaseFulfillmentWorkflow,
 	postPurchaseDiscordRole,

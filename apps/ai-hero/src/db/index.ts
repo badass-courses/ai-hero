@@ -4,6 +4,7 @@ import { withDefaultCouponInvalidation } from '@/lib/default-coupon-invalidation
 import { withPurchaseCountInvalidation } from '@/lib/purchase-count-invalidation'
 import { guardLegendGiftCouponPaths } from '@/lib/legend-gift-coupon-guard'
 import { guardC5CompSelectors } from '@/lib/coupon-batches/free-selector'
+import { withPaidCouponUsage } from '@/lib/paid-coupon-usage'
 import { withSessionAccessBusts } from '@/server/session-access-busts'
 import { bustSessionAccessForUser } from '@/server/session-access-runtime'
 import { eq } from 'drizzle-orm'
@@ -27,11 +28,20 @@ export {
 } from './client'
 
 const drizzleAdapter = withSessionAccessBusts(
-	withDefaultCouponInvalidation(withPurchaseCountInvalidation(guardC5CompSelectors(guardLegendGiftCouponPaths(DrizzleAdapter<MySqlDatabase<any, any, any>>(
-		db,
-		mysqlTable,
-		stripeProvider,
-	)), db))),
+	withDefaultCouponInvalidation(
+		withPurchaseCountInvalidation(
+			guardC5CompSelectors(
+				guardLegendGiftCouponPaths(
+					DrizzleAdapter<MySqlDatabase<any, any, any>>(
+						db,
+						mysqlTable,
+						stripeProvider,
+					),
+				),
+				db,
+			),
+		),
+	),
 	{
 		bustUser: bustSessionAccessForUser,
 		findMembershipUserId: async (membershipId) =>
@@ -53,9 +63,15 @@ const drizzleAdapter = withSessionAccessBusts(
  * as they were, and loaded on first call to keep `@/db` free of an import
  * cycle.
  */
-export const courseBuilderAdapter: RequiredPricingAuthority<
+export const rawCourseBuilderAdapter: RequiredPricingAuthority<
 	typeof drizzleAdapter
 > = Object.assign(drizzleAdapter, {
 	authoritativePrice: async (request: AuthoritativePriceRequest) =>
 		(await import('@/lib/c5-pricing/server')).c5AuthoritativePrice(request),
 })
+
+// App pricing reads use a separate view. Fulfillment gets the raw ports.
+export const courseBuilderAdapter = withPaidCouponUsage(
+	rawCourseBuilderAdapter,
+	db,
+)

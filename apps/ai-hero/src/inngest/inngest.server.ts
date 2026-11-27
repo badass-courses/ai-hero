@@ -5,7 +5,7 @@ import {
 import { partyProvider } from '@/coursebuilder/party-provider'
 import { slackProvider } from '@/coursebuilder/slack-provider'
 import { stripeProvider } from '@/coursebuilder/stripe-provider'
-import { courseBuilderAdapter } from '@/db'
+import type { rawCourseBuilderAdapter } from '@/db'
 import { env } from '@/env.mjs'
 import {
 	AI_CODING_DICTIONARY_SOURCE_CHANGED_EVENT,
@@ -136,7 +136,10 @@ import {
 	KIT_DIRECTORY_INGEST_EVENT,
 	type KitDirectoryIngest,
 } from '@/inngest/events/kit-directory'
-import { NEWSLETTER_EXIT_CONFIRMED_EVENT, type NewsletterExitConfirmed } from '@/inngest/events/newsletter-exit'
+import {
+	NEWSLETTER_EXIT_CONFIRMED_EVENT,
+	type NewsletterExitConfirmed,
+} from '@/inngest/events/newsletter-exit'
 import {
 	NEWSLETTER_VETERANS_ASSIGN_EVENT,
 	type NewsletterVeteransAssign,
@@ -162,7 +165,10 @@ import {
 } from '@/inngest/functions/coupon/grant-coupon-entitlements'
 import { authOptions } from '@/server/auth'
 import { EventSchemas, Inngest } from 'inngest'
-import { COURSE_SYNC_STALE_PREVIEW_EVENT, type CourseSyncStalePreviewRequested } from './events/course-sync-stale-preview'
+import {
+	COURSE_SYNC_STALE_PREVIEW_EVENT,
+	type CourseSyncStalePreviewRequested,
+} from './events/course-sync-stale-preview'
 import { UTApi } from 'uploadthing/server'
 
 import { CourseBuilderCoreEvents } from '@coursebuilder/core'
@@ -252,9 +258,15 @@ import {
 import { inngestTelemetryMiddleware } from './inngest-telemetry-middleware'
 
 // Create a client to send and receive events
-import { INCLUDED_PRODUCT_ENTITLEMENTS_RETRY_EVENT, type IncludedProductEntitlementsRetry } from './events/included-product-entitlements'
+import {
+	INCLUDED_PRODUCT_ENTITLEMENTS_RETRY_EVENT,
+	type IncludedProductEntitlementsRetry,
+} from './events/included-product-entitlements'
 
-import { EARLY_ACCESS_REVOKE_EVENT, type EarlyAccessRevoke } from './events/early-access'
+import {
+	EARLY_ACCESS_REVOKE_EVENT,
+	type EarlyAccessRevoke,
+} from './events/early-access'
 
 export type Events = {
 	[EARLY_ACCESS_REVOKE_EVENT]: EarlyAccessRevoke
@@ -344,7 +356,7 @@ export type Events = {
 const callbackBase =
 	env.NODE_ENV === 'production' ? env.UPLOADTHING_URL : env.NEXT_PUBLIC_URL
 
-const commerceIdentity: typeof courseBuilderAdapter = provisionedIdentity
+const commerceIdentity: typeof rawCourseBuilderAdapter = provisionedIdentity
 
 const middleware = createInngestMiddleware({
 	// Checkout and invoice handlers mint users outside Auth.js. Use the same

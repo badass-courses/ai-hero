@@ -42,6 +42,7 @@ vi.mock('./workshop-pricing-widget-container', () => ({
 }))
 
 import { api } from '@/trpc/react'
+import { WorkshopEvergreenOfferEndedNotice } from './workshop-evergreen-offer-ended-notice'
 import { WorkshopInlineBuyButton } from './workshop-pricing'
 
 const product = {
@@ -86,11 +87,22 @@ afterEach(async () => {
 })
 
 describe('workshop coupon actor lifecycle', () => {
-	it.each(['coupon=coupon-valid', 'code=SAVE199'])(
-		'renders $199 and authorized checkout after %s resolves even when telemetry fetch rejects',
-		async (search) => {
+	it.each([
+		{ search: 'coupon=coupon-valid', used: false },
+		{ search: 'code=SAVE199', used: false },
+		{ search: 'coupon=coupon-valid', used: true },
+		{ search: 'code=SAVE199', used: true },
+		{
+			search: `coupon=eoj-coupon:${'a'.repeat(64)}`,
+			used: true,
+			evergreen: true,
+		},
+	])(
+		'renders a buyable quote for $search (used: $used) even when telemetry fetch rejects',
+		async ({ search, used, evergreen }) => {
 			vi.mocked(navigator.sendBeacon).mockReturnValue(false)
 			let telemetryRequests = 0
+			const spentCode = used && search.startsWith('code=')
 			testState.search = search
 			let resolveCommerce!: (value: unknown) => void
 			const commerceResult = new Promise<unknown>((resolve) => {
@@ -119,7 +131,7 @@ describe('workshop coupon actor lifecycle', () => {
 							}),
 				],
 			})
-			const priceRequests: Array<string | undefined> = []
+			const priceRequests: Array<string | null | undefined> = []
 			vi.stubGlobal(
 				'fetch',
 				vi.fn(async (url: string, options?: RequestInit) => {
@@ -127,21 +139,27 @@ describe('workshop coupon actor lifecycle', () => {
 						telemetryRequests++
 						throw new Error('Buyer is offline or telemetry is blocked')
 					}
+					if (evergreen && url.startsWith('/api/evergreen/offer-status?')) {
+						return Response.json({ status: 'used' })
+					}
 					if (url !== '/api/coursebuilder/prices-formatted') {
 						throw new Error(`Expected same-origin price request, got ${url}`)
 					}
 					const body = JSON.parse(String(options?.body)) as {
-						couponId?: string
+						couponId?: string | null
 					}
 					priceRequests.push(body.couponId)
 					return new Response(
 						JSON.stringify({
 							id: product.id,
 							fullPrice: 299,
-							calculatedPrice: body.couponId === couponId ? 199 : 299,
-							usedCouponId: body.couponId ?? null,
+							calculatedPrice: !used && body.couponId === couponId ? 199 : 299,
+							usedCouponId: used ? null : (body.couponId ?? null),
 							appliedMerchantCoupon:
-								body.couponId === couponId ? { id: merchantCouponId } : null,
+								!used && body.couponId === couponId
+									? { id: merchantCouponId }
+									: null,
+							...(used && !spentCode && { paidCouponUsedUp: true }),
 						}),
 						{ status: 200, headers: { 'Content-Type': 'application/json' } },
 					)
@@ -152,6 +170,12 @@ describe('workshop coupon actor lifecycle', () => {
 				root.render(
 					<QueryClientProvider client={queryClient}>
 						<api.Provider client={trpcClient} queryClient={queryClient}>
+							{evergreen && (
+								<WorkshopEvergreenOfferEndedNotice
+									endpoint="/api/evergreen/offer-status"
+									productId={product.id}
+								/>
+							)}
 							<WorkshopInlineBuyButton
 								pricingProps={{ products: [product] } as any}
 								pricingDataLoader={pricingDataLoader}
@@ -167,15 +191,35 @@ describe('workshop coupon actor lifecycle', () => {
 			expect(priceRequests).toEqual([])
 
 			await act(async () => {
-				resolveCommerce({ products: [product], couponIdFromCoupon: couponId })
+				resolveCommerce({
+					products: [product],
+					...(spentCode
+						? {
+								couponFromCode: {
+									id: couponId,
+									isValid: false,
+									paidCouponUsedUp: true,
+								},
+							}
+						: { couponIdFromCoupon: couponId }),
+				})
 				await commerceResult
 				// React Query notifies subscribers on its scheduler, after the tRPC
 				// observable resolves; keep that notification inside React.act.
 				await new Promise((resolve) => setTimeout(resolve, 20))
 			})
 			expect(telemetryRequests).toBeGreaterThan(0)
-			expect(host.textContent).toContain('$199')
-			expect(priceRequests).toEqual([couponId])
+			expect(host.textContent).toContain(used ? '$299' : '$199')
+			if (used)
+				expect(
+					host.textContent?.match(/This code has been used\./g),
+				).toHaveLength(1)
+			if (evergreen)
+				expect(
+					host.querySelector('[data-testid="evergreen-offer-ended"]')
+						?.textContent,
+				).toContain('This code has been used.')
+			expect(priceRequests).toEqual([spentCode ? null : couponId])
 			const form = host.querySelector('form[action]')
 			expect(form).not.toBeNull()
 			const checkout = new URL(
@@ -184,8 +228,15 @@ describe('workshop coupon actor lifecycle', () => {
 			)
 			expect(checkout.pathname).toBe('/api/coursebuilder/checkout/stripe')
 			expect(checkout.searchParams.get('productId')).toBe(product.id)
-			expect(checkout.searchParams.get('couponId')).toBe(merchantCouponId)
-			expect(checkout.searchParams.get('usedCouponId')).toBe(couponId)
+			expect(checkout.searchParams.get('couponId')).toBe(
+				used ? null : merchantCouponId,
+			)
+			expect(checkout.searchParams.get('usedCouponId')).toBe(
+				used ? null : couponId,
+			)
+			expect(
+				form?.querySelector('button[type="submit"]')?.hasAttribute('disabled'),
+			).toBe(false)
 		},
 	)
 

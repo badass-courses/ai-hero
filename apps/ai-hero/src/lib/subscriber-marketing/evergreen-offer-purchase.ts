@@ -32,10 +32,7 @@ export function evergreenCouponIdOf(
 	)
 }
 
-/**
- * Until redemption is written back, a redeemed coupon id stays a working
- * checkout link until it expires. Logs carry only a prefix.
- */
+/** Logs carry only a prefix, never the full link. */
 export function evergreenCouponLogId(couponId: string) {
 	return couponId.slice(0, EVERGREEN_COUPON_PREFIX.length + 12)
 }

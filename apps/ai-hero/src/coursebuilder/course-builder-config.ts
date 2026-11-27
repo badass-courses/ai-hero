@@ -3,24 +3,30 @@ import { emailProvider } from '@/coursebuilder/email-provider'
 import { openaiProvider } from '@/coursebuilder/openai-provider'
 import { stripeProvider } from '@/coursebuilder/stripe-provider'
 import { transcriptProvider } from '@/coursebuilder/transcript-provider'
-import { courseBuilderAdapter } from '@/db'
+import { courseBuilderAdapter, rawCourseBuilderAdapter } from '@/db'
 import { env } from '@/env.mjs'
 import { inngest } from '@/inngest/inngest.server'
 import { createUserWithPersonalOrg } from '@/lib/find-or-create-user'
 import { withPrivateCompClaim } from '@/lib/coupon-batches/free-claim-request'
-import { NextRequest } from 'next/server'
+import {
+	cloneAdapter,
+	paidCouponPricingView,
+} from '@/lib/paid-coupon-pricing-view'
 import { authOptions, getServerAuthSession } from '@/server/auth'
+import { NextRequest } from 'next/server'
 
 import { userSchema } from '@coursebuilder/core/schemas'
 import NextCourseBuilder, {
 	type NextCourseBuilderConfig,
 } from '@coursebuilder/next'
 
-export const courseBuilderConfig: NextCourseBuilderConfig = {
+export const courseBuilderConfig = {
 	baseUrl: env.COURSEBUILDER_URL,
 	// Course Builder's handlers mint users (newsletter subscribe) through this
 	// adapter, so its createUser provisions the personal organization.
-	adapter: { ...courseBuilderAdapter, createUser: createUserWithPersonalOrg },
+	adapter: Object.assign(cloneAdapter(rawCourseBuilderAdapter), {
+		createUser: createUserWithPersonalOrg,
+	}),
 	inngest,
 	providers: [
 		transcriptProvider,
@@ -43,7 +49,7 @@ export const courseBuilderConfig: NextCourseBuilderConfig = {
 		},
 	},
 	authConfig: authOptions,
-}
+} satisfies NextCourseBuilderConfig
 
 export const {
 	handlers: { POST: post, GET },
@@ -55,3 +61,11 @@ export function POST(request: NextRequest) {
 		post(safe === request ? request : new NextRequest(safe)),
 	)
 }
+
+// Separate HTTP pricing handlers; purchase/webhook writes retain the raw adapter.
+export const { handlers: commercePricingHandlers } = NextCourseBuilder({
+	...courseBuilderConfig,
+	adapter: Object.assign(paidCouponPricingView(courseBuilderAdapter), {
+		createUser: createUserWithPersonalOrg,
+	}),
+})

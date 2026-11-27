@@ -22,6 +22,7 @@ type SiteCouponRecord = {
 	expires?: Date | null
 	maxUses?: number
 	usedCount?: number
+	paidCouponUsedUp?: true
 }
 
 type EntitlementRecord = {
@@ -38,6 +39,7 @@ export type ExclusiveCouponAuthorizationAdapter = {
 		merchantCouponId: string,
 	): Awaitable<MerchantCouponRecord | null>
 	getCoupon(couponId: string): Awaitable<SiteCouponRecord | null>
+	getCouponForDisplay?(couponId: string): Awaitable<SiteCouponRecord | null>
 	getEntitlementTypeByName(
 		name: string,
 	): Awaitable<{ id: string } | null | undefined>
@@ -64,7 +66,9 @@ export type ExclusiveCouponAuthorizationDecision = {
 	protectedSiteCoupon: boolean
 	/** The denied selection was a PPP coupon; server pricing may re-derive PPP. */
 	requestedPPP?: boolean
+	paidCouponUsedUp?: true
 	entitlementCouponId?: string
+	entitlementMerchantCouponId?: string
 }
 
 const isActiveEntitlement = (
@@ -166,16 +170,59 @@ export async function authorizeExclusiveCouponSelection({
 	requestedSiteCouponId,
 	now = new Date(),
 }: AuthorizeExclusiveCouponSelectionInput): Promise<ExclusiveCouponAuthorizationDecision> {
+	const getCoupon = (adapter.getCouponForDisplay ?? adapter.getCoupon).bind(
+		adapter,
+	)
 	const requestedSiteCoupon = requestedSiteCouponId
-		? await adapter.getCoupon(requestedSiteCouponId)
+		? await getCoupon(requestedSiteCouponId)
 		: null
+	const protectedSiteCoupon = requestedSiteCoupon?.fields?.exclusive === true
+	if (
+		requestedSiteCoupon?.paidCouponUsedUp &&
+		couponPermitsProduct(requestedSiteCoupon, productId)
+	) {
+		// A regional selector is consent, not authority. Drop the spent link and
+		// let the existing PPP path recompute the offer from trusted country.
+		const selectedMerchantCoupon = requestedMerchantCouponId
+			? await adapter.getMerchantCoupon(requestedMerchantCouponId)
+			: null
+		if (
+			selectedMerchantCoupon?.type === 'ppp' &&
+			selectedMerchantCoupon.status === 1
+		) {
+			return {
+				authorized: false,
+				protectedMerchantCoupon: true,
+				protectedSiteCoupon,
+				paidCouponUsedUp: true,
+				requestedPPP: true,
+			}
+		}
+		// Treat the exhausted link as absent when resolving independent credits.
+		const entitlement = await findEntitlementCoupon({
+			adapter,
+			getCoupon,
+			verifiedUserId,
+			productId,
+			quantity,
+			now,
+		})
+		return {
+			authorized: Boolean(entitlement),
+			protectedMerchantCoupon: Boolean(requestedMerchantCouponId),
+			protectedSiteCoupon,
+			paidCouponUsedUp: true,
+			...(entitlement && {
+				entitlementCouponId: entitlement.id,
+				entitlementMerchantCouponId: entitlement.merchantCouponId,
+			}),
+		}
+	}
 	const merchantCouponId =
 		requestedMerchantCouponId || requestedSiteCoupon?.merchantCouponId
 	const requestedMerchantCoupon = merchantCouponId
 		? await adapter.getMerchantCoupon(merchantCouponId)
 		: null
-
-	const protectedSiteCoupon = requestedSiteCoupon?.fields?.exclusive === true
 	const publicProvenance = requestedMerchantCoupon
 		? isPublicCouponProvenance({
 				merchantCoupon: requestedMerchantCoupon,
@@ -244,16 +291,47 @@ export async function authorizeExclusiveCouponSelection({
 		}
 	}
 
+	const entitlement = await findEntitlementCoupon({
+		adapter,
+		getCoupon,
+		verifiedUserId,
+		productId,
+		quantity,
+		now,
+		merchantCouponId: requestedMerchantCouponId,
+		siteCouponId: protectedSiteCoupon ? requestedSiteCoupon?.id : undefined,
+	})
+	return {
+		authorized: Boolean(entitlement),
+		protectedMerchantCoupon,
+		protectedSiteCoupon,
+		...(entitlement && { entitlementCouponId: entitlement.id }),
+	}
+}
+
+async function findEntitlementCoupon({
+	adapter,
+	getCoupon,
+	verifiedUserId,
+	productId,
+	quantity,
+	now,
+	merchantCouponId,
+	siteCouponId,
+}: Pick<
+	AuthorizeExclusiveCouponSelectionInput,
+	'adapter' | 'verifiedUserId' | 'productId' | 'quantity'
+> & {
+	getCoupon: ExclusiveCouponAuthorizationAdapter['getCoupon']
+	now: Date
+	merchantCouponId?: string | null
+	siteCouponId?: string
+}) {
+	if (!verifiedUserId || quantity !== 1) return null
 	const entitlementType = await adapter.getEntitlementTypeByName(
 		'apply_special_credit',
 	)
-	if (!entitlementType) {
-		return {
-			authorized: false,
-			protectedMerchantCoupon,
-			protectedSiteCoupon,
-		}
-	}
+	if (!entitlementType) return null
 
 	const entitlements = await adapter.getEntitlementsForUser({
 		userId: verifiedUserId,
@@ -268,7 +346,7 @@ export async function authorizeExclusiveCouponSelection({
 			continue
 		}
 
-		const sourceCoupon = await adapter.getCoupon(entitlement.sourceId)
+		const sourceCoupon = await getCoupon(entitlement.sourceId)
 		if (
 			!sourceCoupon?.merchantCouponId ||
 			!couponIsActive(sourceCoupon, now) ||
@@ -276,27 +354,13 @@ export async function authorizeExclusiveCouponSelection({
 		) {
 			continue
 		}
-		if (
-			requestedMerchantCouponId &&
-			sourceCoupon.merchantCouponId !== requestedMerchantCouponId
-		) {
+		if (merchantCouponId && sourceCoupon.merchantCouponId !== merchantCouponId)
 			continue
-		}
-		if (protectedSiteCoupon && sourceCoupon.id !== requestedSiteCoupon?.id) {
-			continue
-		}
-
+		if (siteCouponId && sourceCoupon.id !== siteCouponId) continue
 		return {
-			authorized: true,
-			protectedMerchantCoupon,
-			protectedSiteCoupon,
-			entitlementCouponId: sourceCoupon.id,
+			id: sourceCoupon.id,
+			merchantCouponId: sourceCoupon.merchantCouponId,
 		}
 	}
-
-	return {
-		authorized: false,
-		protectedMerchantCoupon,
-		protectedSiteCoupon,
-	}
+	return null
 }

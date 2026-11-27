@@ -8,7 +8,7 @@ import { getCachedAllWorkshopProducts } from '@/lib/workshops-query'
 import { getServerAuthSession } from '@/server/auth'
 import { getAbilityForResource } from '@/utils/get-current-ability-rules'
 
-import { propsForCommerce } from '@coursebuilder/commerce/props-for-commerce'
+import { propsForCommerce } from '@/lib/coupon-display'
 import { productSchema, type Purchase } from '@coursebuilder/core/schemas'
 
 import { type WorkshopPageProps } from './workshop-page-props'

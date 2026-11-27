@@ -9,7 +9,7 @@ import { getPricingData } from '@/lib/pricing-query'
 import { getServerAuthSession } from '@/server/auth'
 import { eq } from 'drizzle-orm'
 
-import { propsForCommerce } from '@coursebuilder/commerce/props-for-commerce'
+import { propsForCommerce } from '@/lib/coupon-display'
 import {
 	productSchema,
 	type Product,

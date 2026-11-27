@@ -69,11 +69,11 @@ const finalCouponType = async (
 ) => {
 	if (!couponId || couponId === AUTHORITATIVE_PPP_OFFER_ID) return null
 	if (serverComputed?.id === couponId) return serverComputed.type
-	return (
-		await (lookup ??
-			(async (id: string) =>
-				(await courseBuilderAdapter.getMerchantCoupon(id))?.type))(couponId)
-	)
+	return await (
+		lookup ??
+		(async (id: string) =>
+			(await courseBuilderAdapter.getMerchantCoupon(id))?.type)
+	)(couponId)
 }
 
 const loadProductType = async (productId: string) =>
@@ -84,10 +84,9 @@ const loadProductType = async (productId: string) =>
  * lost a chargeback are refused here, so the authoritative-price hook never
  * sees their checkout.
  *
- * The duplicate-purchase and regional-team decision is made here once, on the
- * final request (after coupon authorization and the server-computed coupon),
- * from the buyer's real purchases. verify-login is only a convenience hop; its
- * approval is not bound to this POST, so this is the gate.
+ * The duplicate-purchase decision runs before coupon work. The regional-team
+ * guard runs on the final selection, after coupon authorization. verify-login
+ * is only a convenience hop; its approval is not bound to this POST.
  */
 export const protectCommerceRequest = async (
 	request: NextRequest,
@@ -101,7 +100,12 @@ export const protectCommerceRequest = async (
 		productType?: (productId: string) => Promise<string | null | undefined>
 		couponType?: (couponId: string) => Promise<string | null | undefined>
 	} = {},
-): Promise<{ request: NextRequest | Response; userId?: string }> => {
+): Promise<{
+	request: NextRequest | Response
+	userId?: string
+	paidCouponUsedUp?: true
+	authoritativeQuote?: true
+}> => {
 	if (!isProtectedCommerceRequest(request)) return { request }
 
 	const userId = deps.session
@@ -119,7 +123,15 @@ export const protectCommerceRequest = async (
 	const serverComputed: {
 		coupon?: { id: string; type?: string | null } | null
 	} = {}
+	let paidCouponUsedUp: true | undefined
+	let authoritativeQuote: true | undefined
 	const guarded = await protectCourseBuilderRequest(request, {
+		onAuthoritativeQuote: () => {
+			authoritativeQuote = true
+		},
+		onPaidCouponUsedUp: () => {
+			paidCouponUsedUp = true
+		},
 		adapter: courseBuilderAdapter,
 		verifiedUserId: userId,
 		authoritativeProductIds: AUTHORITATIVE_PRODUCT_IDS,
@@ -206,5 +218,10 @@ export const protectCommerceRequest = async (
 			),
 		}
 	}
-	return { request: guarded, userId }
+	return {
+		request: guarded,
+		userId,
+		...(paidCouponUsedUp && { paidCouponUsedUp }),
+		...(authoritativeQuote && { authoritativeQuote }),
+	}
 }

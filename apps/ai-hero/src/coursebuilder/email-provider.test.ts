@@ -16,7 +16,7 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('@/db', () => ({
-	courseBuilderAdapter: {
+	rawCourseBuilderAdapter: {
 		getUserByEmail: mocks.getUserByEmail,
 		findOrCreateUser: mocks.adapterFindOrCreateUser,
 	},

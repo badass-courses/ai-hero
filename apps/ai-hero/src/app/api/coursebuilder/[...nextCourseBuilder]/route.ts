@@ -1,9 +1,11 @@
 import {
 	GET as courseBuilderGET,
 	POST as coreCourseBuilderPOST,
+	commercePricingHandlers,
 } from '@/coursebuilder/course-builder-config'
 import {
 	authoritativeCheckoutProduct,
+	isProtectedCommerceRequest,
 	protectCommerceRequest,
 } from '@/coursebuilder/protect-commerce-request'
 import { stripeProvider } from '@/coursebuilder/stripe-provider'
@@ -62,7 +64,8 @@ async function dispatchCashBalanceReconciliation(request: Request) {
 	) {
 		// Gate on the signed snapshot before any early-access DB or Stripe call.
 		// Ordinary payments must not depend on early-access infrastructure.
-		const { reconcileEarlyAccessPayment } = await import('@/lib/team-invoice/early-access-server')
+		const { reconcileEarlyAccessPayment } =
+			await import('@/lib/team-invoice/early-access-server')
 		await reconcileEarlyAccessPayment(stripeEvent.data.object.id)
 	}
 	if (stripeEvent.type === 'checkout.session.completed') {
@@ -163,7 +166,12 @@ const courseBuilderGETWithCouponAuthorization = async (
 ) => {
 	const { request: protectedRequest } = await protectCommerceRequest(request)
 	if (protectedRequest instanceof Response) return protectedRequest
-	return withTrustedCountry(request, () => courseBuilderGET(protectedRequest))
+	return withTrustedCountry(request, () =>
+		(isProtectedCommerceRequest(request) &&
+			!authoritativeCheckoutProduct(protectedRequest)
+			? commercePricingHandlers.GET
+			: courseBuilderGET)(protectedRequest),
+	)
 }
 
 const courseBuilderPOSTWithCashBalanceReconciliation = async (
@@ -177,9 +185,20 @@ const courseBuilderPOSTWithCashBalanceReconciliation = async (
 		return Response.json('invalid signature', { status: 401 })
 	const startedAt = Date.now()
 	const webhookRequest = request.clone()
-	const { request: protectedRequest, userId } =
-		await protectCommerceRequest(request)
+	const {
+		request: protectedRequest,
+		userId,
+		paidCouponUsedUp,
+		authoritativeQuote,
+	} = await protectCommerceRequest(request)
 	if (protectedRequest instanceof Response) return protectedRequest
+	const authoritativeProductId = authoritativeCheckoutProduct(protectedRequest)
+	const post =
+		isProtectedCommerceRequest(request) &&
+		!authoritativeProductId &&
+		!authoritativeQuote
+			? commercePricingHandlers.POST
+			: coreCourseBuilderPOST
 	const rawPre = request.cookies.get('buy_path_pre')?.value
 	const preSessionId =
 		rawPre?.startsWith('pre_') && buyPathIdSchema.safeParse(rawPre).success
@@ -187,10 +206,7 @@ const courseBuilderPOSTWithCashBalanceReconciliation = async (
 			: null
 	const { value: response, decisionKind } = await withCheckoutTelemetry(
 		preSessionId,
-		() =>
-			withTrustedCountry(request, () =>
-				coreCourseBuilderPOST(protectedRequest),
-			),
+		() => withTrustedCountry(request, () => post(protectedRequest)),
 	)
 	// Preserve reservation settlement even when the core handler failed.
 	if (response.ok || webhookRequest.headers.has('stripe-signature')) {
@@ -205,7 +221,6 @@ const courseBuilderPOSTWithCashBalanceReconciliation = async (
 			throw error
 		}
 	}
-	const authoritativeProductId = authoritativeCheckoutProduct(protectedRequest)
 	const productId = protectedRequest.nextUrl.pathname.includes('/checkout/')
 		? protectedRequest.nextUrl.searchParams.get('productId')
 		: null
@@ -263,6 +278,21 @@ const courseBuilderPOSTWithCashBalanceReconciliation = async (
 			productId: authoritativeProductId,
 			keepSessionId: createdSessionId,
 		})
+	}
+	if (
+		paidCouponUsedUp &&
+		request.nextUrl.pathname.endsWith('/prices-formatted') &&
+		response.ok
+	) {
+		const headers = new Headers(response.headers)
+		headers.delete('content-length')
+		return Response.json(
+			{ ...(await response.json()), paidCouponUsedUp },
+			{
+				status: response.status,
+				headers,
+			},
+		)
 	}
 	return response
 }

@@ -98,30 +98,20 @@ const mocks = vi.hoisted(() => {
 			return true
 		},
 	)
-	const failRetryable = vi.fn(
-		async (input: { claim: { userId: string } }) => {
-			if (
-				lifecycleState !== 'consuming' ||
-				boundUserId !== input.claim.userId
-			) {
-				return false
-			}
-			lifecycleState = 'failed_retryable'
-			return true
-		},
-	)
-	const failTerminal = vi.fn(
-		async (input: { claim: { userId: string } }) => {
-			if (
-				lifecycleState !== 'consuming' ||
-				boundUserId !== input.claim.userId
-			) {
-				return false
-			}
-			lifecycleState = 'failed_terminal'
-			return true
-		},
-	)
+	const failRetryable = vi.fn(async (input: { claim: { userId: string } }) => {
+		if (lifecycleState !== 'consuming' || boundUserId !== input.claim.userId) {
+			return false
+		}
+		lifecycleState = 'failed_retryable'
+		return true
+	})
+	const failTerminal = vi.fn(async (input: { claim: { userId: string } }) => {
+		if (lifecycleState !== 'consuming' || boundUserId !== input.claim.userId) {
+			return false
+		}
+		lifecycleState = 'failed_terminal'
+		return true
+	})
 	const getServerAuthSession = vi.fn(async () => ({
 		session: { user: { id: 'user-actual' } },
 	}))
@@ -174,12 +164,13 @@ vi.mock('@/coursebuilder/stripe-provider', () => ({
 }))
 vi.mock('@/db', () => ({
 	courseBuilderAdapter: {
-		getMerchantCoupon: vi.fn(async (id: string) =>
-			[
-				mocks.merchantCoupon,
-				mocks.pppMerchantCoupon,
-				mocks.inactivePppMerchantCoupon,
-			].find((coupon) => coupon.id === id) ?? null,
+		getMerchantCoupon: vi.fn(
+			async (id: string) =>
+				[
+					mocks.merchantCoupon,
+					mocks.pppMerchantCoupon,
+					mocks.inactivePppMerchantCoupon,
+				].find((coupon) => coupon.id === id) ?? null,
 		),
 		getCoupon: vi.fn(async (id: string) =>
 			id === mocks.coupon.id ? mocks.coupon : null,
@@ -222,6 +213,7 @@ vi.mock('@coursebuilder/commerce/checkout-attribution', () => ({
 	buildCheckoutAttribution: vi.fn(() => ({})),
 }))
 
+import { courseBuilderAdapter } from '@/db'
 import { hashCheckoutLoginBrowserSession } from '@/lib/checkout-login-browser-session'
 import { createCheckoutLoginHandoff } from '@/lib/checkout-login-handoff'
 
@@ -263,9 +255,7 @@ describe('logged-in checkout coupon authorization', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 		mocks.browserSession = 'browser-session-a'
-		mocks.resetLifecycle(
-			hashCheckoutLoginBrowserSession(mocks.browserSession),
-		)
+		mocks.resetLifecycle(hashCheckoutLoginBrowserSession(mocks.browserSession))
 		mocks.getServerAuthSession.mockResolvedValue({
 			session: { user: { id: 'user-actual' } },
 		})
@@ -285,6 +275,26 @@ describe('logged-in checkout coupon authorization', () => {
 		expect(mocks.createCheckoutSession).not.toHaveBeenCalled()
 		expect(mocks.redirect).toHaveBeenCalledWith(
 			'/subscribe/error?reason=purchase-blocked',
+		)
+	})
+
+	it('continues without a coupon used between the initial quote and login callback', async () => {
+		const exhausted = {
+			...mocks.coupon,
+			maxUses: 1,
+			usedCount: 1,
+			paidCouponUsedUp: true,
+		}
+		vi.mocked(courseBuilderAdapter.getCoupon).mockResolvedValueOnce(
+			exhausted as never,
+		)
+
+		await LoginPage({ searchParams: Promise.resolve(searchParams) })
+
+		expect(mocks.createCheckoutSession).toHaveBeenCalledWith(
+			expect.objectContaining({ couponId: undefined, usedCouponId: undefined }),
+			expect.anything(),
+			expect.anything(),
 		)
 	})
 

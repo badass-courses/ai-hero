@@ -4,7 +4,10 @@ import {
 	type CommerceCouponRow,
 } from './evergreen-offer-journey/coupon-authority'
 import type { EvergreenOfferStatus } from './evergreen-offer-notice'
-import { formatOfferDeadline, offerDeadlineFromEvidence } from './offer-deadline'
+import {
+	formatOfferDeadline,
+	offerDeadlineFromEvidence,
+} from './offer-deadline'
 
 export {
 	evergreenOfferEndedText,
@@ -39,6 +42,10 @@ export function evergreenOfferStatus(
 	// An unreadable clock says nothing rather than "ended".
 	if (!Number.isFinite(nowMs) || !Number.isFinite(expiresMs))
 		return { status: 'none' }
-	if (nowMs < expiresMs) return { status: 'open' }
+	if (nowMs < expiresMs) {
+		return row.maxUses > 0 && row.usedCount >= row.maxUses
+			? { status: 'used' }
+			: { status: 'open' }
+	}
 	return { status: 'ended', deadline: issuedCouponDeadline(coupon) }
 }

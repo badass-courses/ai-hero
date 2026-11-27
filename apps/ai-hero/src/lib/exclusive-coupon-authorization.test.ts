@@ -76,6 +76,7 @@ const exhaustedPublicCoupon = {
 	id: 'coupon-public-exhausted',
 	maxUses: 1,
 	usedCount: 1,
+	paidCouponUsedUp: true as const,
 }
 
 const activeEntitlement = {
@@ -118,6 +119,23 @@ const createAdapter = ({
 			: null,
 	getEntitlementsForUser: async ({ userId }: { userId: string }) =>
 		entitlements.filter((entitlement) => entitlement.userId === userId),
+})
+
+it('preserves an independently entitled credit when the linked coupon is spent', async () => {
+	expect(
+		await authorizeExclusiveCouponSelection({
+			adapter: createAdapter({ entitlements: [activeEntitlement] }),
+			verifiedUserId: activeEntitlement.userId,
+			productId: protectedCoupon.restrictedToProductId,
+			quantity: 1,
+			requestedSiteCouponId: exhaustedPublicCoupon.id,
+			requestedMerchantCouponId: publicMerchantCoupon.id,
+		}),
+	).toMatchObject({
+		paidCouponUsedUp: true,
+		authorized: true,
+		entitlementCouponId: protectedCoupon.id,
+	})
 })
 
 const decide = (
