@@ -1,7 +1,6 @@
-import { scrubCouponTelemetry } from './lib/coupon-batches/telemetry'
+import { scrubCouponSpan } from './lib/coupon-batches/trace-telemetry'
 
 declare global {
-	// eslint-disable-next-line no-var
 	var __aiHeroAxiomOtelRegistered: boolean | undefined
 }
 
@@ -44,28 +43,7 @@ async function registerAxiomTracing() {
 		spanProcessors: [
 			new BatchSpanProcessor({
 				export: (spans, done) =>
-					axiomExporter.export(
-						spans.map(
-							(span) =>
-								new Proxy(span, {
-									get(target, property) {
-										const value = Reflect.get(target, property, target)
-										if (
-											property === 'attributes' ||
-											property === 'events' ||
-											property === 'status' ||
-											property === 'name' ||
-											property === 'links'
-										)
-											return scrubCouponTelemetry(value)
-										return typeof value === 'function'
-											? value.bind(target)
-											: value
-									},
-								}),
-						),
-						done,
-					),
+					axiomExporter.export(spans.map(scrubCouponSpan), done),
 				shutdown: () => axiomExporter.shutdown(),
 			}),
 		],

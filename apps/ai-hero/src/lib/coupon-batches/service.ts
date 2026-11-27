@@ -23,7 +23,7 @@ import {
 	requireCouponBatchInsert,
 	type CouponInsertRow,
 } from '@coursebuilder/core/ports'
-import { and, asc, eq, gt, inArray, isNull, lte, sql } from 'drizzle-orm'
+import { and, asc, eq, gt, inArray, isNull, lt, lte, sql } from 'drizzle-orm'
 import type { MySqlDatabase } from 'drizzle-orm/mysql-core'
 import {
 	BatchProblem,
@@ -49,7 +49,6 @@ import {
 } from './selector'
 
 export const CONTROL_ID = 'ai-hero'
-export const INLINE_MS = 5_000
 const exportOrRead = COUPON_BATCH_READ_SCOPE
 const mintScope = COUPON_BATCH_MINT_SCOPE
 const pacific = new Intl.DateTimeFormat('en-US', {
@@ -88,6 +87,8 @@ const sameIntent = (
 	b: Pick<Batch, 'principalId' | 'itemFingerprint'>,
 	i: Intent,
 ) => b.principalId === i.principalId && b.itemFingerprint === i.fingerprint
+const MAX_WORKER_ATTEMPTS = 8
+const AGE_ALARM_MS = 30 * 60_000
 const delay = (attempts: number) =>
 	Math.min(60_000, 500 * 2 ** Math.min(attempts, 7)) +
 	Math.floor(Math.random() * 250)
@@ -403,6 +404,7 @@ export function createCouponBatchService(options: ServiceOptions) {
 					.where(
 						and(
 							isNull(batch.finishedAt),
+							lt(batch.attempts, MAX_WORKER_ATTEMPTS),
 							lte(batch.nextAttemptAt, when),
 							onlyBatch ? eq(batch.id, onlyBatch) : undefined,
 						),
@@ -442,6 +444,8 @@ export function createCouponBatchService(options: ServiceOptions) {
 						policyRefusal = 'deadline_passed'
 					}
 				}
+				if (!policyRefusal && b.exportUntil <= mintTime)
+					policyRefusal = 'export_window_elapsed'
 				const known = await tx
 					.select()
 					.from(intent)
@@ -454,7 +458,14 @@ export function createCouponBatchService(options: ServiceOptions) {
 				const entries = new Map(known.map((i) => [i.id, i]))
 				const fresh = new Map<string, Intent>()
 				for (const row of chunk) {
-					if (entries.has(row.intentId) || fresh.has(row.intentId)) continue
+					// An aborted batch records the outcome on its own manifest only.
+					// A fresh authorized request can reuse any unminted intent keys.
+					if (
+						policyRefusal ||
+						entries.has(row.intentId) ||
+						fresh.has(row.intentId)
+					)
+						continue
 					fresh.set(row.intentId, {
 						id: row.intentId,
 						principalId: b.principalId,
@@ -463,17 +474,25 @@ export function createCouponBatchService(options: ServiceOptions) {
 						sealedCode: null,
 						expiresAt: b.deadlineAt,
 						exportUntil: b.exportUntil,
-						refused: policyRefusal,
+						refused: null,
 					})
 				}
 				await mintChunk(tx, fresh, b.deadlineAt)
-				if (fresh.size) await tx.insert(intent).values([...fresh.values()])
+				if (fresh.size) {
+					// The insert may have waited on a row. Roll back any generated
+					// selectors if it crossed the window; the next pass records expiry.
+					if ((await now(tx)) >= b.exportUntil)
+						throw new Error('export_window_crossed')
+					await tx.insert(intent).values([...fresh.values()])
+				}
 				let minted = 0
 				const outcomes = chunk.map((row) => {
-					const result = entries.get(row.intentId) ?? fresh.get(row.intentId)!
-					const state = sameIntent(b, result)
-						? (result.refused ?? 'minted')
-						: 'intent_conflict'
+					const result = entries.get(row.intentId) ?? fresh.get(row.intentId)
+					const state = result
+						? sameIntent(b, result)
+							? (result.refused ?? 'minted')
+							: 'intent_conflict'
+						: policyRefusal!
 					if (state === 'minted') minted++
 					return { ...row, result: state }
 				})
@@ -544,13 +563,27 @@ export function createCouponBatchService(options: ServiceOptions) {
 				return { state: 'paused' as const }
 			// No unknown DB error (which may include query parameters) leaves this
 			// module. Record a backoff after checking that the cursor did not advance.
-			if (workingBatch) await defer(workingBatch).catch(() => {})
-			return { state: 'retry' as const }
+			const attempts = workingBatch
+				? await defer(workingBatch).catch(() => undefined)
+				: undefined
+			const sqlCode =
+				(error as { cause?: { code?: unknown }; code?: unknown } | null)?.cause
+					?.code ?? (error as { code?: unknown } | null)?.code
+			const reason =
+				sqlCode === 'ER_LOCK_DEADLOCK' || sqlCode === 'ER_LOCK_WAIT_TIMEOUT'
+					? 'db_lock_contention'
+					: error instanceof Error && error.message === 'missing_manifest_chunk'
+						? 'manifest_inconsistent'
+						: error instanceof Error &&
+							  error.message === 'export_window_crossed'
+							? 'export_window_crossed'
+							: 'db_work_failed'
+			return { state: 'retry' as const, reason, attempts }
 		}
 	}
 
 	async function defer(observed: Pick<Batch, 'id' | 'processed' | 'attempts'>) {
-		await db.transaction(async (tx) => {
+		return db.transaction(async (tx) => {
 			await fence(tx, true)
 			const [b] = await tx
 				.select()
@@ -563,13 +596,26 @@ export function createCouponBatchService(options: ServiceOptions) {
 				b.processed === observed.processed &&
 				b.attempts === observed.attempts
 			) {
+				const attempts = b.attempts + 1
+				const when = await now(tx)
 				await tx
 					.update(batch)
-					.set({
-						attempts: b.attempts + 1,
-						nextAttemptAt: new Date(+(await now(tx)) + delay(b.attempts)),
-					})
+					.set({ attempts, nextAttemptAt: new Date(+when + delay(b.attempts)) })
 					.where(eq(batch.id, b.id))
+				if (attempts >= MAX_WORKER_ATTEMPTS) {
+					await tx
+						.insert(alert)
+						.values({
+							id: `stuck:${b.id}`,
+							batchId: b.id,
+							kind: 'stuck',
+							count: attempts,
+							threshold: MAX_WORKER_ATTEMPTS,
+							nextAttemptAt: when,
+						})
+						.onDuplicateKeyUpdate({ set: { id: sql`${alert.id}` } })
+				}
+				return attempts
 			}
 		})
 	}
@@ -644,8 +690,12 @@ export function createCouponBatchService(options: ServiceOptions) {
 					? {
 							intentKey: row.intentKey,
 							state: 'retry',
-							reason: 'worker_unavailable',
-							retryAfter: b.nextAttemptAt,
+							...(b.attempts >= MAX_WORKER_ATTEMPTS
+								? { reason: 'worker_stuck' }
+								: {
+										reason: 'worker_unavailable',
+										retryAfter: b.nextAttemptAt,
+									}),
 						}
 					: itemOutcome(row),
 			),
@@ -770,6 +820,33 @@ export function createCouponBatchService(options: ServiceOptions) {
 		log: (row: Alert) => Promise<void>,
 	) {
 		const when = await now(db)
+		const ageing = await db
+			.select({ id: batch.id, acceptedAt: batch.acceptedAt })
+			.from(batch)
+			.leftJoin(alert, eq(alert.id, sql`CONCAT('aging:', ${batch.id})`))
+			.where(
+				and(
+					isNull(batch.finishedAt),
+					lte(batch.acceptedAt, new Date(+when - AGE_ALARM_MS)),
+					isNull(alert.id),
+				),
+			)
+			.orderBy(asc(batch.acceptedAt))
+			.limit(10)
+		if (ageing.length)
+			await db
+				.insert(alert)
+				.values(
+					ageing.map((b) => ({
+						id: `aging:${b.id}`,
+						batchId: b.id,
+						kind: 'aging',
+						count: Math.floor((+when - +b.acceptedAt) / 60_000),
+						threshold: AGE_ALARM_MS / 60_000,
+						nextAttemptAt: when,
+					})),
+				)
+				.onDuplicateKeyUpdate({ set: { id: sql`${alert.id}` } })
 		const rows = await db
 			.select()
 			.from(alert)

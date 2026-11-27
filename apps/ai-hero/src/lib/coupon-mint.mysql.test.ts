@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
-import { eq, inArray } from 'drizzle-orm'
+import { eq, inArray, sql } from 'drizzle-orm'
 import { CourseBuilder } from '@coursebuilder/server/http'
-import { getCouponForCode } from '@coursebuilder/commerce/props-for-commerce'
+import { getCouponForCode } from './coupon-display'
 import { couponBatchHandlers } from './coupon-batches/http'
 import {
 	c5CompPresentation,
@@ -16,12 +16,12 @@ import {
 } from './personal-access-tokens'
 import type { MySqlDatabase } from 'drizzle-orm/mysql-core'
 import { drizzle } from 'drizzle-orm/mysql2'
-import mysql, { type Pool } from 'mysql2/promise'
+import type { Pool } from 'mysql2/promise'
+import { createCouponBatchWorkerPool } from './coupon-batches/worker-pool'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import * as schema from '@/db/schema'
 import { mysqlTable } from '@/db/mysql-table'
-import { preserveQueryResultShape } from '@/db/mysql-query-client'
 import { guardLegendGiftCouponPaths } from '@/lib/legend-gift-coupon-guard'
 
 import { DrizzleAdapter } from '@coursebuilder/adapter-drizzle'
@@ -160,20 +160,14 @@ suite('coupon minting against real MySQL', () => {
 	let adapter: ReturnType<typeof DrizzleAdapter<MySqlDatabase<any, any, any>>>
 
 	beforeAll(async () => {
-		pool = preserveQueryResultShape(
-			mysql.createPool({
-				uri: assertLoopbackTestDatabase(uri!),
-				connectionLimit: 4,
-				timezone: 'Z',
-			}),
-		)
+		pool = createCouponBatchWorkerPool(assertLoopbackTestDatabase(uri!))
 		db = drizzle(pool, { schema, mode: 'planetscale' }) as any
 		state.database = db
 		adapter = guardC5CompSelectors(
 			guardLegendGiftCouponPaths(
 				DrizzleAdapter<MySqlDatabase<any, any, any>>(db, mysqlTable),
 			),
-			db as unknown as typeof import('@/db/client').db,
+			() => db as unknown as typeof import('@/db/client').db,
 		)
 		state.adapter = adapter
 		await db.insert(schema.products).values({
@@ -407,7 +401,7 @@ suite('coupon minting against real MySQL', () => {
 			patSecret: () => tokenSecret,
 			batchSecret: () => 'synthetic-batch-secret',
 		})
-		const api = couponBatchHandlers(service, vi.fn())
+		const api = couponBatchHandlers(() => service, vi.fn())
 		const request = (input: unknown) =>
 			new Request('https://example.test/api/commerce/coupon-batches', {
 				method: 'POST',
@@ -438,10 +432,10 @@ suite('coupon minting against real MySQL', () => {
 				previewReceipt: (await preview.json()).previewReceipt,
 			}),
 		)
-		expect(submitted.status).toBe(200)
-		const exported = await api.exportPage(
-			request({ batchId: (await submitted.json()).batchId }),
-		)
+		expect(submitted.status).toBe(202)
+		const { batchId } = await submitted.json()
+		expect((await service.runChunk(batchId)).state).toBe('worked')
+		const exported = await api.exportPage(request({ batchId }))
 		expect(exported.status).toBe(200)
 		const [live, expired] = (await exported.json()).outcomes as {
 			code: string
@@ -514,6 +508,27 @@ suite('coupon minting against real MySQL', () => {
 			.update(schema.coupon)
 			.set({ expires: new Date(Date.now() - 60_000) })
 			.where(eq(schema.coupon.id, expired.couponRef))
+		await db.transaction(async (tx) => {
+			await tx.execute(sql`SET SESSION time_zone = '+07:00'`)
+			try {
+				const display = c5CompPresentation(
+					adapter,
+					tx as unknown as typeof presentationDb,
+					c5,
+				)
+				expect(await getCouponForCode(live.code, [c5], display)).toMatchObject({
+					isRedeemable: true,
+				})
+				expect(
+					await getCouponForCode(expired.code, [c5], display),
+				).toBeUndefined()
+				expect(
+					await getCouponForCode(live.couponRef, [c5], display),
+				).toBeUndefined()
+			} finally {
+				await tx.execute(sql`SET SESSION time_zone = '+00:00'`)
+			}
+		})
 		const legacyAliasedId = `c5comp_${'f'.repeat(32)}${run}`
 		await db.insert(schema.coupon).values({
 			id: legacyAliasedId,
@@ -557,6 +572,32 @@ suite('coupon minting against real MySQL', () => {
 			merchantChargeId: null,
 		})
 		expect(Number(purchase.totalAmount)).toBe(0)
+		// Internal receipt and bulk-purchase reads use the stored reference,
+		// while code resolution and free redemption must not accept it.
+		expect(await adapter.getCoupon(purchase.couponId!)).toMatchObject({
+			id: live.couponRef,
+			code: null,
+		})
+		expect(
+			await adapter.getCouponWithBulkPurchases(purchase.couponId!),
+		).toMatchObject({
+			id: live.couponRef,
+			code: null,
+		})
+		expect(
+			await adapter.couponForIdOrCode({ couponId: purchase.couponId! }),
+		).toBeNull()
+		// The redeem thanks page uses this adapter port. Invoices read the coupon
+		// by purchase.couponId directly, but a $0 comp has no invoice charge.
+		expect(await adapter.getPurchaseWithUser(purchase.id)).toMatchObject({
+			id: purchase.id,
+			couponId: live.couponRef,
+		})
+		expect(
+			await db.query.coupon.findFirst({
+				where: eq(schema.coupon.id, purchase.couponId!),
+			}),
+		).toMatchObject({ id: live.couponRef })
 		expect(events).toHaveLength(1)
 		expect(events[0]).toMatchObject({
 			name: 'commerce/full-price-coupon-redeemed',

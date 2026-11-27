@@ -207,6 +207,7 @@ export async function readManifest(request: Request): Promise<Manifest> {
 		const handle = await open(path, 'wx', 0o600)
 		const fields: Record<string, unknown> = Object.create(null)
 		const seen = new Set<string>()
+		const intentKeys = new Set<string>()
 		const digest = createHash('sha256')
 		let total = 0
 		let pending: string[] = []
@@ -230,6 +231,9 @@ export async function readManifest(request: Request): Promise<Manifest> {
 				}
 				const parsed = item.safeParse(frame.value)
 				if (!parsed.success) throw new BatchProblem(400, 'invalid_item')
+				if (intentKeys.has(parsed.data.intentKey))
+					throw new BatchProblem(400, 'duplicate_intent_key')
+				intentKeys.add(parsed.data.intentKey)
 				const line = `${parsed.data.intentKey}\n`
 				digest.update(line)
 				pending.push(line)

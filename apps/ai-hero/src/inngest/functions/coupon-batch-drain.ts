@@ -22,7 +22,10 @@ export const couponBatchDrain = inngest.createFunction(
 				case 'worked':
 					break
 				case 'retry':
-					await log.warn('coupon_batch.worker_retry', {})
+					await log.warn('coupon_batch.worker_retry', {
+						reason: result.reason,
+						attempts: result.attempts ?? null,
+					})
 					return result
 				default:
 					return result
@@ -70,13 +73,18 @@ export const couponBatchAlarms = inngest.createFunction(
 				},
 				(row) =>
 					log
-						.warn('coupon_batch.volume_alarm', {
-							alertId: row.id,
-							batchId: row.batchId,
-							kind: row.kind,
-							count: row.count,
-							threshold: row.threshold,
-						})
+						.warn(
+							row.kind === 'aging' || row.kind === 'stuck'
+								? 'coupon_batch.worker_alarm'
+								: 'coupon_batch.volume_alarm',
+							{
+								alertId: row.id,
+								batchId: row.batchId,
+								kind: row.kind,
+								count: row.count,
+								threshold: row.threshold,
+							},
+						)
 						.then(() => {}),
 			)
 			return { attempted }

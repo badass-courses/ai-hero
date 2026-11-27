@@ -4,6 +4,7 @@ import { withDefaultCouponInvalidation } from '@/lib/default-coupon-invalidation
 import { withPurchaseCountInvalidation } from '@/lib/purchase-count-invalidation'
 import { guardLegendGiftCouponPaths } from '@/lib/legend-gift-coupon-guard'
 import { guardC5CompSelectors } from '@/lib/coupon-batches/free-selector'
+import { couponBatchDatabase } from '@/lib/coupon-batches/runtime'
 import { withPaidCouponUsage } from '@/lib/paid-coupon-usage'
 import { withSessionAccessBusts } from '@/server/session-access-busts'
 import { bustSessionAccessForUser } from '@/server/session-access-runtime'
@@ -38,7 +39,7 @@ const drizzleAdapter = withSessionAccessBusts(
 						stripeProvider,
 					),
 				),
-				db,
+				couponBatchDatabase,
 			),
 		),
 	),

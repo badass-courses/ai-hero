@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 import { BatchProblem, key, PAGE, readManifest } from './contract'
-import { INLINE_MS, type createCouponBatchService } from './service'
+import type { createCouponBatchService } from './service'
 import { COUPON_BATCH_MINT_SCOPE } from '@/lib/personal-access-tokens'
 
 const base = '/api/commerce/coupon-batches'
@@ -80,17 +80,18 @@ async function respond(run: () => Promise<Response>) {
 }
 
 export function couponBatchHandlers(
-	service: ReturnType<typeof createCouponBatchService>,
+	service: () => ReturnType<typeof createCouponBatchService>,
 	wake: () => void,
 ) {
 	return {
 		preview: (request: Request) =>
 			respond(async () => {
 				const token = bearer(request)
-				await service.authorize(token, COUPON_BATCH_MINT_SCOPE)
+				const issuer = service()
+				await issuer.authorize(token, COUPON_BATCH_MINT_SCOPE)
 				const manifest = await readManifest(request)
 				try {
-					return Response.json(await service.preview(token, manifest), {
+					return Response.json(await issuer.preview(token, manifest), {
 						headers,
 					})
 				} finally {
@@ -99,44 +100,24 @@ export function couponBatchHandlers(
 			}),
 		submit: (request: Request) =>
 			respond(async () => {
-				const started = performance.now()
 				const token = bearer(request)
-				await service.authorize(token, COUPON_BATCH_MINT_SCOPE)
+				const issuer = service()
+				await issuer.authorize(token, COUPON_BATCH_MINT_SCOPE)
 				const idempotencyKey = validate(
 					key,
 					request.headers.get('idempotency-key'),
 				)
 				const manifest = await readManifest(request)
 				try {
-					const { batchId, principalId, initialStatus } = await service.admit(
+					const { batchId, principalId, initialStatus } = await issuer.admit(
 						token,
 						idempotencyKey,
 						manifest,
 					)
-					let status =
+					// Only the durable worker mints. No request owns a mint transaction.
+					const status =
 						initialStatus ??
-						(await service.statusForSubmit(batchId, principalId))
-					const remaining = INLINE_MS - (performance.now() - started)
-					if (initialStatus && manifest.total <= PAGE && remaining > 0) {
-						// Race both mint and readback against the inline deadline. Admission
-						// has already committed; a timed-out read never holds the response.
-						let timer: ReturnType<typeof setTimeout> | undefined
-						const inline = async () => {
-							await service.runChunk(batchId)
-							return service.statusForSubmit(batchId, principalId)
-						}
-						try {
-							status =
-								(await Promise.race([
-									inline().catch(() => null),
-									new Promise<null>((resolve) => {
-										timer = setTimeout(() => resolve(null), remaining)
-									}),
-								])) ?? status
-						} finally {
-							clearTimeout(timer)
-						}
-					}
+						(await issuer.statusForSubmit(batchId, principalId))
 					if (status.counts.queued) {
 						try {
 							wake()
@@ -144,11 +125,8 @@ export function couponBatchHandlers(
 							/* Sweeper owns recovery. */
 						}
 					}
-					const queued =
-						status.counts.queued > 0 ||
-						(initialStatus !== null && manifest.total > PAGE)
 					return Response.json(status, {
-						status: queued ? 202 : 200,
+						status: status.counts.queued ? 202 : 200,
 						headers: { ...headers, Location: `${base}/${batchId}` },
 					})
 				} finally {
@@ -162,7 +140,7 @@ export function couponBatchHandlers(
 				if (!/^\d{1,10}$/.test(cursor))
 					throw new BatchProblem(400, 'invalid_request')
 				return Response.json(
-					await service.status(
+					await service().status(
 						token,
 						validate(id, batchId),
 						validate(cursorSchema, Number(cursor)),
@@ -174,7 +152,7 @@ export function couponBatchHandlers(
 			respond(async () => {
 				const token = bearer(request)
 				const input = validate(lookupSchema, await readSmall(request))
-				return Response.json(await service.lookup(token, input.intentKeys), {
+				return Response.json(await service().lookup(token, input.intentKeys), {
 					headers,
 				})
 			}),
@@ -183,7 +161,7 @@ export function couponBatchHandlers(
 				const token = bearer(request)
 				const input = validate(exportSchema, await readSmall(request))
 				return Response.json(
-					await service.exportPage(token, input.batchId, input.cursor ?? 0),
+					await service().exportPage(token, input.batchId, input.cursor ?? 0),
 					{ headers },
 				)
 			}),

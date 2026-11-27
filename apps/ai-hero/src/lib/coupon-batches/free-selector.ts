@@ -4,7 +4,8 @@ import { coupon } from '@/db/schema'
 import { DrizzleAdapter } from '@coursebuilder/adapter-drizzle'
 import type { CouponPort, PurchasePort } from '@coursebuilder/core/ports'
 import { couponSchema } from '@coursebuilder/core/schemas'
-import { and, eq, gt, sql } from 'drizzle-orm'
+import { createPersonalOrganizationService } from '@coursebuilder/organizations'
+import { and, eq, getTableColumns, sql } from 'drizzle-orm'
 import type { MySqlDatabase } from 'drizzle-orm/mysql-core'
 
 import { PRODUCT, TEMPLATE } from './contract'
@@ -24,6 +25,7 @@ const reserved = (value: unknown) =>
 	inRowNamespace(value) ||
 	inSelectorNamespace(value) ||
 	(typeof value === 'string' && value.toLowerCase().startsWith('c5hash_'))
+const rollbackFirstClaim = Symbol('rollbackFirstClaim')
 const invalid = () => ({
 	purchase: null,
 	redeemingForCurrentUser: false,
@@ -32,7 +34,13 @@ const invalid = () => ({
 
 function lookup(tx: DbExecutor, digest: string) {
 	return tx
-		.select()
+		.select({
+			...getTableColumns(coupon),
+			expires: sql<Date>`UNIX_TIMESTAMP(${coupon.expires})`.mapWith({
+				mapFromDriverValue: (seconds: unknown) =>
+					new Date(Number(seconds) * 1000),
+			}),
+		})
 		.from(coupon)
 		.where(
 			and(
@@ -43,7 +51,7 @@ function lookup(tx: DbExecutor, digest: string) {
 				eq(coupon.maxUses, 1),
 				eq(coupon.usedCount, 0),
 				eq(coupon.percentageDiscount, '1.00'),
-				gt(coupon.expires, sql`UTC_TIMESTAMP(3)`),
+				sql`UNIX_TIMESTAMP(${coupon.expires}) > UNIX_TIMESTAMP(CURRENT_TIMESTAMP(3))`,
 			),
 		)
 		.limit(1)
@@ -62,31 +70,34 @@ function isComp(row: typeof coupon.$inferSelect | undefined) {
 /** Only the C5 free-claim page may present these coupons. The dialog carries
  * the original bearer in its existing `couponId` field; the real row ID is
  * not a redeemable value. Other product pages do not inherit the bypass. */
-export function c5CompPresentation<T extends Pick<CouponPort, 'getCoupon'>>(
-	adapter: T,
-	db: BatchCouponDb,
-	productId: string,
-): T {
+export function c5CompPresentation<
+	T extends Pick<CouponPort, 'getCoupon'> & {
+		getCouponForDisplay?: CouponPort['getCoupon']
+	},
+>(adapter: T, db: BatchCouponDb, productId: string): T {
 	if (productId !== PRODUCT) return adapter
-	return {
-		...adapter,
-		async getCoupon(key: string) {
-			if (!inSelectorNamespace(key)) return adapter.getCoupon(key)
-			const digest = selectorDigest(key)
-			if (!digest) return null
-			try {
-				const [row] = await lookup(db, digest)
-				if (!isComp(row)) return null
-				return couponSchema.parse({
-					...row,
-					id: key.toLowerCase(),
-					code: null,
-				})
-			} catch {
-				throw new Error('c5_comp_lookup_unavailable')
-			}
-		},
+	const display = async (key: string) => {
+		if (inRowNamespace(key)) return null
+		if (!inSelectorNamespace(key))
+			return (adapter.getCouponForDisplay ?? adapter.getCoupon).call(
+				adapter,
+				key,
+			)
+		const digest = selectorDigest(key)
+		if (!digest) return null
+		try {
+			const [row] = await lookup(db, digest)
+			if (!isComp(row)) return null
+			return couponSchema.parse({
+				...row,
+				id: key.toLowerCase(),
+				code: null,
+			})
+		} catch {
+			throw new Error('c5_comp_lookup_unavailable')
+		}
 	}
+	return { ...adapter, getCoupon: display, getCouponForDisplay: display }
 }
 
 /** Narrow free-redeem bridge; paid pricing and legacy selector behavior stay
@@ -94,17 +105,24 @@ export function c5CompPresentation<T extends Pick<CouponPort, 'getCoupon'>>(
  * CB free workflow on the coupon row in the same transaction. */
 export function guardC5CompSelectors<T extends Paths>(
 	adapter: T,
-	db: BatchCouponDb,
+	claimDatabase: () => BatchCouponDb,
 ): T {
 	const redeem = adapter.redeemFullPriceCoupon.bind(adapter)
 	const getCoupon = adapter.getCoupon.bind(adapter)
 	const getBulk = adapter.getCouponWithBulkPurchases.bind(adapter)
 	const lookupLegacy = adapter.couponForIdOrCode.bind(adapter)
 	return Object.assign(adapter, {
-		getCoupon: (value: string) =>
-			reserved(value) ? Promise.resolve(null) : getCoupon(value),
-		getCouponWithBulkPurchases: (value?: string) =>
-			reserved(value) ? Promise.resolve(null) : getBulk(value),
+		async getCoupon(value: string) {
+			if (!inRowNamespace(value))
+				return reserved(value) ? null : getCoupon(value)
+			const row = await getCoupon(value)
+			return row ? { ...row, code: null } : null
+		},
+		async getCouponWithBulkPurchases(value?: string) {
+			if (!inRowNamespace(value)) return reserved(value) ? null : getBulk(value)
+			const row = await getBulk(value)
+			return row ? { ...row, code: null } : null
+		},
 		couponForIdOrCode: (
 			input: Parameters<CouponPort['couponForIdOrCode']>[0],
 		) =>
@@ -125,21 +143,33 @@ export function guardC5CompSelectors<T extends Paths>(
 			const digest = activeCompClaimDigest()
 			if (!digest) return invalid()
 			try {
-				return await db.transaction(async (tx) => {
+				return await claimDatabase().transaction(async (tx) => {
 					const [row] = await lookup(tx, digest).for('update')
 					if (!row || !isComp(row)) return invalid()
 					const txAdapter = DrizzleAdapter<MySqlDatabase<any, any, any>>(
 						tx,
 						mysqlTable,
 					)
-					return (
-						(await txAdapter.redeemFullPriceCoupon({
-							...input,
-							couponId: row.id,
-						})) ?? invalid()
+					// Provision a first-time claimant under the same SQL transaction.
+					// No organization, user or purchase persists if redemption fails.
+					const { user, isNewUser } = await txAdapter.findOrCreateUser(
+						input.email,
 					)
+					if (isNewUser) {
+						await createPersonalOrganizationService({
+							organizations: txAdapter,
+							logger: { info: () => {}, error: () => {} },
+						}).ensurePersonalOrganization(user)
+					}
+					const result = await txAdapter.redeemFullPriceCoupon({
+						...input,
+						couponId: row.id,
+					})
+					if (isNewUser && !result?.purchase) throw rollbackFirstClaim
+					return result ?? invalid()
 				})
-			} catch {
+			} catch (error) {
+				if (error === rollbackFirstClaim) return invalid()
 				throw new Error('c5_comp_redeem_unavailable')
 			}
 		},

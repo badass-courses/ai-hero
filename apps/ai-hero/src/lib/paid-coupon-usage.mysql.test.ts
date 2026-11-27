@@ -1,6 +1,7 @@
 import { performance } from 'node:perf_hooks'
 import { eq, sql } from 'drizzle-orm'
 import { NextRequest } from 'next/server'
+import Stripe from 'stripe'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { formatPricesForProduct } from '@coursebuilder/commerce/format-prices-for-product'
@@ -14,7 +15,12 @@ import {
 	couponDisplayView,
 	paidCouponPricingView,
 } from './paid-coupon-pricing-view'
-import { propsForCommerce } from './coupon-display'
+import {
+	propsForCommerce,
+	getCouponForCode as appGetCouponForCode,
+} from './coupon-display'
+import { c5CompPresentation } from './coupon-batches/free-selector'
+import { newSelector, selectorDigest } from './coupon-batches/selector'
 import {
 	coupon,
 	merchantAccount,
@@ -30,6 +36,15 @@ import {
 } from '@/db/schema'
 
 const runId = crypto.randomUUID().slice(0, 8)
+// The test harness supplies this fixture to the app's real webhook route.
+const webhookSecret = 'test_webhook_secret'
+const inngestSend = vi.hoisted(() =>
+	vi.fn(async (_event: unknown) => ({ ids: [] })),
+)
+vi.mock('@/inngest/inngest.server', () => ({ inngest: { send: inngestSend } }))
+vi.mock('@/lib/c5-pricing/gift-settlement', () => ({
+	settleGiftSession: vi.fn(),
+}))
 const stripeSession = vi.hoisted(() =>
 	vi.fn(
 		async (params: {
@@ -55,12 +70,18 @@ const stripeSession = vi.hoisted(() =>
 vi.mock('@/coursebuilder/stripe-provider', async () => {
 	const { default: StripeProvider } =
 		await import('@coursebuilder/commerce/stripe-provider')
+	const stripe = new Stripe('sk_test_synthetic_paid_coupon_fixture')
 	return {
 		stripeProvider: StripeProvider({
 			baseSuccessUrl: 'https://example.test',
 			cancelUrl: 'https://example.test',
 			errorRedirectUrl: 'https://example.test/error',
 			paymentsAdapter: {
+				stripe,
+				verifyWebhookSignature: async (body: string, signature: string) =>
+					Boolean(
+						stripe.webhooks.constructEvent(body, signature, webhookSecret),
+					),
 				getPrice: async (id: string) => ({
 					id,
 					product: key('stripe-product'),
@@ -107,7 +128,8 @@ vi.mock('@/coursebuilder/openai-provider', () => ({
 vi.mock('@/coursebuilder/transcript-provider', () => ({
 	transcriptProvider: { id: 'transcript', options: {} },
 }))
-vi.mock('@/server/logger', () => ({
+vi.mock('@/server/logger', async (importOriginal) => ({
+	...(await importOriginal<typeof import('@/server/logger')>()),
 	log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }))
 vi.mock('@/lib/buy-path/server', () => ({ emitBuyPath: vi.fn() }))
@@ -422,6 +444,105 @@ describe.skipIf(!uri)(
 			expect((await adapter().getCoupon(id))?.usedCount).toBe(2)
 		})
 
+		it('redeems a C5 bearer through the real POST wrapper and provisions a first claimant', async () => {
+			const { POST } =
+				await import('@/app/api/coursebuilder/[...nextCourseBuilder]/route')
+			const { rawCourseBuilderAdapter } = runtime
+			const { courseBuilderConfig } =
+				await import('@/coursebuilder/course-builder-config')
+			expect(rawCourseBuilderAdapter.createUser).not.toBe(
+				courseBuilderConfig.adapter.createUser,
+			)
+			expect(adapter().createUser).toBe(rawCourseBuilderAdapter.createUser)
+			const bearer = newSelector()
+			const couponRef = `batch-coupon-${key('free-claim')}`
+			await runtime.db
+				.insert(products)
+				.values({
+					id: C5_PRODUCT_ID,
+					name: 'Synthetic C5',
+					status: 1,
+					type: 'cohort',
+				})
+				.onDuplicateKeyUpdate({ set: { id: C5_PRODUCT_ID } })
+			await runtime.db.insert(coupon).values({
+				id: couponRef,
+				code: selectorDigest(bearer),
+				percentageDiscount: '1.00',
+				restrictedToProductId: C5_PRODUCT_ID,
+				status: 1,
+				maxUses: 1,
+				expires: new Date(Date.now() + 300000),
+				fields: { couponBatchTemplate: 'c5-comp-v1', bypassSoldOut: true },
+			})
+			const display = c5CompPresentation(adapter(), runtime.db, C5_PRODUCT_ID)
+			const comp = await appGetCouponForCode(bearer, [C5_PRODUCT_ID], display)
+			expect(comp).toMatchObject({ isRedeemable: true })
+			const ordinary = key('regular-free-coupon')
+			await createCoupon(ordinary, {
+				restrictedToProductId: C5_PRODUCT_ID,
+				merchantCouponId: null,
+				amountDiscount: null,
+				percentageDiscount: '1.00',
+			})
+			const regular = await appGetCouponForCode(
+				ordinary,
+				[C5_PRODUCT_ID],
+				display,
+			)
+			expect(regular).toMatchObject({ isRedeemable: true })
+			const { cohortCallsToAction } =
+				await import('@/app/(content)/cohorts/[slug]/_components/cohort-coming-soon')
+			const closed = {
+				phase: 'closed',
+				productState: 'published',
+				allowPurchase: false,
+				hasCohortAccess: false,
+				isOnWaitlist: false,
+				hasActiveProduct: true,
+			} as const
+			expect(
+				cohortCallsToAction({
+					...closed,
+					bypassSoldOut: regular?.fields?.bypassSoldOut === true,
+				}).canEnroll,
+			).toBe(false)
+			expect(
+				cohortCallsToAction({
+					...closed,
+					bypassSoldOut: comp?.fields?.bypassSoldOut === true,
+				}).canEnroll,
+			).toBe(true)
+			const email = `${key('first-claimant')}@example.test`
+			const response = await POST(
+				request('/redeem/coupon', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({
+						couponId: bearer,
+						email,
+						productIds: [C5_PRODUCT_ID],
+						sendEmail: false,
+					}),
+				}),
+			)
+			expect(response.status).toBe(200)
+			const { purchase } = await response.json()
+			expect(purchase).toMatchObject({ couponId: couponRef, status: 'Valid' })
+			const organization =
+				await rawCourseBuilderAdapter.getPersonalOrganization(purchase.userId)
+			expect(organization).not.toBeNull()
+			expect(purchase.organizationId).toBe(organization?.id)
+			expect(await rawCourseBuilderAdapter.getCoupon(couponRef)).toMatchObject({
+				id: couponRef,
+				code: null,
+				usedCount: 1,
+			})
+			expect(
+				await rawCourseBuilderAdapter.getPurchaseWithUser(purchase.id),
+			).toMatchObject({ id: purchase.id })
+		})
+
 		it('uses the real HTTP pricing handlers for Stripe session creation and preserves late fulfillment', async () => {
 			const { commercePricingHandlers } =
 				await import('@/coursebuilder/course-builder-config')
@@ -543,7 +664,7 @@ describe.skipIf(!uri)(
 						]),
 					),
 					userId: user,
-				},
+				} as Record<string, string>,
 				customer: {
 					id: key('stripe-customer'),
 					email: `${key('buyer')}@example.test`,
@@ -568,36 +689,70 @@ describe.skipIf(!uri)(
 					latest_charge: { id: key('stripe-charge'), amount: 19900 },
 				},
 			}
-			const sendEvent = vi.fn(async () => undefined)
-			const { purchase: latePurchase } = (await fulfill({
-				event: {
-					name: 'stripe/checkout-session-completed',
+			const { POST } =
+				await import('@/app/api/coursebuilder/[...nextCourseBuilder]/route')
+			const { stripeProvider } = await import('@/coursebuilder/stripe-provider')
+			const { stripe } = stripeProvider.options.paymentsAdapter as unknown as {
+				stripe: Stripe
+			}
+			const retrieve = vi
+				.spyOn(stripe.checkout.sessions, 'retrieve')
+				.mockRejectedValue(new Error('unseeded fixture session'))
+			const throughWebhook = async (
+				session: typeof settledSession,
+				suffix: string,
+			) => {
+				retrieve.mockResolvedValueOnce(session as never)
+				inngestSend.mockClear()
+				const payload = JSON.stringify({
+					id: key(`stripe-event-${suffix}`),
+					created: Math.floor(Date.now() / 1000),
+					type: 'checkout.session.completed',
 					data: {
-						stripeEvent: {
-							id: key('stripe-event'),
-							created: Math.floor(Date.now() / 1000),
-							type: 'checkout.session.completed',
-							data: {
-								object: {
-									...settledSession,
-									customer: key('stripe-customer'),
-									payment_intent: key('stripe-payment-intent'),
-								},
-							},
+						object: {
+							...session,
+							customer: session.customer.id,
+							payment_intent: session.payment_intent.id,
 						},
 					},
-				},
-				step: {
-					run: async (_: string, fn: () => Promise<unknown>) => fn(),
-					sendEvent,
-				},
-				db: magicLinkIdentity,
-				paymentProvider: {
-					options: {
-						paymentsAdapter: { getCheckoutSession: async () => settledSession },
+				})
+				const signature = stripe.webhooks.generateTestHeaderString({
+					payload,
+					secret: webhookSecret,
+				})
+				const response = await POST(
+					request('/webhook/stripe', {
+						method: 'POST',
+						headers: {
+							'stripe-signature': signature,
+							'content-type': 'application/json',
+						},
+						body: payload,
+					}),
+				)
+				expect(response.status).toBe(200)
+				const event = inngestSend.mock.calls
+					.map(([value]) => value as { name: string; data: unknown })
+					.find((value) => value.name === 'stripe/checkout-session-completed')
+				expect(event).toBeDefined()
+				return event
+			}
+			const sendEvent = vi.fn(async () => undefined)
+			const settle = async (session: typeof settledSession, suffix: string) =>
+				(await fulfill({
+					event: await throughWebhook(session, suffix),
+					step: {
+						run: async (_: string, fn: () => Promise<unknown>) => fn(),
+						sendEvent,
 					},
-				},
-			})) as { purchase: { id: string; couponId: string } }
+					db: magicLinkIdentity,
+					paymentProvider: {
+						options: {
+							paymentsAdapter: { getCheckoutSession: async () => session },
+						},
+					},
+				})) as { purchase: { id: string; couponId: string } }
+			const { purchase: latePurchase } = await settle(settledSession, 'new')
 			expect(sendEvent).toHaveBeenCalledWith(
 				'commerce/new-purchase-created',
 				expect.objectContaining({
@@ -625,16 +780,21 @@ describe.skipIf(!uri)(
 			const historicalCharge = key('backfill-charge')
 			const providerCharge = key('backfill-stripe-charge')
 			await createCoupon(historicalCoupon)
-			await runtime.db
-				.insert(merchantCharge)
-				.values({
-					id: historicalCharge,
-					identifier: providerCharge,
-					userId: user,
-					merchantAccountId: account,
-					merchantProductId: product,
-					merchantCustomerId: customer,
-				})
+			const settledCharge = await runtime.db.query.merchantCharge.findFirst({
+				where: eq(
+					merchantCharge.identifier,
+					settledSession.payment_intent.latest_charge.id,
+				),
+			})
+			if (!settledCharge) throw new Error('fixture charge missing')
+			await runtime.db.insert(merchantCharge).values({
+				id: historicalCharge,
+				identifier: providerCharge,
+				userId: user,
+				merchantAccountId: settledCharge.merchantAccountId,
+				merchantProductId: settledCharge.merchantProductId,
+				merchantCustomerId: settledCharge.merchantCustomerId,
+			})
 			await createPurchase(historicalPurchase, historicalCoupon, {
 				userId: user,
 				merchantChargeId: historicalCharge,
@@ -645,20 +805,21 @@ describe.skipIf(!uri)(
 			).toBe('counted')
 			expect(await usedCount(historicalCoupon)).toBe(1)
 			expect(await paidMarker(historicalPurchase)).toEqual(liveMarker)
-			const replayed = await adapter().createMerchantChargeAndPurchase({
-				userId: user,
-				productId,
-				stripeChargeId: providerCharge,
-				stripeChargeAmount: 19900,
-				quantity: 1,
-				merchantAccountId: account,
-				merchantProductId: product,
-				merchantCustomerId: customer,
-				checkoutSessionId: key('backfill-session'),
-				appliedPPPStripeCouponId: undefined,
-				upgradedFromPurchaseId: undefined,
-				usedCouponId: historicalCoupon,
-			})
+			const { purchase: replayed } = await settle(
+				{
+					...settledSession,
+					id: key('backfill-session'),
+					metadata: {
+						...settledSession.metadata,
+						usedCouponId: historicalCoupon,
+					},
+					payment_intent: {
+						id: key('backfill-payment-intent'),
+						latest_charge: { id: providerCharge, amount: 19900 },
+					},
+				},
+				'backfill-replay',
+			)
 			expect(replayed.id).toBe(historicalPurchase)
 			expect(
 				await usage.recordPaidCouponUse(runtime.db, historicalPurchase),

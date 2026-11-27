@@ -11,7 +11,7 @@ const SELECTOR = /^c5comp_[0-9a-f]{40}$/i
 
 export const inSelectorNamespace = (value: unknown): value is string =>
 	typeof value === 'string' && value.toLowerCase().startsWith(SELECTOR_PREFIX)
-export const inRowNamespace = (value: unknown): value is string =>
+export const inRowNamespace = (value: unknown): boolean =>
 	typeof value === 'string' && value.toLowerCase().startsWith(ROW_PREFIX)
 export const newSelector = () =>
 	`${SELECTOR_PREFIX}${randomBytes(20).toString('hex')}`

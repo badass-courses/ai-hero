@@ -1,9 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import * as schema from '@/db/schema'
-import { preserveQueryResultShape } from '@/db/mysql-query-client'
 import { and, eq, sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/mysql2'
-import mysql, { type Pool } from 'mysql2/promise'
+import type { Pool } from 'mysql2/promise'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import {
 	COUPON_BATCH_MINT_SCOPE,
@@ -13,6 +12,7 @@ import {
 } from '../personal-access-tokens'
 import { couponBatchHandlers } from './http'
 import { CONTROL_ID, createCouponBatchService } from './service'
+import { createCouponBatchWorkerPool } from './worker-pool'
 
 const uri = process.env.AIH_COUPON_BATCH_MYSQL_URL
 const run = randomUUID().slice(0, 8)
@@ -103,9 +103,7 @@ describe.skipIf(!uri)(
 				!/^\/coupon_batch_fixture(?:_[a-z0-9]+)?$/.test(url.pathname)
 			)
 				throw new Error('unsafe fixture database')
-			pool = preserveQueryResultShape(
-				mysql.createPool({ uri, timezone: 'Z', connectionLimit: 4 }),
-			)
+			pool = createCouponBatchWorkerPool(uri!)
 			db = drizzle(pool, {
 				schema,
 				mode: 'planetscale',
@@ -144,7 +142,7 @@ describe.skipIf(!uri)(
 				batchSecret: () => 'synthetic-export-secret',
 				now: () => clock,
 			})
-			api = couponBatchHandlers(service, wake)
+			api = couponBatchHandlers(() => service, wake)
 		})
 		afterAll(async () => {
 			await pool?.end()
@@ -213,6 +211,14 @@ describe.skipIf(!uri)(
 						.status,
 				).toBe(400)
 			}
+			const duplicate = await api.preview(
+				request({ ...b, items: [b.items[0], b.items[0]] }),
+			)
+			expect(duplicate.status).toBe(400)
+			expect(await duplicate.json()).toHaveProperty(
+				'title',
+				'duplicate_intent_key',
+			)
 			const ready = await confirm(b)
 			expect(await counts()).toEqual(before)
 			expect(
@@ -259,10 +265,15 @@ describe.skipIf(!uri)(
 				api.submit(request(body, `race-${run}`)),
 				api.submit(request(body, `race-${run}`)),
 			])
-			expect([200, 202]).toContain(a.status)
-			expect([200, 202]).toContain(b.status)
+			expect(a.status).toBe(202)
+			expect(b.status).toBe(202)
 			const original = await a.json()
 			expect((await b.json()).batchId).toBe(original.batchId)
+			expect(await counts()).toEqual([before[0]! + 1, before[1]!])
+			await setControl({ enabled: 0 })
+			expect(await service.runChunk()).toEqual({ state: 'paused' })
+			await setControl({ enabled: 1 })
+			expect((await service.runChunk(original.batchId)).state).toBe('worked')
 			const later = await api.submit(
 				request({ ...body, previewReceipt: undefined }, `race-${run}`),
 			)
@@ -319,17 +330,48 @@ describe.skipIf(!uri)(
 				fields: { couponBatchTemplate: 'c5-comp-v1', bypassSoldOut: true },
 			})
 			expect(stored!.code).not.toBe(issued.code)
-			const replay = await api.submit(request(body, `overlap-${run}`))
-			expect((await replay.json()).outcomes[0].couponRef).toBe(issued.couponRef)
+			const replay = await api
+				.submit(request(body, `overlap-${run}`))
+				.then((r) => r.json())
+			await service.runChunk(replay.batchId)
+			const overlap = await api
+				.status(request(undefined), replay.batchId)
+				.then((r) => r.json())
+			expect(overlap.outcomes[0].couponRef).toBe(issued.couponRef)
 			const mixed = await confirm({
 				...payload('changed-intent', 2),
 				items: [body.items[0]!, { intentKey: `${run}-new-mixed` }],
 			})
-			const result = await api.submit(request(mixed, `mixed-${run}`))
-			expect((await result.json()).outcomes).toMatchObject([
+			const result = await api
+				.submit(request(mixed, `mixed-${run}`))
+				.then((r) => r.json())
+			await service.runChunk(result.batchId)
+			const mixedStatus = await api
+				.status(request(undefined), result.batchId)
+				.then((r) => r.json())
+			expect(mixedStatus.outcomes).toMatchObject([
 				{ state: 'refused', reason: 'intent_conflict' },
 				{ state: 'minted' },
 			])
+		})
+
+		it('the DB releases a dropped worker transaction so the kill switch can commit', async () => {
+			const isolated = createCouponBatchWorkerPool(uri!, 1)
+			const worker = await isolated.getConnection()
+			try {
+				await worker.beginTransaction()
+				await worker.query(
+					'SELECT id FROM AI_CouponBatchControl WHERE id = ? FOR UPDATE',
+					[CONTROL_ID],
+				)
+				// No client rollback, release or connection close until the switch commits.
+				await setControl({ enabled: 0 })
+				expect(await service.runChunk()).toEqual({ state: 'paused' })
+			} finally {
+				worker.destroy()
+				await isolated.end()
+				await setControl({ enabled: 1 })
+			}
 		})
 
 		it('durably drains 3,058 with bounded chunks and alarms once across Pacific rollover', async () => {
@@ -473,6 +515,111 @@ describe.skipIf(!uri)(
 					(r: { reason: string }) => r.reason === 'credential_revoked',
 				),
 			).toBe(true)
+			const fresh = await api
+				.submit(request(await confirm(body), `fresh-credential-${run}`))
+				.then((r) => r.json())
+			await service.runChunk(fresh.batchId)
+			await service.runChunk(fresh.batchId)
+			expect(
+				await api
+					.status(request(undefined), fresh.batchId)
+					.then((r) => r.json()),
+			).toMatchObject({
+				counts: { minted: 101, refused: 0 },
+			})
+		})
+
+		it('can re-admit keys refused by a deadline or policy change', async () => {
+			for (const reason of ['deadline_passed', 'policy_changed'] as const) {
+				const body = payload(reason)
+				const { batchId } = await api
+					.submit(request(await confirm(body), `first-${reason}-${run}`))
+					.then((r) => r.json())
+				await db
+					.update(schema.couponBatch)
+					.set(
+						reason === 'deadline_passed'
+							? { deadlineAt: new Date(+clock - 1000) }
+							: { policyRevision: 'old-policy' },
+					)
+					.where(eq(schema.couponBatch.id, batchId))
+				expect((await service.runChunk(batchId)).state).toBe('worked')
+				expect(
+					await api.status(request(undefined), batchId).then((r) => r.json()),
+				).toMatchObject({
+					outcomes: [{ state: 'refused', reason }],
+				})
+				const renewed = await api
+					.submit(request(await confirm(body), `fresh-${reason}-${run}`))
+					.then((r) => r.json())
+				expect((await service.runChunk(renewed.batchId)).state).toBe('worked')
+				expect(
+					await api
+						.status(request(undefined), renewed.batchId)
+						.then((r) => r.json()),
+				).toMatchObject({
+					outcomes: [{ state: 'minted' }],
+				})
+			}
+		})
+
+		it('stops before minting a code whose export window has elapsed', async () => {
+			const body = payload('abandoned-export')
+			const { batchId } = await api
+				.submit(request(await confirm(body), `abandoned-${run}`))
+				.then((r) => r.json())
+			clock = new Date(+clock + 24 * 3600_000)
+			expect((await service.runChunk(batchId)).state).toBe('worked')
+			expect(
+				await api.status(request(undefined), batchId).then((r) => r.json()),
+			).toMatchObject({
+				counts: { minted: 0, refused: 1 },
+				outcomes: [{ reason: 'export_window_elapsed' }],
+			})
+			expect((await api.exportPage(request({ batchId }))).status).toBe(410)
+			const renewed = await api
+				.submit(request(await confirm(body), `renewed-${run}`))
+				.then((r) => r.json())
+			await service.runChunk(renewed.batchId)
+			expect(
+				await api
+					.exportPage(request({ batchId: renewed.batchId }))
+					.then((r) => r.json()),
+			).toMatchObject({
+				outcomes: [{ state: 'minted', code: expect.any(String) }],
+			})
+		})
+
+		it('parks a repeatedly failing chunk and writes sanitized aging and stuck alarms once', async () => {
+			const { batchId } = await api
+				.submit(
+					request(
+						await confirm(payload('invalid-fixture-chunk')),
+						`bad-chunk-${run}`,
+					),
+				)
+				.then((r) => r.json())
+			await db
+				.delete(schema.couponBatchItem)
+				.where(eq(schema.couponBatchItem.batchId, batchId))
+			for (let attempt = 1; attempt <= 8; attempt++) {
+				expect(await service.runChunk(batchId)).toEqual({
+					state: 'retry',
+					reason: 'manifest_inconsistent',
+					attempts: attempt,
+				})
+				clock = new Date(+clock + 65_000)
+			}
+			clock = new Date(+clock + 30 * 60_000)
+			expect(await service.runChunk(batchId)).toEqual({ state: 'idle' })
+			const sent = vi.fn(async (_row: unknown) => {})
+			await service.drainAlerts(sent, log)
+			await service.drainAlerts(sent, log)
+			expect(
+				sent.mock.calls
+					.map(([value]) => (value as { kind: string }).kind)
+					.sort(),
+			).toEqual(['aging', 'stuck'])
 		})
 
 		it('overlap keeps the terminal result but cannot renew its code export window', async () => {
@@ -480,8 +627,10 @@ describe.skipIf(!uri)(
 			const original = await api
 				.submit(request(await confirm(body), `original-${run}`))
 				.then((r) => r.json())
+			await service.runChunk(original.batchId)
 			const from = await api.exportPage(request({ batchId: original.batchId }))
-			expect((await from.json()).outcomes[0]).toHaveProperty('code')
+			const issued = (await from.json()).outcomes[0]
+			expect(issued).toHaveProperty('code')
 			clock = new Date(+clock + 24 * 3600_000 + 1000)
 			expect(
 				(await api.exportPage(request({ batchId: original.batchId }))).status,
@@ -489,12 +638,13 @@ describe.skipIf(!uri)(
 			const another = await api
 				.submit(request(await confirm(body), `another-${run}`))
 				.then((r) => r.json())
+			await service.runChunk(another.batchId)
 			const next = await api
 				.exportPage(request({ batchId: another.batchId }))
 				.then((r) => r.json())
 			expect(next.outcomes[0]).toMatchObject({
 				state: 'minted',
-				couponRef: original.outcomes[0].couponRef,
+				couponRef: issued.couponRef,
 			})
 			expect(next.outcomes[0]).not.toHaveProperty('code')
 		})

@@ -3,6 +3,11 @@ name: Evergreen Journey MySQL
 on:
   pull_request:
     paths:
+      - "pnpm-workspace.yaml"
+      - "apps/ai-hero/sentry.*.config.ts"
+      - "apps/ai-hero/src/instrumentation.ts"
+      - "apps/ai-hero/src/server/with-skill.ts"
+      - "apps/ai-hero/src/lib/personal-access-tokens.ts"
       - "apps/ai-hero/src/lib/coupon-batches/**"
       - "apps/ai-hero/src/app/api/commerce/coupon-batches/**"
       - "apps/ai-hero/src/db/coupon-batch-schema.ts"
@@ -109,6 +114,11 @@ on:
   push:
     branches: [main]
     paths:
+      - "pnpm-workspace.yaml"
+      - "apps/ai-hero/sentry.*.config.ts"
+      - "apps/ai-hero/src/instrumentation.ts"
+      - "apps/ai-hero/src/server/with-skill.ts"
+      - "apps/ai-hero/src/lib/personal-access-tokens.ts"
       - "apps/ai-hero/src/lib/coupon-batches/**"
       - "apps/ai-hero/src/app/api/commerce/coupon-batches/**"
       - "apps/ai-hero/src/db/coupon-batch-schema.ts"
@@ -309,7 +319,7 @@ jobs:
         run: |
           mysql -h 127.0.0.1 -P 3307 -uroot -paih_test_password -e 'CREATE DATABASE IF NOT EXISTS coupon_batch_fixture'
           pnpm --filter ai-hero exec node scripts/test-mysql-schema.mjs "$AIH_COUPON_BATCH_MYSQL_URL"
-          pnpm --filter ai-hero exec vitest run -c vitest.config.ts src/lib/coupon-batches/contract.test.ts src/lib/coupon-batches/telemetry.test.ts src/lib/coupon-batches/batches.mysql.test.ts
+          pnpm --filter ai-hero exec vitest run -c vitest.config.ts src/lib/coupon-batches
 
       - name: Run guarded early-access payer suite
         env:
