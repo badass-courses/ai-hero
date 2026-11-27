@@ -28,6 +28,12 @@ A single batch over 3,000 and a Pacific day over 4,000 new intents create durabl
 
 For an immediate stop, set the DB control row’s `enabled` to `0` through the approved operator path. Wait for that write to commit: it shares the transaction fence with admission and minting. A chunk holding the fence can finish before the stop acknowledges, not after. Status, authorized export of committed codes (even from a stopped or parked batch), and existing redemptions stay available. Reconcile the queue before re-enabling. Do not delete dedupe rows, reissue accepted keys through SQL or roll back paid settlement.
 
+## C5 seat cap
+
+With `AIH_COUPON_BATCH_ENABLED=true`, existing C5 seat-cap readers omit only direct, uncharged $0 purchases linked by `Purchase.couponId` to a C5 `batch-coupon-` row with the stored `couponBatchTemplate: c5-comp-v1` marker and no merchant coupon. Paid and discounted purchases, ordinary free coupons, and team orders and redemptions keep their existing counting rules. With the flag off, counts are unchanged. To pause new mints without restoring legacy counting, disable the control row rather than unsetting the flag. The Stripe handoff and ordinary free claims do not check the C5 seat cap on main; this change adds no enforcement there.
+
+Before using the flag, confirm whether the C5 cap is meant to bound real room size, such as live-session or Discord capacity. If it is, comps need a separate limit. This PR does not add one.
+
 ## Before enabling
 
 - **2, 5 — Course Builder rollout.** The workspace still has two resolved versions of utils and email. Verify checkout, webhook and video paths beyond the loopback proof. Review the upstream Course Builder port conformance results; this app’s fixtures are not a substitute for that suite.

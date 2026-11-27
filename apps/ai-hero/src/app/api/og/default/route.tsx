@@ -2,8 +2,9 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { ImageResponse } from 'next/og'
 import { db } from '@/db'
-import { coupon, products, purchases } from '@/db/schema'
-import { and, count, eq, gte, isNull, or } from 'drizzle-orm'
+import { coupon } from '@/db/schema'
+import { readCapacityPurchaseCount } from '@/lib/purchase-count'
+import { and, eq, gte, isNull, or } from 'drizzle-orm'
 
 // Cache headers are set dynamically based on coupon expiry — see below
 export const dynamic = 'force-dynamic'
@@ -54,13 +55,8 @@ export async function GET(request: Request) {
 					// Check if product has limited availability
 					if (product.quantityAvailable >= 0) {
 						// Count purchases for this product
-						const [purchaseCount] = await db
-							.select({ count: count() })
-							.from(purchases)
-							.where(eq(purchases.productId, product.id))
-
-						const availableSeats =
-							product.quantityAvailable - (purchaseCount?.count || 0)
+						const purchaseCount = await readCapacityPurchaseCount(product.id)
+						const availableSeats = product.quantityAvailable - purchaseCount
 
 						// Don't show coupon if product is sold out
 						if (availableSeats <= 0) {

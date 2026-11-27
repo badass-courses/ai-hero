@@ -1,16 +1,18 @@
 import { unstable_cache } from "next/cache";
 import { db } from "@/db";
 import { products, purchases } from "@/db/schema";
-import { count, eq } from "drizzle-orm";
+import { and, count, eq } from "drizzle-orm";
+import { capacityPurchaseFilter, excludeC5CompsFromCapacity } from "./coupon-batches/capacity";
 
 export const PURCHASE_COUNTS_TAG = "purchase-counts";
 export const PURCHASE_COUNT_REVALIDATE_SECONDS = 30;
 
-async function readPurchaseCount(productId: string): Promise<number> {
+/** Uncached row count for readers that already count each purchase as one. */
+export async function readCapacityPurchaseCount(productId: string): Promise<number> {
   const [row] = await db
     .select({ count: count() })
     .from(purchases)
-    .where(eq(purchases.productId, productId));
+    .where(and(eq(purchases.productId, productId), capacityPurchaseFilter(productId)));
   return row?.count ?? 0;
 }
 
@@ -19,16 +21,18 @@ async function readPurchaseCount(productId: string): Promise<number> {
  * Missing/unknown caps fail closed to the existing uncached count query.
  */
 export async function getPurchaseCount(productId: string): Promise<number> {
+  // Never cache a filtered count under the legacy key or serve one after a stop.
+  if (excludeC5CompsFromCapacity(productId)) return readCapacityPurchaseCount(productId);
   const [product] = await db
     .select({ quantityAvailable: products.quantityAvailable })
     .from(products)
     .where(eq(products.id, productId));
-  if (product?.quantityAvailable !== -1) return readPurchaseCount(productId);
+  if (product?.quantityAvailable !== -1) return readCapacityPurchaseCount(productId);
 
   const cached = await unstable_cache(
     async () => {
       const cachedAt = Date.now();
-      return { count: await readPurchaseCount(productId), cachedAt };
+      return { count: await readCapacityPurchaseCount(productId), cachedAt };
     },
     ["purchase-count", productId],
     {
@@ -39,5 +43,5 @@ export async function getPurchaseCount(productId: string): Promise<number> {
   // unstable_cache uses stale-while-revalidate. Do not serve an older snapshot.
   return Date.now() - cached.cachedAt < PURCHASE_COUNT_REVALIDATE_SECONDS * 1000
     ? cached.count
-    : readPurchaseCount(productId);
+    : readCapacityPurchaseCount(productId);
 }

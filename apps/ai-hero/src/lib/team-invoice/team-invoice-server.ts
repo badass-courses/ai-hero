@@ -9,18 +9,17 @@ import {
 } from '@/app/api/front-desk/pricing-facts'
 import { hooks as frontDeskHooks } from '@/app/api/front-desk/hooks'
 import { stripeProvider } from '@/coursebuilder/stripe-provider'
-import { courseBuilderAdapter, db } from '@/db'
-import { purchases } from '@/db/schema'
+import { courseBuilderAdapter } from '@/db'
 import BasicEmail from '@/emails/basic-email'
 import { env } from '@/env.mjs'
 import { c5DecisionCutover } from '@/lib/c5-pricing/config'
 import { frontDeskData } from '@/lib/c5-pricing/server'
 import { c5PricingClosed } from '@/lib/c5-pricing/switch-server'
+import { readCapacityPurchaseCount } from '@/lib/purchase-count'
 import { log } from '@/server/logger'
 import { redis } from '@/server/redis-client'
 import { sendAnEmail } from '@coursebuilder/utils/send-an-email'
 import { Ratelimit } from '@upstash/ratelimit'
-import { count, eq } from 'drizzle-orm'
 import { Effect } from 'effect'
 
 import { price as enginePrice } from '@ai-hero/front-desk-support/pricing'
@@ -141,12 +140,7 @@ export const loadProduct = (productId: string) =>
 		{
 			adapter: courseBuilderAdapter,
 			stripe: stripe(),
-			purchaseCount: (id) =>
-				db
-					.select({ count: count() })
-					.from(purchases)
-					.where(eq(purchases.productId, id))
-					.then((rows) => rows[0]?.count ?? 0),
+			purchaseCount: readCapacityPurchaseCount,
 			openInvoices: openTeamInvoices,
 		},
 		productId,

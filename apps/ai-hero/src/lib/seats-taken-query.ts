@@ -2,6 +2,7 @@ import { db } from '@/db'
 import { coupon, purchases } from '@/db/schema'
 import { sql } from 'drizzle-orm'
 
+import { capacityPurchaseFilter } from './coupon-batches/capacity'
 import { SEAT_HOLDING_STATUSES } from './pricing-decisions'
 
 const holding = sql.join(
@@ -14,6 +15,7 @@ const holding = sql.join(
  * for the rule; `seats-taken-query.mysql.test.ts` holds the two to parity).
  */
 export function seatsTakenSql(productId: string) {
+	const countable = capacityPurchaseFilter(productId, 'p')
 	return sql`
 		select
 			(
@@ -31,7 +33,7 @@ export function seatsTakenSql(productId: string) {
 				from ${purchases} p
 				where p.productId = ${productId}
 					and p.status in (${holding})
-					and p.bulkCouponId is null
+					and p.bulkCouponId is null${countable ? sql` and ${countable}` : sql.empty()}
 					and (
 						p.redeemedBulkCouponId is null
 						or p.redeemedBulkCouponId not in (
