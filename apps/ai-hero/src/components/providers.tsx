@@ -19,7 +19,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
 			<MDXProvider>
 				<MuxPlayerProvider>
 					<FeedbackProvider
-						sendFeedback={sendFeedbackFromUser}
+						sendFeedback={async (options) => {
+							await sendFeedbackFromUser(options)
+						}}
 						currentUrl={currentUrl}
 						feedbackComponent={<FeedbackDialog />}
 					>
