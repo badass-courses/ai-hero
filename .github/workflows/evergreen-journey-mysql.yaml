@@ -337,6 +337,11 @@ jobs:
           pnpm --filter ai-hero exec node scripts/test-mysql-schema.mjs "$AIH_COUPON_MINT_MYSQL_URL"
           pnpm --filter ai-hero exec vitest run -c vitest.config.ts --testTimeout=30000 src/lib/coupon-mint.mysql.test.ts src/lib/paid-coupon-usage.mysql.test.ts src/inngest/functions/count-paid-coupon-use.test.ts src/inngest/count-paid-coupon-use-registration.test.ts
 
+      # Capacity fixtures call the production invoice reader, whose workspace
+      # pricing export resolves to dist rather than source.
+      - name: Build front-desk support for capacity fixtures
+        run: pnpm --filter @ai-hero/front-desk-support build
+
       - name: Run guarded coupon batch suite
         env:
           AIH_COUPON_BATCH_MYSQL_URL: mysql://root:aih_test_password@127.0.0.1:3307/coupon_batch_fixture
@@ -346,7 +351,7 @@ jobs:
           pnpm --filter ai-hero exec node scripts/test-mysql-schema.mjs "$AIH_COUPON_BATCH_MYSQL_URL" --check-coupon-batch-migration
           mysql -h 127.0.0.1 -P 3307 -uroot -paih_test_password -e 'CREATE DATABASE IF NOT EXISTS coupon_capacity_fixture'
           pnpm --filter ai-hero exec node scripts/test-mysql-schema.mjs "$AIH_COUPON_CAPACITY_MYSQL_URL"
-          pnpm --filter ai-hero exec vitest run -c vitest.config.ts --testTimeout=30000 src/lib/coupon-batches
+          pnpm --filter ai-hero exec vitest run -c vitest.config.ts --testTimeout=30000 --minWorkers=1 --maxWorkers=4 src/lib/coupon-batches
 
       - name: Run guarded early-access payer suite
         env:

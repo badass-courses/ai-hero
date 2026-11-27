@@ -29,22 +29,28 @@ vi.mock('@/server/logger', () => ({ log: { warn: fixture.warn } }))
 
 import '@/inngest/functions/coupon-batch-drain'
 
-function invoke(id: string) {
+const wake = 'commerce/coupon-batches.wake'
+
+function invoke(
+	id: string,
+	enqueue: (event: { name: string }) => void = () => {},
+) {
 	const registered = fixture.registrations.get(id) as {
 		triggers: object[]
-		singleton: { mode: string }
+		concurrency: { limit: number }
+		singleton?: { mode: string }
 		handler: (input: { step: typeof step }) => Promise<unknown>
 	}
 	const step = {
 		run: async (_id: string, fn: () => unknown) => fn(),
 		sleep: vi.fn(),
-		sendEvent: vi.fn(),
+		sendEvent: vi.fn(async (_id: string, event: { name: string }) => {
+			// Inngest drops a wake arriving while a skip singleton is active.
+			if (registered.singleton?.mode !== 'skip') enqueue(event)
+		}),
 	}
-	expect(registered.triggers).toEqual([
-		{ event: 'commerce/coupon-batches.wake' },
-		{ cron: '* * * * *' },
-	])
-	expect(registered.singleton).toEqual({ mode: 'skip' })
+	expect(registered.triggers).toEqual([{ event: wake }, { cron: '* * * * *' }])
+	expect(registered.concurrency).toEqual({ limit: 1 })
 	return { result: registered.handler({ step }), step }
 }
 
@@ -86,6 +92,23 @@ it('includes both registered functions in the served list and runs a paced drain
 	expect(step.sleep).toHaveBeenCalledWith('pace-1', 1200)
 })
 
+it('drains a 41-chunk backlog from one wake without waiting for cron', async () => {
+	let remaining = 41
+	fixture.runChunk.mockImplementation(async () =>
+		remaining > 0 ? (--remaining, { state: 'worked' }) : { state: 'idle' },
+	)
+	const queued: string[] = []
+	const first = invoke('coupon-batch-drain', ({ name }) => queued.push(name))
+	await expect(first.result).resolves.toEqual({ state: 'continued' })
+	expect(remaining).toBe(1)
+	expect(queued).toEqual([wake])
+	await expect(invoke('coupon-batch-drain').result).resolves.toEqual({
+		state: 'idle',
+	})
+	expect(remaining).toBe(0)
+	expect(fixture.runChunk).toHaveBeenCalledTimes(42)
+})
+
 it('both cron handlers exit before steps on an untouched deployment', async () => {
 	delete process.env.AIH_COUPON_BATCH_SECRET
 	delete process.env.AIH_COUPON_BATCH_ENABLED
@@ -99,7 +122,10 @@ it('both cron handlers exit before steps on an untouched deployment', async () =
 	expect(fixture.drainAlerts).not.toHaveBeenCalled()
 })
 
-it('sends a stable dedupe key from the registered alarm while minting is off', async () => {
+it('sends a stable dedupe key from the registered skip-singleton alarm while minting is off', async () => {
+	expect(fixture.registrations.get('coupon-batch-alarms')).toMatchObject({
+		singleton: { mode: 'skip' },
+	})
 	delete process.env.AIH_COUPON_BATCH_ENABLED
 	vi.stubEnv('AIH_COUPON_BATCH_SECRET', 'f'.repeat(32))
 	const fetchFixture = vi.fn(async () => new Response(null, { status: 204 }))

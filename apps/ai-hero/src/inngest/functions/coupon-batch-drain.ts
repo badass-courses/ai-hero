@@ -10,8 +10,9 @@ import { log } from '@/server/logger'
 export const couponBatchDrain = inngest.createFunction(
 	{
 		id: 'coupon-batch-drain',
+		// Queue steps instead of skipping runs: a continuation is emitted while
+		// this run is still active. The DB control row fences/paces every chunk.
 		concurrency: { limit: 1 },
-		singleton: { mode: 'skip' },
 	},
 	[{ event: COUPON_BATCH_WAKE }, { cron: '* * * * *' }],
 	async ({ step }) => {
