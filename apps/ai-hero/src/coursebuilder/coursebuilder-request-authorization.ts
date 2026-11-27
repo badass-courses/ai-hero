@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server'
+import { isPrivateCompReference } from '@/lib/coupon-batches/namespace'
 import {
 	authorizeExclusiveCouponSelection,
 	type ExclusiveCouponAuthorizationAdapter,
@@ -95,6 +96,14 @@ const requestWithUrl = async (request: NextRequest, url: URL) => {
 	})
 }
 
+const couponSelectorParams = [
+	'coupon',
+	'couponId',
+	'usedCouponId',
+	'merchantCouponId',
+	'code',
+] as const
+
 const parsePricesFormattedBody = async (request: NextRequest) => {
 	const contentType = request.headers.get('content-type') ?? ''
 	if (contentType.includes('application/json')) {
@@ -131,6 +140,15 @@ const protectPricesFormattedRequest = async (
 ) => {
 	const body = await parsePricesFormattedBody(request)
 	if (!body) return request
+
+	for (const key of couponSelectorParams) {
+		if (isPrivateCompReference(body[key])) delete body[key]
+	}
+	if (
+		isRecord(body.merchantCoupon) &&
+		isPrivateCompReference(body.merchantCoupon.id)
+	)
+		delete body.merchantCoupon
 
 	if (verifiedUserId) body.userId = verifiedUserId
 	else delete body.userId
@@ -314,6 +332,20 @@ export async function protectCourseBuilderRequest(
 	options: ProtectCourseBuilderRequestOptions,
 ): Promise<NextRequest> {
 	const pathname = request.nextUrl.pathname
+	if (
+		pathname.endsWith('/prices-formatted') ||
+		pathname.includes('/checkout/')
+	) {
+		const url = new URL(request.url)
+		let changed = false
+		for (const key of couponSelectorParams) {
+			if (url.searchParams.getAll(key).some(isPrivateCompReference)) {
+				url.searchParams.delete(key)
+				changed = true
+			}
+		}
+		if (changed) request = await requestWithUrl(request, url)
+	}
 	if (pathname.endsWith('/prices-formatted')) {
 		return protectPricesFormattedRequest(request, options)
 	}

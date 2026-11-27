@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import * as schema from '@/db/schema'
-import { and, eq, sql } from 'drizzle-orm'
+import { and, eq, inArray, sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/mysql2'
 import type { Pool } from 'mysql2/promise'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
@@ -11,7 +11,11 @@ import {
 	MintPersonalAccessTokenSchema,
 } from '../personal-access-tokens'
 import { couponBatchHandlers } from './http'
-import { CONTROL_ID, createCouponBatchService } from './service'
+import { CONTROL_ID, createCouponBatchService, pacificDay } from './service'
+import {
+	concurrentlyBehindRowLock,
+	createCouponFixturePool,
+} from './mysql-fixture'
 import { createCouponBatchWorkerPool } from './worker-pool'
 
 const uri = process.env.AIH_COUPON_BATCH_MYSQL_URL
@@ -20,7 +24,7 @@ const tokenSecret = 'test-only-pat-secret'
 const capture = (
 	name: string,
 	options: Parameters<typeof createPersonalAccessToken>[0]['scopes'],
-	expiresAt: Date | null = new Date('2026-12-20T12:00:00Z'),
+	expiresAt: Date | null = new Date('2037-12-20T12:00:00Z'),
 ) =>
 	createPersonalAccessToken({
 		userId: `${name}-${run}`,
@@ -90,6 +94,9 @@ describe.skipIf(!uri)(
 		let service: ReturnType<typeof createCouponBatchService>
 		let api: ReturnType<typeof couponBatchHandlers>
 		let clock = new Date('2026-11-27T07:59:50Z')
+		let firstDay: string
+		let nextDay: string
+		let rolloverAt: number
 		let envEnabled = false
 		const wake = vi.fn()
 		const page = vi.fn(async (_value: unknown) => {})
@@ -103,11 +110,32 @@ describe.skipIf(!uri)(
 				!/^\/coupon_batch_fixture(?:_[a-z0-9]+)?$/.test(url.pathname)
 			)
 				throw new Error('unsafe fixture database')
-			pool = createCouponBatchWorkerPool(uri!)
+			pool = createCouponFixturePool(uri!)
 			db = drizzle(pool, {
 				schema,
 				mode: 'planetscale',
 			}) as unknown as typeof db
+			// Repeat runs share the fixture DB but never reuse another wave's days.
+			for (let attempt = 0; attempt < 460; attempt++) {
+				const week = (Number.parseInt(run, 16) + attempt) % 460
+				const midnightCandidates = [7, 8].map((hour) =>
+					Date.UTC(2027, 0, 1 + 7 * week, hour),
+				)
+				const midnight = midnightCandidates.find(
+					(t) => pacificDay(new Date(t)) !== pacificDay(new Date(t - 1000)),
+				)!
+				rolloverAt = midnight
+				clock = new Date(midnight - 10_000)
+				firstDay = pacificDay(clock)
+				nextDay = pacificDay(new Date(midnight))
+				const used = await db
+					.select({ day: schema.couponBatchDay.day })
+					.from(schema.couponBatchDay)
+					.where(inArray(schema.couponBatchDay.day, [firstDay, nextDay]))
+				if (used.length === 0) break
+				if (attempt === 459) throw new Error('no unused synthetic Pacific day')
+			}
+			template.deadlineAt = new Date(+clock + 4 * 86400_000).toISOString()
 			await db
 				.insert(schema.couponBatchControl)
 				.values({ id: CONTROL_ID, enabled: 0, paceMs: 0 })
@@ -261,10 +289,17 @@ describe.skipIf(!uri)(
 		it('survives a lost response and same-key race, scopes read/export, and dedupes overlapping intents', async () => {
 			const before = await counts()
 			const body = await confirm(payload('race'))
-			const [a, b] = await Promise.all([
-				api.submit(request(body, `race-${run}`)),
-				api.submit(request(body, `race-${run}`)),
-			])
+			const [a, b] = await concurrentlyBehindRowLock(
+				pool,
+				'SELECT id FROM AI_CouponBatchControl WHERE id = ? FOR UPDATE',
+				CONTROL_ID,
+				'AI_CouponBatchControl',
+				() =>
+					Promise.all([
+						api.submit(request(body, `race-${run}`)),
+						api.submit(request(body, `race-${run}`)),
+					]),
+			)
 			expect(a.status).toBe(202)
 			expect(b.status).toBe(202)
 			const original = await a.json()
@@ -407,7 +442,7 @@ describe.skipIf(!uri)(
 			await setControl({ enabled: 1 })
 			expect((await service.runChunk()).state).toBe('worked')
 			expect((await service.runChunk()).state).toBe('paced')
-			clock = new Date('2026-11-27T08:00:01Z')
+			clock = new Date(rolloverAt + 1000)
 			const after = await confirm(payload('new-day', 103))
 			const next = await api
 				.submit(request(after, `new-day-${run}`))
@@ -431,12 +466,14 @@ describe.skipIf(!uri)(
 			let cursor: number | null = 0
 			let read = 0
 			while (cursor !== null) {
-				const req = new Request(`https://example.test/?cursor=${cursor}`, {
-					headers: { Authorization: `Bearer ${operator.rawToken}` },
-				})
-				const status = await api
-					.status(req, first.batchId)
-					.then((r) => r.json())
+				const req: Request = new Request(
+					`https://example.test/?cursor=${cursor}`,
+					{
+						headers: { Authorization: `Bearer ${operator.rawToken}` },
+					},
+				)
+				const status: { outcomes: unknown[]; nextCursor: number | null } =
+					await api.status(req, first.batchId).then((r) => r.json())
 				expect(status.outcomes.length).toBeLessThanOrEqual(100)
 				read += status.outcomes.length
 				cursor = status.nextCursor
@@ -473,8 +510,8 @@ describe.skipIf(!uri)(
 				.select()
 				.from(schema.couponBatch)
 				.where(eq(schema.couponBatch.id, oldDay.batchId))
-			expect(older).toMatchObject({ acceptedDay: '2026-11-26', dailyAlarm: 1 })
-			expect(late).toMatchObject({ acceptedDay: '2026-11-27', dailyAlarm: 0 })
+			expect(older).toMatchObject({ acceptedDay: firstDay, dailyAlarm: 1 })
+			expect(late).toMatchObject({ acceptedDay: nextDay, dailyAlarm: 0 })
 		}, 45_000)
 
 		it('rechecks an admitted credential and refuses remaining work without a second mint', async () => {
@@ -590,18 +627,36 @@ describe.skipIf(!uri)(
 			})
 		})
 
-		it('parks a repeatedly failing chunk and writes sanitized aging and stuck alarms once', async () => {
+		it('exports committed codes while stopped or parked and writes aging and stuck alarms once', async () => {
+			await setControl({ chunkSize: 1, paceMs: 0, nextChunkAt: null })
 			const { batchId } = await api
 				.submit(
 					request(
-						await confirm(payload('invalid-fixture-chunk')),
+						await confirm(payload('invalid-fixture-chunk', 2)),
 						`bad-chunk-${run}`,
 					),
 				)
 				.then((r) => r.json())
+			expect((await service.runChunk(batchId)).state).toBe('worked')
+			expect((await api.exportPage(request({ batchId }))).status).toBe(409)
+			await setControl({ enabled: 0 })
+			const stopped = await api
+				.exportPage(request({ batchId }))
+				.then((r) => r.json())
+			expect(stopped.outcomes[0]).toMatchObject({
+				state: 'minted',
+				code: expect.any(String),
+			})
+			expect(stopped.outcomes[1]).not.toHaveProperty('code')
+			await setControl({ enabled: 1 })
 			await db
 				.delete(schema.couponBatchItem)
-				.where(eq(schema.couponBatchItem.batchId, batchId))
+				.where(
+					and(
+						eq(schema.couponBatchItem.batchId, batchId),
+						eq(schema.couponBatchItem.ordinal, 2),
+					),
+				)
 			for (let attempt = 1; attempt <= 8; attempt++) {
 				expect(await service.runChunk(batchId)).toEqual({
 					state: 'retry',
@@ -612,6 +667,11 @@ describe.skipIf(!uri)(
 			}
 			clock = new Date(+clock + 30 * 60_000)
 			expect(await service.runChunk(batchId)).toEqual({ state: 'idle' })
+			const parked = await api
+				.exportPage(request({ batchId }))
+				.then((r) => r.json())
+			expect(parked.outcomes).toEqual([stopped.outcomes[0]])
+			await setControl({ chunkSize: 100 })
 			const sent = vi.fn(async (_row: unknown) => {})
 			await service.drainAlerts(sent, log)
 			await service.drainAlerts(sent, log)

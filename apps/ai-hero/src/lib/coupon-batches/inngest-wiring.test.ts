@@ -34,6 +34,7 @@ import '@/inngest/functions/coupon-batch-drain'
 function invoke(id: string) {
 	const registered = fixture.registrations.get(id) as {
 		triggers: object[]
+		singleton: { mode: string }
 		handler: (input: { step: typeof step }) => Promise<unknown>
 	}
 	const step = {
@@ -45,6 +46,7 @@ function invoke(id: string) {
 		{ event: 'commerce/coupon-batches.wake' },
 		{ cron: '* * * * *' },
 	])
+	expect(registered.singleton).toEqual({ mode: 'skip' })
 	return { result: registered.handler({ step }), step }
 }
 
@@ -80,6 +82,18 @@ it('includes both registered functions in the served list and runs a paced drain
 	const { result, step } = invoke('coupon-batch-drain')
 	await expect(result).resolves.toEqual({ state: 'idle' })
 	expect(step.sleep).toHaveBeenCalledWith('pace-1', 1200)
+})
+
+it('both cron handlers exit before steps when the feature is off', async () => {
+	fixture.enabled.mockReturnValue(false)
+	try {
+		await expect(invoke('coupon-batch-drain').result).resolves.toEqual({ state: 'disabled' })
+		await expect(invoke('coupon-batch-alarms').result).resolves.toEqual({ state: 'disabled' })
+		expect(fixture.runChunk).not.toHaveBeenCalled()
+		expect(fixture.drainAlerts).not.toHaveBeenCalled()
+	} finally {
+		fixture.enabled.mockReturnValue(true)
+	}
 })
 
 it('invokes the registered alarm without network and sends a stable dedupe key', async () => {

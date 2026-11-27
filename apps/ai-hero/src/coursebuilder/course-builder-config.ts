@@ -56,9 +56,25 @@ export const {
 	coursebuilder,
 } = NextCourseBuilder(courseBuilderConfig)
 
-export function POST(request: NextRequest) {
+export type CourseBuilderRouteContext = {
+	params: Promise<{ nextCourseBuilder: string[] }>
+}
+type CourseBuilderRouteHandler = (
+	request: NextRequest,
+	context?: CourseBuilderRouteContext,
+) => Promise<Response>
+
+export function POST(
+	request: NextRequest,
+	context?: CourseBuilderRouteContext,
+) {
+	// The dependency's declaration omits context. Forward the Next argument
+	// regardless, including for unchanged Stripe requests.
 	return withPrivateCompClaim(request, (safe) =>
-		post(safe === request ? request : new NextRequest(safe)),
+		(post as CourseBuilderRouteHandler)(
+			safe === request ? request : new NextRequest(safe),
+			context,
+		),
 	)
 }
 

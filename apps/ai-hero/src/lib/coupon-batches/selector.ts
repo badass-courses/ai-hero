@@ -5,19 +5,14 @@ import {
 	randomBytes,
 } from 'node:crypto'
 
-export const SELECTOR_PREFIX = 'c5comp_'
-export const ROW_PREFIX = 'batch-coupon-'
-const SELECTOR = /^c5comp_[0-9a-f]{40}$/i
+import { DIGEST_PREFIX, SELECTOR_PREFIX } from './namespace'
 
-export const inSelectorNamespace = (value: unknown): value is string =>
-	typeof value === 'string' && value.toLowerCase().startsWith(SELECTOR_PREFIX)
-export const inRowNamespace = (value: unknown): boolean =>
-	typeof value === 'string' && value.toLowerCase().startsWith(ROW_PREFIX)
+const SELECTOR = /^c5comp_[0-9a-f]{40}$/i
 export const newSelector = () =>
 	`${SELECTOR_PREFIX}${randomBytes(20).toString('hex')}`
 export const selectorDigest = (code: string) =>
 	SELECTOR.test(code)
-		? `c5hash_${createHash('sha256').update(code.toLowerCase()).digest('hex')}`
+		? `${DIGEST_PREFIX}${createHash('sha256').update(code.toLowerCase()).digest('hex')}`
 		: null
 
 // The ledger stores authenticated ciphertext, not the bearer. The coupon

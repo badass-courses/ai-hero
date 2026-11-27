@@ -3,10 +3,8 @@ import { eq, inArray, sql } from 'drizzle-orm'
 import { CourseBuilder } from '@coursebuilder/server/http'
 import { getCouponForCode } from './coupon-display'
 import { couponBatchHandlers } from './coupon-batches/http'
-import {
-	c5CompPresentation,
-	guardC5CompSelectors,
-} from './coupon-batches/free-selector'
+import { c5CompPresentation } from './coupon-batches/free-selector'
+import { guardC5CompSelectors } from './coupon-batches/adapter-guard'
 import { withPrivateCompClaim } from './coupon-batches/free-claim-request'
 import { CONTROL_ID, createCouponBatchService } from './coupon-batches/service'
 import {
@@ -17,7 +15,10 @@ import {
 import type { MySqlDatabase } from 'drizzle-orm/mysql-core'
 import { drizzle } from 'drizzle-orm/mysql2'
 import type { Pool } from 'mysql2/promise'
-import { createCouponBatchWorkerPool } from './coupon-batches/worker-pool'
+import {
+	concurrentlyBehindRowLock,
+	createCouponFixturePool,
+} from './coupon-batches/mysql-fixture'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import * as schema from '@/db/schema'
@@ -160,7 +161,7 @@ suite('coupon minting against real MySQL', () => {
 	let adapter: ReturnType<typeof DrizzleAdapter<MySqlDatabase<any, any, any>>>
 
 	beforeAll(async () => {
-		pool = createCouponBatchWorkerPool(assertLoopbackTestDatabase(uri!))
+		pool = createCouponFixturePool(assertLoopbackTestDatabase(uri!))
 		db = drizzle(pool, { schema, mode: 'planetscale' }) as any
 		state.database = db
 		adapter = guardC5CompSelectors(
@@ -548,10 +549,17 @@ suite('coupon minting against real MySQL', () => {
 				error: { message: 'coupon-is-invalid' },
 			})
 		}
-		const results = await Promise.all([
-			redeem(live.code, first.email),
-			redeem(live.code.toUpperCase(), second.email),
-		])
+		const results = await concurrentlyBehindRowLock(
+			pool,
+			'SELECT id FROM AI_Coupon WHERE id = ? FOR UPDATE',
+			live.couponRef,
+			'AI_Coupon',
+			() =>
+				Promise.all([
+					redeem(live.code, first.email),
+					redeem(live.code.toUpperCase(), second.email),
+				]),
+		)
 		const winners = results.filter((result) => result.purchase)
 		expect(winners).toHaveLength(1)
 		expect(await redeem(live.code, second.email)).toMatchObject({

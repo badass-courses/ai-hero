@@ -191,6 +191,14 @@ const config = {
 	async headers() {
 		return [
 			...homepageDiscoveryHeaders,
+			{
+				source: '/cohorts/:slug',
+				has: [{ type: 'query', key: 'code' }],
+				headers: [
+					{ key: 'Cache-Control', value: 'private, no-store' },
+					{ key: 'Referrer-Policy', value: 'no-referrer' },
+				],
+			},
 			// The OAuth consent page must never render in a frame (clickjacking).
 			{
 				source: '/oauth/authorize/:path*',

@@ -43,10 +43,10 @@ import {
 import {
 	newSelector,
 	openSelector,
-	ROW_PREFIX,
 	sealSelector,
 	selectorDigest,
 } from './selector'
+import { ROW_PREFIX } from './namespace'
 
 export const CONTROL_ID = 'ai-hero'
 const exportOrRead = COUPON_BATCH_READ_SCOPE
@@ -355,11 +355,22 @@ export function createCouponBatchService(options: ServiceOptions) {
 			}
 			return { i, row }
 		}
-		const isCollision = (err: unknown) =>
-			typeof err === 'object' &&
-			err !== null &&
-			'code' in err &&
-			err.code === 'COUPON_SELECTOR_COLLISION'
+		// This port inserts coupon rows only. Its unique keys are row id and
+		// code digest; both are regenerated locally after a duplicate.
+		const isCollision = (err: unknown) => {
+			const outer = err as {
+				code?: unknown
+				errno?: unknown
+				cause?: unknown
+			} | null
+			const inner = outer?.cause as { code?: unknown; errno?: unknown } | null
+			return [outer, inner].some(
+				(e) =>
+					e?.code === 'COUPON_SELECTOR_COLLISION' ||
+					e?.code === 'ER_DUP_ENTRY' ||
+					e?.errno === 1062,
+			)
+		}
 		async function isolated(rows: ReturnType<typeof candidate>[]) {
 			try {
 				await insert(rows.map(({ row }) => row))
@@ -520,14 +531,17 @@ export function createCouponBatchService(options: ServiceOptions) {
 							set: { intents: count, mints: (counter?.mints ?? 0) + newMints },
 						})
 				if (count > DAILY_ALARM && (counter?.intents ?? 0) <= DAILY_ALARM) {
-					await tx.insert(alert).values({
-						id: `day:${b.acceptedDay}`,
-						batchId: b.id,
-						kind: 'daily',
-						count,
-						threshold: DAILY_ALARM,
-						nextAttemptAt: when,
-					})
+					await tx
+						.insert(alert)
+						.values({
+							id: `day:${b.acceptedDay}`,
+							batchId: b.id,
+							kind: 'daily',
+							count,
+							threshold: DAILY_ALARM,
+							nextAttemptAt: when,
+						})
+						.onDuplicateKeyUpdate({ set: { id: sql`${alert.id}` } })
 				}
 				const processed = b.processed + chunk.length
 				await tx
@@ -721,7 +735,17 @@ export function createCouponBatchService(options: ServiceOptions) {
 		return read(raw, async (tx, token, when) => {
 			const b = await owner(tx, batchId, token.userId)
 			if (b.exportUntil <= when) return safeProblem(410, 'export_expired')
-			if (!b.finishedAt) return safeProblem(409, 'batch_pending')
+			if (
+				!b.finishedAt &&
+				b.attempts < MAX_WORKER_ATTEMPTS &&
+				options.enabled()
+			) {
+				const [gate] = await tx
+					.select({ enabled: control.enabled })
+					.from(control)
+					.where(eq(control.id, CONTROL_ID))
+				if (gate?.enabled === 1) return safeProblem(409, 'batch_pending')
+			}
 			const page = await tx
 				.select({
 					...resultFields,

@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 
-import { inSelectorNamespace, selectorDigest } from './selector'
+import { inSelectorNamespace } from './namespace'
+import { selectorDigest } from './selector'
 
 export const INTERNAL_COMP_CLAIM = 'batch-coupon-claim'
 const claimDigest = new AsyncLocalStorage<string | null>()
@@ -22,7 +23,13 @@ export async function withPrivateCompClaim<T>(
 	const contentType = request.headers.get('content-type') ?? ''
 	const json = contentType.includes('application/json')
 	const form = contentType.includes('application/x-www-form-urlencoded')
-	if (!json && !form) return run(request)
+	// Neither unsupported encoding nor its contents should reach debug logging.
+	if (!json && !form && request.body)
+		return Response.json('unsupported coupon request', {
+			status: 415,
+			headers: { 'Cache-Control': 'no-store' },
+		})
+	if (!request.body) return run(request)
 	const raw = await request.clone().text()
 	let body: Record<string, unknown>
 	try {

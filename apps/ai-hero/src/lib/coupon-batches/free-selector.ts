@@ -1,3 +1,4 @@
+import 'server-only'
 import type { DbExecutor } from '@/db/client'
 import { mysqlTable } from '@/db/mysql-table'
 import { coupon } from '@/db/schema'
@@ -8,23 +9,19 @@ import { createPersonalOrganizationService } from '@coursebuilder/organizations'
 import { and, eq, getTableColumns, sql } from 'drizzle-orm'
 import type { MySqlDatabase } from 'drizzle-orm/mysql-core'
 
-import { PRODUCT, TEMPLATE } from './contract'
+import {
+	PRODUCT,
+	TEMPLATE,
+	inRowNamespace,
+	inSelectorNamespace,
+} from './namespace'
 import {
 	activeCompClaimDigest,
 	INTERNAL_COMP_CLAIM,
 } from './free-claim-request'
-import { inRowNamespace, inSelectorNamespace, selectorDigest } from './selector'
+import { selectorDigest } from './selector'
 
 type BatchCouponDb = typeof import('@/db/client').db
-type Paths = Pick<
-	CouponPort,
-	'getCoupon' | 'getCouponWithBulkPurchases' | 'couponForIdOrCode'
-> &
-	Pick<PurchasePort, 'redeemFullPriceCoupon'>
-const reserved = (value: unknown) =>
-	inRowNamespace(value) ||
-	inSelectorNamespace(value) ||
-	(typeof value === 'string' && value.toLowerCase().startsWith('c5hash_'))
 const rollbackFirstClaim = Symbol('rollbackFirstClaim')
 const invalid = () => ({
 	purchase: null,
@@ -100,78 +97,45 @@ export function c5CompPresentation<
 	return { ...adapter, getCoupon: display, getCouponForDisplay: display }
 }
 
-/** Narrow free-redeem bridge; paid pricing and legacy selector behavior stay
- * on their existing paths. Resolve by digest only, then serialize the existing
- * CB free workflow on the coupon row in the same transaction. */
-export function guardC5CompSelectors<T extends Paths>(
-	adapter: T,
-	claimDatabase: () => BatchCouponDb,
-): T {
-	const redeem = adapter.redeemFullPriceCoupon.bind(adapter)
-	const getCoupon = adapter.getCoupon.bind(adapter)
-	const getBulk = adapter.getCouponWithBulkPurchases.bind(adapter)
-	const lookupLegacy = adapter.couponForIdOrCode.bind(adapter)
-	return Object.assign(adapter, {
-		async getCoupon(value: string) {
-			if (!inRowNamespace(value))
-				return reserved(value) ? null : getCoupon(value)
-			const row = await getCoupon(value)
-			return row ? { ...row, code: null } : null
-		},
-		async getCouponWithBulkPurchases(value?: string) {
-			if (!inRowNamespace(value)) return reserved(value) ? null : getBulk(value)
-			const row = await getBulk(value)
-			return row ? { ...row, code: null } : null
-		},
-		couponForIdOrCode: (
-			input: Parameters<CouponPort['couponForIdOrCode']>[0],
-		) =>
-			reserved(input.code) || reserved(input.couponId)
-				? Promise.resolve(null)
-				: lookupLegacy(input),
-		async redeemFullPriceCoupon(
-			input: Parameters<PurchasePort['redeemFullPriceCoupon']>[0],
-		) {
-			if (!reserved(input.couponId)) return redeem(input)
-			if (
-				input.couponId !== INTERNAL_COMP_CLAIM ||
-				input.redeemingProductId !== PRODUCT ||
-				input.productIds?.length !== 1 ||
-				input.productIds[0] !== PRODUCT
+/** The coupon row is locked on the normal app connection for the whole claim. */
+export async function redeemPrivateComp(
+	db: BatchCouponDb,
+	input: Parameters<PurchasePort['redeemFullPriceCoupon']>[0],
+) {
+	if (
+		input.couponId !== INTERNAL_COMP_CLAIM ||
+		input.redeemingProductId !== PRODUCT ||
+		input.productIds?.length !== 1 ||
+		input.productIds[0] !== PRODUCT
+	)
+		return invalid()
+	const digest = activeCompClaimDigest()
+	if (!digest) return invalid()
+	try {
+		return await db.transaction(async (tx) => {
+			const [row] = await lookup(tx, digest).for('update')
+			if (!row || !isComp(row)) return invalid()
+			const txAdapter = DrizzleAdapter<MySqlDatabase<any, any, any>>(
+				tx,
+				mysqlTable,
 			)
-				return invalid()
-			const digest = activeCompClaimDigest()
-			if (!digest) return invalid()
-			try {
-				return await claimDatabase().transaction(async (tx) => {
-					const [row] = await lookup(tx, digest).for('update')
-					if (!row || !isComp(row)) return invalid()
-					const txAdapter = DrizzleAdapter<MySqlDatabase<any, any, any>>(
-						tx,
-						mysqlTable,
-					)
-					// Provision a first-time claimant under the same SQL transaction.
-					// No organization, user or purchase persists if redemption fails.
-					const { user, isNewUser } = await txAdapter.findOrCreateUser(
-						input.email,
-					)
-					if (isNewUser) {
-						await createPersonalOrganizationService({
-							organizations: txAdapter,
-							logger: { info: () => {}, error: () => {} },
-						}).ensurePersonalOrganization(user)
-					}
-					const result = await txAdapter.redeemFullPriceCoupon({
-						...input,
-						couponId: row.id,
-					})
-					if (isNewUser && !result?.purchase) throw rollbackFirstClaim
-					return result ?? invalid()
-				})
-			} catch (error) {
-				if (error === rollbackFirstClaim) return invalid()
-				throw new Error('c5_comp_redeem_unavailable')
+			// Provision atomically: a losing or rolled-back claim creates no user or org.
+			const { user, isNewUser } = await txAdapter.findOrCreateUser(input.email)
+			if (isNewUser) {
+				await createPersonalOrganizationService({
+					organizations: txAdapter,
+					logger: { info: () => {}, error: () => {} },
+				}).ensurePersonalOrganization(user)
 			}
-		},
-	})
+			const result = await txAdapter.redeemFullPriceCoupon({
+				...input,
+				couponId: row.id,
+			})
+			if (isNewUser && !result?.purchase) throw rollbackFirstClaim
+			return result ?? invalid()
+		})
+	} catch (error) {
+		if (error === rollbackFirstClaim) return invalid()
+		throw new Error('c5_comp_redeem_unavailable')
+	}
 }

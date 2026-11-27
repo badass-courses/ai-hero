@@ -2,6 +2,7 @@ import {
 	GET as courseBuilderGET,
 	POST as coreCourseBuilderPOST,
 	commercePricingHandlers,
+	type CourseBuilderRouteContext,
 } from '@/coursebuilder/course-builder-config'
 import {
 	authoritativeCheckoutProduct,
@@ -176,6 +177,7 @@ const courseBuilderGETWithCouponAuthorization = async (
 
 const courseBuilderPOSTWithCashBalanceReconciliation = async (
 	request: NextRequest,
+	context?: CourseBuilderRouteContext,
 ) => {
 	// sec-059: an unsigned transcript callback could overwrite any video's transcript.
 	if (
@@ -206,7 +208,7 @@ const courseBuilderPOSTWithCashBalanceReconciliation = async (
 			: null
 	const { value: response, decisionKind } = await withCheckoutTelemetry(
 		preSessionId,
-		() => withTrustedCountry(request, () => post(protectedRequest)),
+		() => withTrustedCountry(request, () => post(protectedRequest, context)),
 	)
 	// Preserve reservation settlement even when the core handler failed.
 	if (response.ok || webhookRequest.headers.has('stripe-signature')) {

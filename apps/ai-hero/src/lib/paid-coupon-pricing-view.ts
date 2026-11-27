@@ -1,4 +1,5 @@
 import type { CouponPort } from '@coursebuilder/core/ports'
+import { isPrivateCompReference } from './coupon-batches/namespace'
 
 // Keep non-enumerable and prototype ports as well as the adapter's own methods.
 export function cloneAdapter<T extends object>(adapter: T): T {
@@ -32,6 +33,7 @@ export function couponDisplayView<T extends CouponReader>(adapter: T): T {
 export function paidCouponPricingView<T extends CouponReader>(adapter: T): T {
 	return Object.assign(cloneAdapter(adapter), {
 		getCoupon: async (key: string) => {
+			if (isPrivateCompReference(key)) return null
 			const row = await readCouponForDisplay(adapter, key)
 			return row && !('paidCouponUsedUp' in row && row.paidCouponUsedUp)
 				? row

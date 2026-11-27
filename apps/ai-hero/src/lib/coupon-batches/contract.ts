@@ -6,8 +6,8 @@ import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { z } from 'zod'
 
-export const TEMPLATE = 'c5-comp-v1'
-export const PRODUCT = 'product-s00zs'
+import { PRODUCT, TEMPLATE } from './namespace'
+export { PRODUCT, TEMPLATE } from './namespace'
 export const PAGE = 100
 export const REQUEST_ALARM = 3000
 export const DAILY_ALARM = 4000

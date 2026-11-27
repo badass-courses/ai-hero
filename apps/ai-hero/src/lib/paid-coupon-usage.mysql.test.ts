@@ -598,6 +598,44 @@ describe.skipIf(!uri)(
 				)
 				return stripeSession.mock.lastCall![0]
 			}
+			const noPaidRef = `batch-coupon-${key('paid-selector-test')}`
+			const noPaidBearer = newSelector()
+			// Deliberately give the reserved test row a paid merchant discount.
+			// Neither the saved ID nor the code may select it on a paid path.
+			await createCoupon(noPaidRef, { code: noPaidBearer })
+			expect(
+				await runtime.rawCourseBuilderAdapter.getCoupon(noPaidRef),
+			).toMatchObject({ id: noPaidRef })
+			for (const selector of [noPaidRef, noPaidBearer]) {
+				const quote = await protectCommerceRequest(
+					request('/prices-formatted', {
+						method: 'POST',
+						headers: { 'content-type': 'application/json' },
+						body: JSON.stringify({
+							productId,
+							quantity: 1,
+							couponId: selector,
+							code: selector,
+							autoApplyPPP: false,
+						}),
+					}),
+					deps,
+				)
+				expect(
+					await (
+						await commercePricingHandlers.POST(quote.request as NextRequest)
+					).json(),
+				).toMatchObject({ calculatedPrice: 299 })
+				const session = await open(
+					request(
+						`/checkout/stripe?productId=${productId}&couponId=${selector}&usedCouponId=${selector}&code=${selector}&quantity=1&cancelUrl=https%3A%2F%2Fexample.test`,
+						{ method: 'POST' },
+					),
+				)
+				expect(session.discounts ?? []).toEqual([])
+				expect(session.metadata?.usedCouponId).toBeFalsy()
+				expect(JSON.stringify(session)).not.toContain(selector)
+			}
 			const openSession = await open(checkout(id))
 			expect(openSession.metadata?.usedCouponId).toBe(id)
 			await createPurchase(key('first-session-paid'), id)

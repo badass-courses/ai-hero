@@ -20,6 +20,8 @@ allowBuilds:
 overrides:
   # Use the same Course Builder runtime for the app and older transitive consumers.
   '@coursebuilder/core': '3.3.0'
+  '@coursebuilder/commerce': '0.3.4'
+  '@coursebuilder/server': '0.3.4'
   '@internationalized/date': '3.12.2'
   '@types/react': '19.2.7'
   '@types/react-dom': '19.2.3'

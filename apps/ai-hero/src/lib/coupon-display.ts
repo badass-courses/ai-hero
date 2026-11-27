@@ -3,7 +3,7 @@ import {
 	propsForCommerce as corePropsForCommerce,
 } from '@coursebuilder/commerce/props-for-commerce'
 
-import { inRowNamespace } from './coupon-batches/selector'
+import { inRowNamespace } from './coupon-batches/namespace'
 import { couponDisplayView } from './paid-coupon-pricing-view'
 
 const selectorDisplay = <T extends Parameters<typeof coreGetCouponForCode>[2]>(

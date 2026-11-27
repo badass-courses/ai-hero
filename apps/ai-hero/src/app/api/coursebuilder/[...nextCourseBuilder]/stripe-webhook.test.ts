@@ -12,6 +12,7 @@ const WEBHOOK_SECRET = 'test_webhook_secret'
 
 const mocks = vi.hoisted(() => ({
 	inngestSend: vi.fn().mockResolvedValue({ ids: [] }),
+	postContext: vi.fn(),
 	settleGiftSession: vi.fn().mockResolvedValue(undefined),
 	reconcileEarlyAccessPayment: vi
 		.fn()
@@ -22,6 +23,21 @@ const mocks = vi.hoisted(() => ({
 	}),
 }))
 
+vi.mock('@coursebuilder/next', async (importOriginal) => {
+	const { default: factory } =
+		await importOriginal<typeof import('@coursebuilder/next')>()
+	return {
+		default: (...args: Parameters<typeof factory>) => {
+			const built = factory(...args)
+			const post = built.handlers.POST
+			built.handlers.POST = (request: NextRequest, context?: unknown) => {
+				mocks.postContext(context)
+				return post(request)
+			}
+			return built
+		},
+	}
+})
 vi.mock('@/inngest/inngest.server', () => ({
 	inngest: { send: mocks.inngestSend },
 }))
@@ -122,6 +138,10 @@ const asyncPaymentEvent = (
 const sign = (payload: string, secret = WEBHOOK_SECRET) =>
 	stripe.webhooks.generateTestHeaderString({ payload, secret })
 
+const routeContext = {
+	params: Promise.resolve({ nextCourseBuilder: ['webhook', 'stripe'] }),
+}
+
 const post = (payload: string, signature?: string) =>
 	POST(
 		new NextRequest('http://localhost:3000/api/coursebuilder/webhook/stripe', {
@@ -132,8 +152,14 @@ const post = (payload: string, signature?: string) =>
 				...(signature ? { 'stripe-signature': signature } : {}),
 			},
 		}),
+		routeContext,
 	)
 
+it('forwards Next route context on a signed Stripe webhook', async () => {
+	const payload = JSON.stringify(invoiceEvent)
+	expect((await post(payload, sign(payload))).ok).toBe(true)
+	expect(mocks.postContext).toHaveBeenCalledWith(routeContext)
+})
 describe('Course Builder Stripe webhook route', () => {
 	beforeEach(() => {
 		mocks.inngestSend.mockClear()

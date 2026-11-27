@@ -7,7 +7,11 @@ import {
 import { log } from '@/server/logger'
 
 export const couponBatchDrain = inngest.createFunction(
-	{ id: 'coupon-batch-drain', concurrency: { limit: 1 } },
+	{
+		id: 'coupon-batch-drain',
+		concurrency: { limit: 1 },
+		singleton: { mode: 'skip' },
+	},
 	[{ event: COUPON_BATCH_WAKE }, { cron: '* * * * *' }],
 	async ({ step }) => {
 		if (!couponBatchEnabled()) return { state: 'disabled' }
@@ -40,7 +44,11 @@ export const couponBatchDrain = inngest.createFunction(
 )
 
 export const couponBatchAlarms = inngest.createFunction(
-	{ id: 'coupon-batch-alarms', concurrency: { limit: 1 } },
+	{
+		id: 'coupon-batch-alarms',
+		concurrency: { limit: 1 },
+		singleton: { mode: 'skip' },
+	},
 	[{ event: COUPON_BATCH_WAKE }, { cron: '* * * * *' }],
 	async ({ step }) => {
 		if (!couponBatchEnabled()) return { state: 'disabled' }

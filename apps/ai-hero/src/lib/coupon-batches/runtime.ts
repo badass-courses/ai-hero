@@ -1,3 +1,4 @@
+import 'server-only'
 import type { db } from '@/db/client'
 import * as schema from '@/db/schema'
 import { drizzle } from 'drizzle-orm/mysql2'
@@ -18,7 +19,7 @@ const auth = {
 }
 
 let database: typeof db | undefined
-export function couponBatchDatabase() {
+function couponBatchDatabase() {
 	if (database) return database
 	const uri = process.env.DATABASE_URL
 	if (!uri) throw new Error('coupon_batch_worker_unavailable')
