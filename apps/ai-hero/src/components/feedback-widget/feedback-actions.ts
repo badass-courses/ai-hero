@@ -1,6 +1,6 @@
 'use server'
 
-import { headers } from 'next/headers'
+import { cookies, headers } from 'next/headers'
 import { db } from '@/db'
 import { users } from '@/db/schema'
 import BasicEmail from '@/emails/basic-email'
@@ -47,9 +47,14 @@ function refuse(
 	reason: FeedbackRefusalReason,
 	userId: string | null | undefined,
 	message = FEEDBACK_FAILURE_MESSAGE,
+	extra: { hadSessionCookie?: boolean } = {},
 ): SendFeedbackResult {
 	// Reason and user id only: never the email or the feedback text.
-	void log.warn('feedback.refused', { reason, userId: userId ?? null })
+	void log.warn('feedback.refused', {
+		reason,
+		userId: userId ?? null,
+		...extra,
+	})
 	return { ok: false, reason, message }
 }
 
@@ -66,7 +71,21 @@ export async function sendFeedbackFromUser({
 		const { session } = await getServerAuthSession()
 		userId = session?.user?.id
 		if (!userId) {
-			return refuse('no-session', null, FEEDBACK_SIGNED_OUT_MESSAGE)
+			// Presence only, never the value. Same pair proxy.ts checks, matched
+			// by prefix because Auth.js chunks large session cookies.
+			let hadSessionCookie = false
+			try {
+				hadSessionCookie = (await cookies())
+					.getAll()
+					.some(
+						({ name }) =>
+							name.startsWith('authjs.session-token') ||
+							name.startsWith('__Secure-authjs.session-token'),
+					)
+			} catch {}
+			return refuse('no-session', null, FEEDBACK_SIGNED_OUT_MESSAGE, {
+				hadSessionCookie,
+			})
 		}
 
 		const user = await db.query.users.findFirst({

@@ -5,11 +5,15 @@ const mocks = vi.hoisted(() => ({
 	getServerAuthSession: vi.fn(),
 	findFirst: vi.fn(),
 	limit: vi.fn(),
+	cookieNames: [] as string[],
 	warn: vi.fn(),
 	error: vi.fn(),
 }))
 
 vi.mock('next/headers', () => ({
+	cookies: async () => ({
+		getAll: () => mocks.cookieNames.map((name) => ({ name, value: 'secret' })),
+	}),
 	headers: async () => new Headers({ 'x-real-ip': '1.2.3.4' }),
 }))
 vi.mock('@/db', () => ({
@@ -53,6 +57,7 @@ const input = { feedbackText: 'hello' }
 
 beforeEach(() => {
 	vi.clearAllMocks()
+	mocks.cookieNames = []
 	mocks.limit.mockResolvedValue({ success: true })
 	mocks.findFirst.mockResolvedValue(row)
 	mocks.sendAnEmail.mockResolvedValue(undefined)
@@ -93,6 +98,25 @@ describe('sendFeedbackFromUser', () => {
 		})
 		expect(mocks.sendAnEmail).not.toHaveBeenCalled()
 	})
+
+	it.each([
+		['authjs.session-token', true],
+		['__Secure-authjs.session-token', true],
+		['unrelated', false],
+	])(
+		'logs hadSessionCookie for a no-session refusal with %s',
+		async (name, had) => {
+			mocks.cookieNames = [name]
+			mocks.getServerAuthSession.mockResolvedValue({ session: null })
+			await sendFeedbackFromUser(input)
+			expect(mocks.warn).toHaveBeenCalledWith('feedback.refused', {
+				reason: 'no-session',
+				userId: null,
+				hadSessionCookie: had,
+			})
+			expect(JSON.stringify(mocks.warn.mock.calls)).not.toContain('secret')
+		},
+	)
 
 	it('refuses when the id has no row', async () => {
 		mocks.findFirst.mockResolvedValue(undefined)
