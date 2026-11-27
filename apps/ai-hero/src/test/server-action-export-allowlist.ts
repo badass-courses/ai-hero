@@ -20,7 +20,6 @@ export const existingReadActions = {
 	'lib/emails-query.ts#getEmail': 'Existing email slug lookup.',
 	'lib/emails-query.ts#getEmailSimple': 'Existing email ID lookup.',
 	'lib/image-resource-query.ts#listImageResources': 'Image picker pagination.',
-	'lib/image-resource-query.ts#getAllImageResources': 'Existing full image inventory.',
 	'lib/lists-query.ts#getAllLists': 'Existing full list inventory.',
 	'lib/lists-query.ts#getCachedAllLists': 'Cached full list inventory.',
 	'lib/lists-query.ts#getList': 'Existing list lookup.',
