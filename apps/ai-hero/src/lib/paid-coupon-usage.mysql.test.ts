@@ -2,7 +2,7 @@ import { performance } from 'node:perf_hooks'
 import { eq, sql } from 'drizzle-orm'
 import { NextRequest } from 'next/server'
 import Stripe from 'stripe'
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { formatPricesForProduct } from '@coursebuilder/commerce/format-prices-for-product'
 import { getCouponForCode } from '@coursebuilder/commerce/props-for-commerce'
@@ -24,6 +24,7 @@ import { cohortCouponPresentation } from './coupon-batches/cohort-presentation'
 import { newSelector, selectorDigest } from './coupon-batches/selector'
 import {
 	coupon,
+	couponBatchControl,
 	merchantAccount,
 	merchantCharge,
 	merchantCoupon,
@@ -39,6 +40,8 @@ import {
 const runId = crypto.randomUUID().slice(0, 8)
 // The test harness supplies this fixture to the app's real webhook route.
 const webhookSecret = 'test_webhook_secret'
+const paymentCalls = vi.hoisted(() => vi.fn())
+afterEach(() => { vi.unstubAllEnvs() })
 const inngestSend = vi.hoisted(() =>
 	vi.fn(async (_event: unknown) => ({ ids: [] })),
 )
@@ -77,7 +80,7 @@ vi.mock('@/coursebuilder/stripe-provider', async () => {
 			baseSuccessUrl: 'https://example.test',
 			cancelUrl: 'https://example.test',
 			errorRedirectUrl: 'https://example.test/error',
-			paymentsAdapter: {
+			paymentsAdapter: new Proxy({
 				stripe,
 				verifyWebhookSignature: async (body: string, signature: string) =>
 					Boolean(
@@ -98,7 +101,13 @@ vi.mock('@/coursebuilder/stripe-provider', async () => {
 					`promo_${coupon}`,
 				createCheckoutSession: stripeSession,
 				expireCheckoutSession: async () => ({ status: 'expired' }),
-			} as never,
+			}, { get(target, key) {
+				const port: unknown = Reflect.get(target, key)
+				return typeof port === 'function' ? (...args: unknown[]) => {
+					paymentCalls(key)
+					return Reflect.apply(port, target, args)
+				} : port
+			} }) as never,
 		}),
 	}
 })
@@ -446,6 +455,10 @@ describe.skipIf(!uri)(
 		})
 
 		it('redeems a C5 bearer through the real POST wrapper and provisions a first claimant', async () => {
+			vi.stubEnv('AIH_COUPON_BATCH_ENABLED', 'true')
+			paymentCalls.mockClear()
+			await runtime.db.insert(couponBatchControl).values({ id: 'ai-hero', claimsEnabled: 1 })
+				.onDuplicateKeyUpdate({ set: { claimsEnabled: 1 } })
 			const { POST } =
 				await import('@/app/api/coursebuilder/[...nextCourseBuilder]/route')
 			const { rawCourseBuilderAdapter } = runtime
@@ -648,6 +661,7 @@ describe.skipIf(!uri)(
 			}
 			expect(await rawCourseBuilderAdapter.getCoupon(secondCouponRef)).toMatchObject({ usedCount: 0 })
 			expect(await rawCourseBuilderAdapter.getPurchasesForUser(purchase.userId)).toHaveLength(1)
+			expect(paymentCalls).not.toHaveBeenCalled()
 		})
 
 		it('uses the real HTTP pricing handlers for Stripe session creation and preserves late fulfillment', async () => {

@@ -1,6 +1,6 @@
 import 'server-only'
 import type { DbExecutor } from '@/db/client'
-import { coupon, purchases } from '@/db/schema'
+import { coupon, couponBatchControl, purchases } from '@/db/schema'
 import { cloneAdapter } from '@/lib/paid-coupon-pricing-view'
 import { SEAT_HOLDING_STATUSES } from '@/lib/pricing-decisions'
 import { log } from '@/server/logger'
@@ -10,6 +10,7 @@ import { createPersonalOrganizationService } from '@coursebuilder/organizations'
 import { and, eq, getTableColumns, inArray, isNull, sql } from 'drizzle-orm'
 
 import {
+	CONTROL_ID,
 	PRODUCT,
 	TEMPLATE,
 	inRowNamespace,
@@ -28,6 +29,16 @@ const invalid = () => ({
 	redeemingForCurrentUser: false,
 	error: { message: 'coupon-is-invalid' },
 })
+
+async function claimsEnabled(tx: DbExecutor, lock = false) {
+	if (process.env.AIH_COUPON_BATCH_ENABLED !== 'true') return false
+	const query = tx
+		.select({ enabled: couponBatchControl.claimsEnabled })
+		.from(couponBatchControl)
+		.where(eq(couponBatchControl.id, CONTROL_ID))
+	const [row] = lock ? await query.for('share') : await query
+	return row?.enabled === 1
+}
 
 function lookup(tx: DbExecutor, digest: string) {
 	return tx
@@ -65,6 +76,18 @@ function isComp(row: typeof coupon.$inferSelect | undefined) {
 	)
 }
 
+export async function c5CompAvailable(db: BatchCouponDb, code: string) {
+	const digest = selectorDigest(code)
+	if (!digest) return false
+	try {
+		if (!(await claimsEnabled(db))) return false
+		const [row] = await lookup(db, digest)
+		return Boolean(isComp(row))
+	} catch {
+		throw new Error('c5_comp_lookup_unavailable')
+	}
+}
+
 /** Only the C5 free-claim page may present these coupons. The dialog carries
  * the original bearer in its existing `couponId` field; the real row ID is
  * not a redeemable value. Other product pages do not inherit the bypass. */
@@ -84,6 +107,7 @@ export function c5CompPresentation<
 		const digest = selectorDigest(key)
 		if (!digest) return null
 		try {
+			if (!(await claimsEnabled(db))) return null
 			const [row] = await lookup(db, digest)
 			if (!isComp(row)) return null
 			return couponSchema.parse({
@@ -123,7 +147,9 @@ export async function redeemPrivateComp(
 	const digest = activeCompClaimDigest()
 	if (!digest) return invalid()
 	try {
+		if (process.env.AIH_COUPON_BATCH_ENABLED !== 'true') return invalid()
 		return await db.transaction(async (tx) => {
+			if (!(await claimsEnabled(tx, true))) return invalid()
 			const [row] = await lookup(tx, digest).for('update')
 			if (!row || !isComp(row)) return invalid()
 			const txAdapter = adapterFor(tx)

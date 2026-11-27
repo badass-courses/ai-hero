@@ -42,6 +42,8 @@ async function checkCouponBatchMigration(databaseUrl, mirror) {
     await connection.query(migration)
     const exportAudit = await readFile(join(mirror, 'src/db/migrations/20261127_ai_hero_coupon_batch_export_audit.sql'), 'utf8')
     await connection.query(exportAudit)
+    const claimStop = await readFile(join(mirror, 'src/db/migrations/20261128_ai_hero_coupon_batch_claim_stop.sql'), 'utf8')
+    await connection.query(claimStop)
     const [actual] = await connection.query('SELECT table_name AS name FROM information_schema.tables WHERE table_schema = DATABASE()')
     deepStrictEqual(actual.map(row => row.name).sort(), tables)
     for (const table of tables) {

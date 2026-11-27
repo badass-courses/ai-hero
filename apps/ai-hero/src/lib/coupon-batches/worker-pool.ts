@@ -14,17 +14,19 @@ export function createCouponBatchWorkerPool(uri: string, idleSeconds = 15) {
 		timezone: 'Z',
 	})
 	const initialized = new WeakSet<CallbackPoolConnection>()
-	let rejectedSession = false
+	let retryAt = 0
+	let failures = 0
+	const coolingDown = () => Date.now() < retryAt
 	const acquire = pool.getConnection.bind(pool)
 	pool.getConnection = async () => {
-		if (rejectedSession)
+		if (coolingDown())
 			throw new Error('coupon_batch_worker_session_unavailable')
 		const connection = await acquire()
 		// The promise wrapper is recreated at each checkout of the same socket.
 		const socket = (
 			connection as unknown as { connection: CallbackPoolConnection }
 		).connection
-		if (rejectedSession) {
+		if (coolingDown()) {
 			connection.release()
 			throw new Error('coupon_batch_worker_session_unavailable')
 		}
@@ -34,8 +36,11 @@ export function createCouponBatchWorkerPool(uri: string, idleSeconds = 15) {
 					`SET SESSION time_zone = '+00:00', SESSION wait_timeout = ${idleSeconds}, SESSION innodb_lock_wait_timeout = 5`,
 				)
 				initialized.add(socket)
+				failures = 0
+				retryAt = 0
 			} catch {
-				rejectedSession = true
+				retryAt =
+					Date.now() + Math.min(60_000, 1000 * 2 ** Math.min(failures++, 6))
 				connection.destroy()
 				throw new Error('coupon_batch_worker_session_unavailable')
 			}

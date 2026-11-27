@@ -47,10 +47,10 @@ import {
 	sealSelector,
 	selectorDigest,
 } from './selector'
-import { ROW_PREFIX } from './namespace'
+import { CONTROL_ID, ROW_PREFIX } from './namespace'
 import { isSelectorCollision } from './selector-collision'
 
-export const CONTROL_ID = 'ai-hero'
+export { CONTROL_ID } from './namespace'
 const exportOrRead = COUPON_BATCH_READ_SCOPE
 const mintScope = COUPON_BATCH_MINT_SCOPE
 const pacific = new Intl.DateTimeFormat('en-US', {
@@ -505,12 +505,15 @@ export function createCouponBatchService(options: ServiceOptions) {
 					})
 				}
 				await mintChunk(tx, fresh, b.deadlineAt)
-				if (fresh.size) {
+				const newIntents = [...fresh.values()].filter((i) => i.couponRef)
+				if (newIntents.length) {
 					// The insert may have waited on a row. Roll back any generated
 					// selectors if it crossed the window; the next pass records expiry.
 					if ((await now(tx)) >= b.exportUntil)
 						throw new Error('export_window_crossed')
-					await tx.insert(intent).values([...fresh.values()])
+					// Collision exhaustion belongs to this manifest only. A new
+					// confirmed request may regenerate an unminted key.
+					await tx.insert(intent).values(newIntents)
 				}
 				let minted = 0
 				const outcomes = chunk.map((row) => {
@@ -529,15 +532,15 @@ export function createCouponBatchService(options: ServiceOptions) {
 					.onDuplicateKeyUpdate({
 						set: { result: sql`VALUES(${item.result})` },
 					})
-				const newMints = [...fresh.values()].filter((i) => i.couponRef).length
+				const newMints = newIntents.length
 				let dailyAlarm = b.dailyAlarm
-				if (fresh.size) {
+				if (newIntents.length) {
 					const [counter] = await tx
 						.select()
 						.from(day)
 						.where(eq(day.day, b.acceptedDay))
 					const previous = counter?.intents ?? 0
-					const count = previous + fresh.size
+					const count = previous + newIntents.length
 					const mints = (counter?.mints ?? 0) + newMints
 					await tx
 						.insert(day)
@@ -566,7 +569,7 @@ export function createCouponBatchService(options: ServiceOptions) {
 						processed,
 						minted: b.minted + minted,
 						refused: b.refused + chunk.length - minted,
-						newIntents: b.newIntents + fresh.size,
+						newIntents: b.newIntents + newIntents.length,
 						newMints: b.newMints + newMints,
 						dailyAlarm,
 						attempts: 0,

@@ -17,6 +17,7 @@ const time = (name: string) => timestamp(name, { mode: 'date', fsp: 3 })
 export const couponBatchControl = mysqlTable('CouponBatchControl', {
 	id: id('id').primaryKey(),
 	enabled: int('enabled').notNull().default(0),
+	claimsEnabled: int('claimsEnabled').notNull().default(0),
 	chunkSize: int('chunkSize').notNull().default(100),
 	paceMs: int('paceMs').notNull().default(250),
 	nextChunkAt: time('nextChunkAt'),

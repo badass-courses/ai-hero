@@ -1,7 +1,7 @@
 import { createAppAbility } from '@/ability'
 import { subject } from '@casl/ability'
 import { unstable_cache } from 'next/cache'
-import { headers } from 'next/headers'
+import { cookies, headers } from 'next/headers'
 import { courseBuilderAdapter, db } from '@/db'
 import {
 	accounts as accountsTable,
@@ -17,7 +17,8 @@ import { ownsProductForBuyBox } from '@/lib/owns-product-for-buy-box'
 import { getServerAuthSession } from '@/server/auth'
 import { log } from '@/server/logger'
 import { getCachedDefaultCoupon } from '@/lib/default-coupon'
-import { cohortCouponPresentation } from '@/lib/coupon-batches/cohort-presentation'
+import { COMP_COOKIE, parseCompCookie } from '@/lib/coupon-batches/browser-claim'
+import { PRODUCT as COMP_PRODUCT } from '@/lib/coupon-batches/namespace'
 import { getPurchaseCount } from '@/lib/purchase-count'
 import { and, asc, eq, gt, isNull, or, sql } from 'drizzle-orm'
 import { z } from 'zod'
@@ -179,6 +180,7 @@ export type CohortPageData = {
 	product: Product | null
 	pricingDataLoader: ReturnType<typeof getPricingData>
 	commerceProps: Awaited<ReturnType<typeof propsForCommerce>>
+	privateCompAvailable: boolean
 	purchaseCount: number
 	quantityAvailable: number
 	totalQuantity: number
@@ -303,6 +305,7 @@ export async function loadCohortPageData(
 			quantityAvailable: -1,
 		})
 	let commerceProps: Awaited<ReturnType<typeof propsForCommerce>>
+	let privateCompAvailable = false
 	let purchaseCount = 0
 	let quantityAvailable = -1
 	let totalQuantity = 0
@@ -319,9 +322,13 @@ export async function loadCohortPageData(
 			process.env.DEFAULT_COUNTRY ||
 			'US'
 
-		const presentationAdapter = await cohortCouponPresentation(
-			courseBuilderAdapter, db, product.id, searchParams.code,
-		)
+		if (product.id === COMP_PRODUCT && process.env.AIH_COUPON_BATCH_ENABLED === 'true') {
+			const entry = parseCompCookie((await cookies()).get(COMP_COOKIE)?.value)
+			if (entry?.path === `/cohorts/${cohortSlug}`) {
+				const { c5CompAvailable } = await import('@/lib/coupon-batches/free-selector')
+				privateCompAvailable = await c5CompAvailable(db, entry.code)
+			}
+		}
 		const [commercePropsResult, purchaseCountResult, productQuantityResult] =
 			await Promise.all([
 				propsForCommerce(
@@ -331,7 +338,7 @@ export async function loadCohortPageData(
 						products: [product],
 						countryCode,
 					},
-					presentationAdapter,
+					courseBuilderAdapter,
 				),
 				getPurchaseCount(product.id),
 				db
@@ -448,6 +455,7 @@ export async function loadCohortPageData(
 		product,
 		pricingDataLoader,
 		commerceProps,
+		privateCompAvailable,
 		purchaseCount,
 		quantityAvailable,
 		totalQuantity,

@@ -123,3 +123,10 @@ jobs:
       - name: next build
         working-directory: apps/ai-hero
         run: NODE_EXTRA_CA_CERTS="$RUNNER_TEMP/typesense-stub.crt" pnpm exec next build
+
+      - name: Install the rig's Chromium
+        run: pnpm --filter ai-hero exec playwright install --with-deps chromium
+
+      - name: Verify built cohort privacy headers and browser claim
+        working-directory: apps/ai-hero
+        run: node scripts/commerce-rig/comp-browser.mjs

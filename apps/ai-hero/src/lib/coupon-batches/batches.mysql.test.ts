@@ -113,6 +113,7 @@ describe.skipIf(!uri)(
 		let rolloverAt: number
 		let envEnabled = false
 		let observeCouponInserts: number[] | undefined
+		let onCouponInsert: (() => void) | undefined
 		const wake = vi.fn()
 		const page = vi.fn(async (_value: unknown) => {})
 		const log = vi.fn(async (_value: unknown) => {})
@@ -131,8 +132,10 @@ describe.skipIf(!uri)(
 				mode: 'planetscale',
 				logger: {
 					logQuery(query) {
-						if (query.startsWith('insert into `AI_Coupon`'))
+						if (query.startsWith('insert into `AI_Coupon`')) {
 							observeCouponInserts?.push(query.split(/\),\s*\(/).length)
+							onCouponInsert?.()
+						}
 					},
 				},
 			}) as unknown as typeof db
@@ -568,17 +571,69 @@ describe.skipIf(!uri)(
 							eq(schema.couponBatchItem.ordinal, 3),
 						),
 					)
-				expect(refused).toMatchObject({
-					couponRef: null,
-					sealedCode: null,
-					refused: 'selector_collision',
+				expect(refused).toBeUndefined()
+				const retry = await confirm({ ...body, items: [body.items[2]!] })
+				const admitted = await api.submit(request(retry, `regenerate-${run}`))
+				const replacement = (await admitted.json()).batchId
+				expect(await service.runChunk(replacement)).toMatchObject({
+					state: 'worked',
 				})
+				const regeneratedPage = await api
+					.exportPage(request({ batchId: replacement }))
+					.then((r) => r.json())
+				expect(regeneratedPage.outcomes).toMatchObject([
+					{ state: 'minted', code: expect.stringMatching(/^c5comp_/) },
+				])
+				expect(
+					(await api.status(request(undefined), batchId).then((r) => r.json()))
+						.outcomes[2],
+				).toMatchObject({ state: 'refused', reason: 'selector_collision' })
 			} finally {
 				observeCouponInserts = undefined
 				const actual =
 					await vi.importActual<typeof import('./selector')>('./selector')
 				generate.mockReset().mockImplementation(actual.newSelector)
 				await db.delete(schema.coupon).where(eq(schema.coupon.id, occupiedId))
+			}
+		})
+
+		it('rolls back the inserted selector if the export window crosses during the coupon insert', async () => {
+			const started = clock
+			const code = newSelector()
+			const body = await confirm(payload('cross-export-window'))
+			const { batchId } = await api
+				.submit(request(body, `cross-export-window-${run}`))
+				.then((r) => r.json())
+			const record = await db.query.couponBatch.findFirst({
+				where: eq(schema.couponBatch.id, batchId),
+			})
+			vi.mocked(newSelector).mockReturnValueOnce(code)
+			onCouponInsert = () => {
+				clock = new Date(+record!.exportUntil + 1)
+			}
+			try {
+				expect(await service.runChunk(batchId)).toMatchObject({
+					state: 'retry',
+					reason: 'export_window_crossed',
+				})
+				expect(
+					await db.query.coupon.findFirst({
+						where: eq(schema.coupon.code, selectorDigest(code)!),
+					}),
+				).toBeUndefined()
+				expect(
+					(await api.status(request(undefined), batchId).then((r) => r.json()))
+						.counts,
+				).toMatchObject({ minted: 0, queued: 1 })
+				clock = new Date(+clock + 60_000)
+				expect(await service.runChunk(batchId)).toMatchObject({
+					state: 'worked',
+					finished: true,
+				})
+			} finally {
+				onCouponInsert = undefined
+				clock = started
+				await setControl({ nextChunkAt: null })
 			}
 		})
 

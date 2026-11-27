@@ -62,6 +62,8 @@ import { discordAccountsForCurrentUser } from '@/lib/users'
 import { CohortIncludes } from './_components/cohort-includes'
 import { CohortPricingWidgetContainer } from './_components/cohort-pricing-widget-container'
 import { CohortSidebar } from './_components/cohort-sidebar'
+import { PrivateCompOffer } from './_components/private-comp-offer'
+import { redactCompBearer } from '@/lib/coupon-batches/telemetry'
 import { CohortTeamLink } from './_components/cohort-team-link'
 import { metaDescription } from '@/lib/meta-description'
 import { OfficeHoursSchedule } from '@/components/office-hours-schedule'
@@ -131,7 +133,10 @@ export default async function CohortPage(props: CohortPageViewProps) {
  * @returns The cohort page React tree after loading cohort, commerce, and access data.
  */
 export async function CohortPageView(props: CohortPageViewProps) {
-	const searchParams = await props.searchParams
+	// Defense in depth for callers of the shared view (campaigns/previews).
+	const searchParams = Object.fromEntries(Object.entries(await props.searchParams).filter(([, values]) =>
+		![values].flat().some((value) => typeof value === 'string' && redactCompBearer(value) !== value),
+	))
 	const { allowPurchase } = searchParams
 	const params = await props.params
 
@@ -164,6 +169,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 		product,
 		pricingDataLoader,
 		commerceProps,
+		privateCompAvailable,
 		purchaseCount,
 		quantityAvailable,
 		totalQuantity,
@@ -247,7 +253,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 			isOnWaitlist,
 			hasActiveProduct: cohortProps.product?.status === 1,
 			bypassSoldOut:
-				cohortProps.couponFromCode?.fields?.bypassSoldOut === true,
+				privateCompAvailable || cohortProps.couponFromCode?.fields?.bypassSoldOut === true,
 		})
 
 	// A rail on the waitlist can also be one whose window has closed, and
@@ -415,6 +421,7 @@ export async function CohortPageView(props: CohortPageViewProps) {
 
 				// No product in the rail to act on.
 				if (mobileCta !== 'enroll') return null
+				if (privateCompAvailable) return <a href="#buy">Claim your seat · $0</a>
 
 
 				return (
@@ -762,6 +769,8 @@ export async function CohortPageView(props: CohortPageViewProps) {
 									</React.Suspense>
 								</div>
 							</div>
+						) : privateCompAvailable && product ? (
+							<PrivateCompOffer productId={product.id} path={`/cohorts/${encodeURIComponent(params.slug)}`} email={session?.user?.email} />
 						) : ALLOW_PURCHASE ? (
 							<CohortPricingWidgetContainer
 								{...clientCohortProps}

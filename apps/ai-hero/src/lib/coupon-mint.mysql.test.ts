@@ -21,7 +21,7 @@ import {
 	concurrentlyBehindRowLock,
 	createCouponFixturePool,
 } from './coupon-batches/mysql-fixture'
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import * as schema from '@/db/schema'
 
@@ -45,6 +45,9 @@ vi.mock('@/db', () => ({
 	get courseBuilderAdapter() {
 		return state.adapter
 	},
+	get rawCourseBuilderAdapter() {
+		return state.adapter
+	},
 }))
 vi.mock('@/server/logger', () => ({ log: state.logger }))
 vi.mock('@coursebuilder/utils/logger', () => ({ logger: state.logger }))
@@ -52,6 +55,7 @@ vi.mock('@/env.mjs', () => ({
 	env: { NEXT_PUBLIC_URL: 'https://example.test' },
 }))
 vi.mock('@/config', () => ({ default: {} }))
+vi.mock('@/server/auth', () => ({ getServerAuthSession: async () => ({}) }))
 vi.mock('@/inngest/inngest.server', () => ({
 	inngest: {
 		createFunction: (
@@ -73,46 +77,7 @@ vi.mock('@coursebuilder/utils/send-an-email', () => ({
 		throw new Error('Email forbidden')
 	}),
 }))
-vi.mock('@/inngest/config/product-types', () => ({
-	ENTITLEMENT_CONFIG: { cohort: { resourceType: 'cohort' } },
-	PRODUCT_TYPE_CONFIG: {
-		cohort: {
-			logPrefix: 'cohort',
-			contentAccess: 'cohort_content_access',
-			discordRole: 'cohort_discord_role',
-			createEntitlement: async (
-				...args: Parameters<
-					typeof import('./entitlements').createCohortEntitlement
-				>
-			) => (await import('./entitlements')).createCohortEntitlement(...args),
-		},
-	},
-	gatherResourceContexts: async () => [
-		{
-			resourceId: 'cohort-xdy1m',
-			resourceType: 'cohort',
-			productType: 'cohort',
-		},
-	],
-	getResourceData: async () => ({
-		id: 'cohort-xdy1m',
-		type: 'cohort',
-		fields: { title: 'C5', slug: 'c5-fixture' },
-		resources: [
-			{
-				resource: {
-					id: 'fixture-c5-workshop',
-					type: 'workshop',
-					fields: {
-						title: 'Synthetic C5 Workshop',
-						slug: 'fixture-c5-workshop',
-					},
-				},
-			},
-		],
-	}),
-	getDiscordRoleId: () => null,
-}))
+
 
 import {
 	listMintedCoupons,
@@ -125,6 +90,7 @@ import { isMysqlDuplicateEntryError } from './mysql-primary-key-retry'
 // A database prepared by `scripts/test-mysql.sh schema <db>`.
 const uri = process.env.AIH_COUPON_MINT_MYSQL_URL
 const suite = uri ? describe : describe.skip
+afterEach(() => { vi.unstubAllEnvs() })
 
 function assertLoopbackTestDatabase(raw: string): string {
 	const url = new URL(raw)
@@ -312,6 +278,7 @@ suite('coupon minting against real MySQL', () => {
 	})
 
 	it('opens an exported C5 selector through the normal free claim and fulfills one C5 purchase', async () => {
+		vi.stubEnv('AIH_COUPON_BATCH_ENABLED', 'true')
 		const c5 = 'product-s00zs'
 		const workshop = 'product-ma254'
 		const fixtureAccount = {
@@ -373,11 +340,11 @@ suite('coupon minting against real MySQL', () => {
 				{
 					id: 'workshop-2ozd9',
 					type: 'workshop',
-					fields: {},
+					fields: { title: 'Synthetic C5 workshop', slug: 'fixture-c5-workshop', state: 'published' },
 					createdById: fixtureAccount.id,
 				},
 			])
-			.onDuplicateKeyUpdate({ set: { deletedAt: null } })
+			.onDuplicateKeyUpdate({ set: { deletedAt: null, fields: sql`VALUES(${schema.contentResource.fields})` } })
 		await db
 			.insert(schema.contentResourceProduct)
 			.values([
@@ -385,6 +352,9 @@ suite('coupon minting against real MySQL', () => {
 				{ productId: workshop, resourceId: 'workshop-2ozd9' },
 			])
 			.onDuplicateKeyUpdate({ set: { deletedAt: null } })
+		await db.insert(schema.contentResourceResource).values({
+			resourceOfId: 'cohort-xdy1m', resourceId: 'workshop-2ozd9', position: 0,
+		}).onDuplicateKeyUpdate({ set: { deletedAt: null } })
 		await db
 			.insert(schema.entitlementTypes)
 			.values([
@@ -414,9 +384,9 @@ suite('coupon minting against real MySQL', () => {
 			.values({ principalId: operator.record.userId, canMint: 1, canRead: 1 })
 		await db
 			.insert(schema.couponBatchControl)
-			.values({ id: CONTROL_ID, enabled: 1, paceMs: 0 })
+			.values({ id: CONTROL_ID, enabled: 1, claimsEnabled: 1, paceMs: 0 })
 			.onDuplicateKeyUpdate({
-				set: { enabled: 1, paceMs: 0, nextChunkAt: null },
+				set: { enabled: 1, claimsEnabled: 1, paceMs: 0, nextChunkAt: null },
 			})
 		const service = createCouponBatchService({
 			db: db as unknown as typeof import('@/db/client').db,
@@ -531,6 +501,15 @@ suite('coupon minting against real MySQL', () => {
 						logger: state.logger,
 					}),
 			).then(async (response) => response.json())
+		const setClaims = (claimsEnabled: number) => db.update(schema.couponBatchControl).set({ claimsEnabled }).where(eq(schema.couponBatchControl.id, CONTROL_ID))
+		await setClaims(0)
+		try {
+			expect(await redeem(live.code, first.email)).toMatchObject({ purchase: null, error: { message: 'coupon-is-invalid' } })
+			expect((await adapter.getCoupon(live.couponRef))?.usedCount).toBe(0)
+			expect(events).toHaveLength(0)
+		} finally {
+			await setClaims(1)
+		}
 		await db
 			.update(schema.coupon)
 			.set({ expires: new Date(Date.now() - 60_000) })

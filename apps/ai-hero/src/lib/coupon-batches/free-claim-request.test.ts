@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { INTERNAL_COMP_CLAIM, withPrivateCompClaim } from './free-claim-request'
+import {
+	activeCompClaimDigest,
+	INTERNAL_COMP_CLAIM,
+	withPrivateCompClaim,
+} from './free-claim-request'
+import { COMP_REDEEM_COOKIE } from './browser-claim'
+import { BROWSER_COMP_CLAIM } from './namespace'
+import { selectorDigest } from './selector'
 import { cohortCouponPresentation } from './cohort-presentation'
 import { PRODUCT } from './namespace'
 
@@ -125,6 +132,43 @@ it.each([
 		expect(dispatch).not.toHaveBeenCalled()
 	},
 )
+
+it('accepts an inert marker only with a same-origin scoped cookie and removes it from dispatch', async () => {
+	const dispatch = vi.fn(async (request: Request) => {
+		expect(activeCompClaimDigest()).toBe(selectorDigest(code))
+		expect(request.headers.get('cookie')).toBe('authjs.session-token=dummy')
+		expect(await request.json()).toMatchObject({
+			couponId: INTERNAL_COMP_CLAIM,
+		})
+		return new Response(null)
+	})
+	for (const [site, hasCookie, status] of [
+		['cross-site', true, 400],
+		['same-origin', false, 400],
+		['same-origin', true, 200],
+	] as const) {
+		const headers = new Headers({
+			'content-type': 'application/json',
+			'sec-fetch-site': site,
+		})
+		if (hasCookie)
+			headers.set(
+				'cookie',
+				`${COMP_REDEEM_COOKIE}=${encodeURIComponent(`/cohorts/c5~${code}`)}; authjs.session-token=dummy`,
+			)
+		const response = await withPrivateCompClaim(
+			new Request(path, {
+				method: 'POST',
+				headers,
+				body: JSON.stringify({ ...ordinary, couponId: BROWSER_COMP_CLAIM }),
+			}),
+			dispatch,
+		)
+		expect(response.status).toBe(status)
+	}
+	expect(dispatch).toHaveBeenCalledOnce()
+	expect(activeCompClaimDigest()).toBeNull()
+})
 
 it.each(['application/json', 'Application/JSON; charset=utf-8'])(
 	'accepts comp claims sent as %s and preserves the productId array',

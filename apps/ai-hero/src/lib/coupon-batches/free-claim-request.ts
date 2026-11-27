@@ -5,7 +5,8 @@ import {
 	isReservedCouponField,
 	readCouponRequestBody,
 } from './coupon-request-fields'
-import { inSelectorNamespace } from './namespace'
+import { COMP_REDEEM_COOKIE, parseCompCookie } from './browser-claim'
+import { BROWSER_COMP_CLAIM, inSelectorNamespace } from './namespace'
 import { selectorDigest } from './selector'
 
 export const INTERNAL_COMP_CLAIM = 'batch-coupon-claim'
@@ -45,23 +46,47 @@ export async function withPrivateCompClaim<T>(
 	} = await readCouponRequestBody(request, ['couponId', 'code'])
 	if (!reserved) return run(request)
 	if (!isJson) return reject(415)
-	if (
-		!body ||
-		!inSelectorNamespace(body.couponId) ||
-		isReservedCouponField(body.code)
+	if (!body || isReservedCouponField(body.code)) return reject(400)
+	const cookies = request.headers.get('cookie')?.split(/;\s*/) ?? []
+	const compCookie = cookies.find((value) =>
+		value.startsWith(`${COMP_REDEEM_COOKIE}=`),
 	)
-		return reject(400)
-	const digest = selectorDigest(body.couponId)
+	let code = body.couponId
+	if (code === BROWSER_COMP_CLAIM) {
+		const fetchSite = request.headers.get('sec-fetch-site')
+		if (fetchSite && fetchSite !== 'same-origin') return reject(400)
+		try {
+			code = parseCompCookie(
+				decodeURIComponent(
+					compCookie?.slice(COMP_REDEEM_COOKIE.length + 1) ?? '',
+				),
+			)?.code
+		} catch {
+			return reject(400)
+		}
+	}
+	if (!inSelectorNamespace(code)) return reject(400)
+	const digest = selectorDigest(code)
 	if (!digest) return reject(400)
 	body.couponId = INTERNAL_COMP_CLAIM
 	const headers = new Headers(request.headers)
+	if (compCookie) {
+		const forwarded = cookies.filter(
+			(value) => !value.startsWith(`${COMP_REDEEM_COOKIE}=`),
+		)
+		if (forwarded.length) headers.set('cookie', forwarded.join('; '))
+		else headers.delete('cookie')
+	}
 	// Course Builder's parser expects the exact media type; normalize only a
 	// rewritten comp request, never an ordinary claim.
 	headers.set('content-type', 'application/json')
 	headers.delete('content-length')
 	return claimDigest.run(digest, () =>
 		run(
-			new Request(request, {
+			// Node's Request constructor cannot copy a build-time NextRequest wrapper.
+			new Request(request.url, {
+				method: request.method,
+				signal: request.signal,
 				headers,
 				body: JSON.stringify(body),
 			}),

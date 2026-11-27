@@ -190,6 +190,12 @@ test('network preload blocks provider calls before connection and allows only th
   assert.equal(result.status, 0, result.stderr)
   assert.match(result.stdout, /blocked/)
 })
+test('comp browser mode blocks Stripe itself and permits only its loopback database', () => {
+  const guard = JSON.stringify(join(import.meta.dirname, 'network-guard.cjs'))
+  const script = `const {allowed,check}=require(${guard}); const a=require('node:assert/strict'); a(allowed('127.0.0.1',3307)); a(!allowed('mysql.example.test',3307)); a(!allowed('api.stripe.com',443)); a.throws(()=>check([{host:'api.stripe.com',port:443}]));`
+  const result = spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', env: { PATH: process.env.PATH, RIG_COMP_ONLY_DB_PORT: '3307' } })
+  assert.equal(result.status, 0, result.stderr)
+})
 test('Turbopack loader IPC is allowed only for the rig build and its argv port', () => {
   // The guard patches sockets on load, so exercise it in a child process.
   const script = `const {turbopackIpcPort:p}=require(${JSON.stringify(join(import.meta.dirname, 'network-guard.cjs'))}); const assert=require('node:assert/strict'); const d='/rig/app/.next';
