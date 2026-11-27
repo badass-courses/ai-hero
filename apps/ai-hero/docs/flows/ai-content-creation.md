@@ -14,7 +14,6 @@ ai-hero integrates OpenAI GPT models for AI-assisted content creation, providing
 ### Core AI Components
 - **OpenAI Provider**: Configured via `@coursebuilder/core/providers/openai`
 - **AI SDK**: Vercel AI SDK for streaming responses (`ai` package)
-- **Chat API**: `/api/chat` endpoint for general-purpose chat
 - **Resource Chat**: Inngest-powered workflow for resource-based conversations
 - **Concept Extraction**: Pinecone vector DB for semantic concept matching
 - **Rate Limiting**: Upstash Redis sliding window (5 requests/10s)
@@ -28,38 +27,7 @@ ai-hero integrates OpenAI GPT models for AI-assisted content creation, providing
 
 ---
 
-## 1. General Chat API Flow
-
-Basic chat endpoint for simple AI interactions without resource context.
-
-```mermaid
-sequenceDiagram
-    participant Client
-    participant ChatAPI as /api/chat
-    participant Redis as Upstash Redis
-    participant OpenAI as OpenAI API
-
-    Client->>ChatAPI: POST /api/chat<br/>{messages}
-    ChatAPI->>Redis: Check rate limit<br/>(5 req/10s per IP)
-
-    alt Rate limit exceeded
-        Redis-->>ChatAPI: Deny
-        ChatAPI-->>Client: 429 Too Many Requests<br/>X-RateLimit-* headers
-    else Rate limit OK
-        Redis-->>ChatAPI: Allow
-        ChatAPI->>OpenAI: streamText()<br/>model: gpt-4o
-        OpenAI-->>ChatAPI: Stream response
-        ChatAPI-->>Client: Data stream response
-    end
-```
-
-**Key Files:**
-- `/src/app/api/chat/route.ts` - Chat endpoint with rate limiting
-- `/src/server/redis-client.ts` - Redis client configuration
-
----
-
-## 2. Resource-Based AI Chat Flow
+## 1. Resource-Based AI Chat Flow
 
 Advanced chat workflow with resource context (transcripts, content) using Inngest for orchestration.
 
@@ -117,7 +85,7 @@ sequenceDiagram
 
 ---
 
-## 3. Concept Extraction Flow
+## 2. Concept Extraction Flow
 
 Semantic concept detection using Pinecone vector embeddings for tagging content.
 
@@ -157,7 +125,7 @@ flowchart TD
 
 ---
 
-## 4. Transcript AI Processing Flow
+## 3. Transcript AI Processing Flow
 
 AI-powered transcript analysis to identify split points and concepts for video segmentation.
 
@@ -199,7 +167,7 @@ sequenceDiagram
 
 ---
 
-## 5. OCR + Code Extraction Flow
+## 4. OCR + Code Extraction Flow
 
 AI-assisted code extraction from video screenshots using OCR and GPT-4 for reformatting.
 
@@ -245,7 +213,7 @@ sequenceDiagram
 
 ---
 
-## 6. Prompt & Chat Resource Class Diagram
+## 5. Prompt & Chat Resource Class Diagram
 
 ```mermaid
 classDiagram
