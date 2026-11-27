@@ -4,6 +4,7 @@ import { usePathname } from 'next/navigation'
 import { type FeedbackFormValues } from '@coursebuilder/ui/feedback-widget'
 
 import { sendFeedbackFromUser } from './feedback-actions'
+import { FEEDBACK_FAILURE_MESSAGE } from './feedback-messages'
 
 export const useFeedbackForm = ({ location }: { location: string }) => {
 	const pathname = usePathname()
@@ -13,15 +14,19 @@ export const useFeedbackForm = ({ location }: { location: string }) => {
 	const submitFeedbackForm = React.useCallback(
 		async (values: FeedbackFormValues): Promise<boolean> => {
 			try {
-				await sendFeedbackFromUser({
+				const result = await sendFeedbackFromUser({
 					feedbackText: values.text,
 					context: values.context,
 				})
+				if (!result.ok) {
+					setError(result.message)
+					return false
+				}
+				setError(undefined)
 				setIsSubmitted(true)
 				return true
-			} catch (error) {
-				setError(error instanceof Error ? error.message : 'An error occurred')
-				setIsSubmitted(true)
+			} catch {
+				setError(FEEDBACK_FAILURE_MESSAGE)
 				return false
 			}
 		},
