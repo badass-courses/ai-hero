@@ -42,6 +42,8 @@ export const INVALID_QUANTITY = 'invalid-quantity'
 
 export const INVALID_QUANTITY_PATH = `/subscribe/error?reason=${INVALID_QUANTITY}`
 
+export const COUPON_USED_UP_MESSAGE = 'This code has been used.'
+
 /** `reason` on /subscribe/error for a checkout link that is missing or unusable. */
 export const CHECKOUT_LINK_EXPIRED = 'invalid-expired'
 

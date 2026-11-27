@@ -26,7 +26,7 @@ import { CheckCircle } from 'lucide-react'
 import { Markdown as ReactMarkdown } from '@/components/markdown'
 import { Event as EventMetaSchema, Ticket } from 'schema-dts'
 
-import { propsForCommerce } from '@coursebuilder/commerce/props-for-commerce'
+import { propsForCommerce } from '@/lib/coupon-display'
 import { Product, productSchema, Purchase } from '@coursebuilder/core/schemas'
 import { first } from '@coursebuilder/nodash'
 import { Button } from '@coursebuilder/ui'

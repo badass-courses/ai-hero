@@ -1,4 +1,4 @@
-import { courseBuilderAdapter, db } from '@/db'
+import { courseBuilderAdapter, db, rawCourseBuilderAdapter } from '@/db'
 import { purchases } from '@/db/schema'
 import { env } from '@/env.mjs'
 import {
@@ -395,11 +395,13 @@ export const integration: SupportIntegration = {
 	 * and not expired — the canonical way to find active promotions.
 	 */
 	async getActivePromotions(): Promise<Promotion[]> {
-		const defaultCouponData = await courseBuilderAdapter.getDefaultCoupon()
+		const defaultCouponData = await rawCourseBuilderAdapter.getDefaultCoupon()
 
 		if (!defaultCouponData) return []
 
-		const { defaultCoupon: c, defaultMerchantCoupon: mc } = defaultCouponData
+		const { defaultCoupon, defaultMerchantCoupon: mc } = defaultCouponData
+		const c = await courseBuilderAdapter.getCouponForDisplay(defaultCoupon.id)
+		if (!c || c.paidCouponUsedUp) return []
 
 		const pctDiscount = c.percentageDiscount ? Number(c.percentageDiscount) : 0
 		const isPercent = pctDiscount > 0
@@ -428,11 +430,13 @@ export const integration: SupportIntegration = {
 	 * validates expiry, and includes the linked MerchantCoupon for type info.
 	 */
 	async getCouponInfo(code: string): Promise<CouponInfo | null> {
-		const couponData = await courseBuilderAdapter.couponForIdOrCode({ code })
+		const couponData = await rawCourseBuilderAdapter.couponForIdOrCode({ code })
 
 		if (!couponData) return null
 
-		const { merchantCoupon: mc, ...c } = couponData
+		const { merchantCoupon: mc } = couponData
+		const c = await courseBuilderAdapter.getCouponForDisplay(couponData.id)
+		if (!c) return null
 
 		const isExhausted = c.maxUses !== -1 && c.usedCount >= c.maxUses
 
@@ -481,9 +485,11 @@ export const integration: SupportIntegration = {
 	 */
 	async getContentAccess(userId: string): Promise<ContentAccess> {
 		// Get user's active entitlements via adapter (handles deleted/expired filtering)
-		const userEntitlements = (await courseBuilderAdapter.getEntitlementsForUser({
-			userId,
-		})) as any[]
+		const userEntitlements = (await courseBuilderAdapter.getEntitlementsForUser(
+			{
+				userId,
+			},
+		)) as any[]
 
 		// Get user's purchases via adapter (includes product data)
 		const userPurchases = (await courseBuilderAdapter.getPurchasesForUser(
@@ -595,9 +601,9 @@ export const integration: SupportIntegration = {
 	 * For recent item titles, fetches content resources via adapter.
 	 */
 	async getRecentActivity(userId: string): Promise<UserActivity> {
-		const progress =
-			(((await courseBuilderAdapter.getLessonProgressForUser(userId)) ??
-				[]) as any[])
+		const progress = ((await courseBuilderAdapter.getLessonProgressForUser(
+			userId,
+		)) ?? []) as any[]
 
 		// Compute counts from the progress array
 		const totalCount = progress.length

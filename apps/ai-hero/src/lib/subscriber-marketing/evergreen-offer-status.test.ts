@@ -21,7 +21,10 @@ describe('evergreenOfferStatus', () => {
 				timezone: 'America/Los_Angeles',
 				timezoneSource: 'fallback',
 			}),
-			offerPayload({ expiresAt: '2026-10-05T12:59:59.000Z', timezone: 'Australia/Sydney' }),
+			offerPayload({
+				expiresAt: '2026-10-05T12:59:59.000Z',
+				timezone: 'Australia/Sydney',
+			}),
 		]) {
 			const { row, couponId } = await issuedRow(issue)
 			const field = offerFieldsFor({
@@ -67,6 +70,16 @@ describe('evergreenOfferStatus', () => {
 		expect(evergreenOfferStatus(row, '2026-10-05T21:59:59.000Z').status).toBe(
 			'ended',
 		)
+	})
+
+	it('says a redeemed offer is used before its deadline', async () => {
+		const { row } = await issuedRow(offerPayload())
+		expect(
+			evergreenOfferStatus(
+				{ ...row, usedCount: 1 },
+				'2026-10-05T21:59:58.999Z',
+			),
+		).toEqual({ status: 'used' })
 	})
 
 	it('fails closed on an unreadable clock: none, never ended', async () => {

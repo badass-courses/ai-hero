@@ -21,7 +21,7 @@ import { getPurchaseCount } from '@/lib/purchase-count'
 import { and, asc, eq, gt, isNull, or, sql } from 'drizzle-orm'
 import { z } from 'zod'
 
-import { propsForCommerce } from '@coursebuilder/commerce/props-for-commerce'
+import { propsForCommerce } from '@/lib/coupon-display'
 import type { User } from '@coursebuilder/core/schemas'
 import {
 	Product,
@@ -337,9 +337,7 @@ export async function loadCohortPageData(
 					.then((res) => res[0]),
 			])
 
-		const couponResult = await getCachedDefaultCoupon([
-			product.id,
-		])
+		const couponResult = await getCachedDefaultCoupon([product.id])
 		const defaultCouponFromAdapter = couponResult?.defaultCoupon ?? null
 
 		commerceProps = {

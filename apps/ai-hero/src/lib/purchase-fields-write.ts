@@ -1,4 +1,4 @@
-import { db, type DbExecutor } from "@/db";
+import type { DbExecutor } from "@/db/client";
 import { purchases } from "@/db/schema";
 import { and, eq, sql, type SQL } from "drizzle-orm";
 
@@ -28,7 +28,7 @@ type PurchaseColumns = Omit<
 const TOP_LEVEL_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /**
- * `JSON_SET(COALESCE(fields, '{}'), '$.a', ?, '$.b', ?)` for the patch.
+ * Merge the patch with JSON_SET, treating SQL NULL and JSON null as empty.
  * Returns null when the patch names no key.
  */
 export function purchaseFieldsJsonSet(patch: PurchaseFieldsPatch): SQL | null {
@@ -42,7 +42,7 @@ export function purchaseFieldsJsonSet(patch: PurchaseFieldsPatch): SQL | null {
     }
     return sql`${`$.${key}`}, CAST(${JSON.stringify(value)} AS JSON)`;
   });
-  return sql`JSON_SET(COALESCE(${purchases.fields}, JSON_OBJECT()), ${sql.join(pairs, sql`, `)})`;
+  return sql`JSON_SET(CASE WHEN ${purchases.fields} IS NULL OR JSON_TYPE(${purchases.fields}) = 'NULL' THEN JSON_OBJECT() ELSE ${purchases.fields} END, ${sql.join(pairs, sql`, `)})`;
 }
 
 /**
@@ -63,7 +63,7 @@ export async function updatePurchaseFields(input: {
     ...(fields ? { fields } : {}),
   };
   if (Object.keys(set).length === 0) return { rowsAffected: 0 };
-  const executor = input.executor ?? db;
+  const executor = input.executor ?? (await import("@/db")).db;
   const condition = eq(purchases.id, input.purchaseId);
   const result = await executor
     .update(purchases)

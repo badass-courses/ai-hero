@@ -91,6 +91,135 @@ const protect = (
 	})
 
 describe('protectCourseBuilderRequest', () => {
+	it.each([undefined, entitlement.userId])(
+		'preserves regional pricing consent on a spent link (buyer: %s)',
+		async (verifiedUserId) => {
+			const base = createAdapter()
+			const productId = 'product-crash-course'
+			const adapter = {
+				...base,
+				getCouponForDisplay: async () => ({
+					...publicCoupon,
+					maxUses: 1,
+					usedCount: 1,
+					paidCouponUsedUp: true as const,
+				}),
+			}
+			const onPaidCouponUsedUp = vi.fn()
+			const resolveServerComputedMerchantCoupon = vi.fn(async () => ({
+				id: 'server-regional',
+				type: 'ppp',
+			}))
+			const options = {
+				adapter,
+				verifiedUserId,
+				onPaidCouponUsedUp,
+				resolveServerComputedMerchantCoupon,
+			}
+			const headers = {
+				'x-vercel-ip-country': 'IN',
+				'content-type': 'application/json',
+			}
+			const quote = await protectCourseBuilderRequest(
+				new NextRequest(
+					'https://example.test/api/coursebuilder/prices-formatted',
+					{
+						method: 'POST',
+						headers,
+						body: JSON.stringify({
+							productId,
+							quantity: 1,
+							couponId: publicCoupon.id,
+							merchantCoupon: pppMerchantCoupon,
+							autoApplyPPP: false,
+						}),
+					},
+				),
+				options,
+			)
+			const body = await quote.json()
+			expect(body).toMatchObject({ autoApplyPPP: true })
+			expect(body).not.toHaveProperty('couponId')
+			expect(body).not.toHaveProperty('merchantCoupon')
+			const checkout = await protectCourseBuilderRequest(
+				new NextRequest(
+					`https://example.test/api/coursebuilder/checkout/stripe?productId=${productId}&quantity=1&couponId=${pppMerchantCoupon.id}&usedCouponId=${publicCoupon.id}&country=BR`,
+					{ method: 'POST', headers },
+				),
+				options,
+			)
+			expect(resolveServerComputedMerchantCoupon).toHaveBeenCalledWith({
+				productId,
+				quantity: 1,
+				verifiedUserId,
+				country: 'IN',
+			})
+			expect(checkout.nextUrl.searchParams.get('couponId')).toBe(
+				'server-regional',
+			)
+			expect(checkout.nextUrl.searchParams.has('usedCouponId')).toBe(false)
+			expect(checkout.nextUrl.searchParams.has('country')).toBe(false)
+			expect(onPaidCouponUsedUp).toHaveBeenCalledTimes(2)
+		},
+	)
+	it('replaces both spent selectors with the buyer’s independently entitled credit', async () => {
+		const base = createAdapter({ entitled: true })
+		const adapter = {
+			...base,
+			getCouponForDisplay: async (id: string) =>
+				id === publicCoupon.id
+					? {
+							...publicCoupon,
+							maxUses: 1,
+							usedCount: 1,
+							paidCouponUsedUp: true as const,
+						}
+					: base.getCoupon(id),
+		}
+		const params = {
+			productId: protectedCoupon.restrictedToProductId,
+			quantity: 1,
+		}
+		const onPaidCouponUsedUp = vi.fn()
+		const options = {
+			adapter,
+			verifiedUserId: entitlement.userId,
+			onPaidCouponUsedUp,
+		}
+		const quote = await protectCourseBuilderRequest(
+			new NextRequest(
+				'https://example.test/api/coursebuilder/prices-formatted',
+				{
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({
+						...params,
+						couponId: publicCoupon.id,
+						merchantCoupon: publicMerchantCoupon,
+					}),
+				},
+			),
+			options,
+		)
+		expect(await quote.json()).toMatchObject({
+			couponId: protectedCoupon.id,
+			merchantCoupon: { id: protectedMerchantCoupon.id },
+		})
+		const checkout = await protectCourseBuilderRequest(
+			new NextRequest(
+				`https://example.test/api/coursebuilder/checkout/stripe?productId=${params.productId}&couponId=${publicMerchantCoupon.id}&usedCouponId=${publicCoupon.id}`,
+				{ method: 'POST' },
+			),
+			options,
+		)
+		expect(checkout.nextUrl.searchParams.get('usedCouponId')).toBe(
+			protectedCoupon.id,
+		)
+		expect(checkout.nextUrl.searchParams.get('couponId')).toBe(
+			protectedMerchantCoupon.id,
+		)
+		expect(onPaidCouponUsedUp).toHaveBeenCalledTimes(2)
+	})
 	it('removes forged identity and protected input from formatted pricing', async () => {
 		const request = new NextRequest(
 			'https://aihero.dev/api/coursebuilder/prices-formatted',
@@ -439,6 +568,42 @@ describe('protectCourseBuilderRequest', () => {
 			false,
 		)
 	})
+
+	it.each([1, 2])(
+		'removes an exhausted coupon but lets checkout continue for quantity %s',
+		async (quantity) => {
+			const url = new URL(
+				'https://example.test/api/coursebuilder/checkout/stripe',
+			)
+			url.searchParams.set('productId', 'product-ma254')
+			url.searchParams.set('quantity', String(quantity))
+			url.searchParams.set('couponId', publicMerchantCoupon.id)
+			url.searchParams.set('usedCouponId', publicCoupon.id)
+			const paidCouponUsedUp = vi.fn()
+			const checkout = await protectCourseBuilderRequest(
+				new NextRequest(url, { method: 'POST' }),
+				{
+					onPaidCouponUsedUp: paidCouponUsedUp,
+					resolveServerComputedMerchantCoupon: async () => bulkMerchantCoupon,
+					adapter: {
+						...createAdapter(),
+						getCoupon: async () => ({
+							...publicCoupon,
+							restrictedToProductId: 'product-ma254',
+							maxUses: 1,
+							usedCount: 1,
+							paidCouponUsedUp: true,
+						}),
+					},
+				},
+			)
+			expect(paidCouponUsedUp).toHaveBeenCalledOnce()
+			expect(checkout.nextUrl.searchParams.get('couponId')).toBe(
+				quantity === 2 ? bulkMerchantCoupon.id : null,
+			)
+			expect(checkout.nextUrl.searchParams.has('usedCouponId')).toBe(false)
+		},
+	)
 
 	it('keeps ordinary public checkout coupons compatible', async () => {
 		const request = new NextRequest(

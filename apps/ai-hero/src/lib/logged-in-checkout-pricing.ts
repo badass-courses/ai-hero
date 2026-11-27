@@ -98,9 +98,7 @@ export async function resolveLoggedInCheckoutPricing({
 		}
 
 		const claimResult = await handoffStore.claim({
-			nonceHash: hashCheckoutLoginHandoffNonce(
-				checkoutHandoff.payload.nonce,
-			),
+			nonceHash: hashCheckoutLoginHandoffNonce(checkoutHandoff.payload.nonce),
 			browserSessionHash: hashCheckoutLoginBrowserSession(browserSession),
 			payload: checkoutHandoff.payload,
 			userId: verifiedUserId,
@@ -156,21 +154,26 @@ export async function resolveLoggedInCheckoutPricing({
 	const country = validPppHandoff
 		? checkoutHandoff.payload.country
 		: trustedCountry
-	const serverComputedCoupon = !couponAuthorization.authorized
-		? await resolveServerComputedCheckoutCoupon({
-				adapter,
-				productId: checkoutParams.productId,
-				quantity,
-				verifiedUserId,
-				country,
-			})
-		: null
+	const serverComputedCoupon =
+		!couponAuthorization.authorized &&
+		(!couponAuthorization.paidCouponUsedUp ||
+			couponAuthorization.requestedPPP ||
+			quantity >= 2)
+			? await resolveServerComputedCheckoutCoupon({
+					adapter,
+					productId: checkoutParams.productId,
+					quantity,
+					verifiedUserId,
+					country,
+				})
+			: null
 
 	return {
 		kind: 'ready',
 		country,
 		couponId: couponAuthorization.authorized
-			? checkoutParams.couponId
+			? (couponAuthorization.entitlementMerchantCouponId ??
+				checkoutParams.couponId)
 			: serverComputedCoupon?.id,
 		usedCouponId: couponAuthorization.authorized
 			? (couponAuthorization.entitlementCouponId ?? checkoutParams.usedCouponId)

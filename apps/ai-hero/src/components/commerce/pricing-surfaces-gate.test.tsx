@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { couponSchema } from '@coursebuilder/core/schemas'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -25,7 +26,8 @@ vi.mock('@coursebuilder/commerce-next/pricing/pricing', () => {
 		Root: passthrough,
 		Product: passthrough,
 		Details: passthrough,
-		Purchased: passthrough,
+		Purchased: ({ children }: { children?: React.ReactNode }) =>
+			mocks.pricing.isPreviouslyPurchased === false ? null : <>{children}</>,
 		BuyMoreSeats: passthrough,
 		PPPToggle: passthrough,
 		GuaranteeBadge: passthrough,
@@ -61,7 +63,7 @@ vi.mock('@coursebuilder/ui', () => ({
 vi.mock('@/trpc/react', () => ({
 	api: {
 		convertkit: {
-			answerSurvey: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+			answerCheckoutSurvey: { useMutation: () => ({ mutateAsync: vi.fn() }) },
 			checkoutSurveyAnswer: { useQuery: () => ({ data: undefined }) },
 		},
 	},
@@ -99,9 +101,44 @@ const product = {
 	type: 'cohort',
 	status: 1,
 	fields: { slug: 'synthetic-cohort', state: 'published' },
-	resources: [{ resource: { type: 'cohort', fields: { slug: 'synthetic-cohort' } } }],
+	resources: [
+		{ resource: { type: 'cohort', fields: { slug: 'synthetic-cohort' } } },
+	],
 } as any
 const loader = Promise.resolve({ formattedPrice: null, quantityAvailable: -1 })
+
+it('shows a spent-code notice in the home buy box for a non-owner', () => {
+	const course = { ...product, id: 'product-ma254', type: 'self-paced' }
+	mocks.pricing = {
+		...decisionWith('priced'),
+		product: course,
+		isPreviouslyPurchased: false,
+		formattedPrice: { calculatedPrice: 299, availableCoupons: [] },
+	}
+	const couponFromCode = {
+		...couponSchema.parse({
+			id: 'synthetic-spent',
+			createdAt: null,
+			expires: null,
+			percentageDiscount: 0,
+			maxUses: 1,
+			usedCount: 1,
+		}),
+		isValid: false,
+		isRedeemable: false,
+		paidCouponUsedUp: true,
+	}
+	const html = renderToStaticMarkup(
+		<HomePricingWidget
+			product={course}
+			quantityAvailable={-1}
+			pricingDataLoader={loader}
+			commerceProps={{ couponFromCode }}
+		/>,
+	)
+	expect(html).toContain('This code has been used.')
+	expect(html).not.toContain('Buy Additional Seats')
+})
 
 const authoritative = (kind: string, reasons: string[] = []) => ({
 	kind,
@@ -148,7 +185,10 @@ async function eventEnroll() {
 	return mocks.mdxComponents.Enroll!({})
 }
 
-const SURFACES: readonly [string, () => Promise<React.ReactNode> | React.ReactNode][] = [
+const SURFACES: readonly [
+	string,
+	() => Promise<React.ReactNode> | React.ReactNode,
+][] = [
 	[
 		'the workshop and cohort pricing widget',
 		() => (
@@ -201,8 +241,9 @@ const SURFACES: readonly [string, () => Promise<React.ReactNode> | React.ReactNo
 	],
 ]
 
-const render = async (surface: () => Promise<React.ReactNode> | React.ReactNode) =>
-	renderToStaticMarkup(<>{await surface()}</>)
+const render = async (
+	surface: () => Promise<React.ReactNode> | React.ReactNode,
+) => renderToStaticMarkup(<>{await surface()}</>)
 
 describe('Buy Now on every C5 pricing surface', () => {
 	beforeEach(() => {
@@ -213,7 +254,9 @@ describe('Buy Now on every C5 pricing surface', () => {
 		it('offers checkout for a chargeable decision', async () => {
 			const html = await render(surface)
 			expect(html).not.toContain('data-purchase-gate')
-			expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>[^<]*(Not open|Enrollment closed|Price unavailable)/)
+			expect(html).not.toMatch(
+				/<button[^>]*disabled=""[^>]*>[^<]*(Not open|Enrollment closed|Price unavailable)/,
+			)
 		})
 
 		it.each([

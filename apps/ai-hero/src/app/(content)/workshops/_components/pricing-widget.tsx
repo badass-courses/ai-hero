@@ -7,19 +7,14 @@ import {
 	type ProductPricingFeature,
 } from '@/components/commerce/product-pricing-features'
 import { GatedBuyButton } from '@/components/commerce/gated-buy-button'
+import { WorkshopUsedCouponNotice } from '@/components/commerce/used-coupon-notice'
 import { RegionalQuantityClear } from '@/components/commerce/regional-toggle-gate'
 import { TYPE } from '@/components/landing/type'
 import { C5_PRODUCT_ID } from '@/lib/c5-pricing/products'
 import { APP_REASONS } from '@/lib/c5-pricing/reasons'
 import { EARLY_BIRD_CODE_REASONS } from '@/lib/c5-pricing/early-bird-code'
 import { formatDeadline } from '@/utils/discount-formatter'
-import {
-	ArrowUpRight,
-	Mail,
-	Minus,
-	Plus,
-	ShieldCheck,
-} from 'lucide-react'
+import { ArrowUpRight, Mail, Minus, Plus, ShieldCheck } from 'lucide-react'
 import type { CountdownRenderProps } from 'react-countdown'
 
 import { useCoupon } from '@coursebuilder/commerce-next/coupons/use-coupon'
@@ -171,6 +166,10 @@ export const PricingWidget = ({
 							billingInterval={product.fields?.billingInterval}
 						/>
 					</Pricing.Price>
+					<WorkshopUsedCouponNotice
+						coupon={couponFromCode}
+						productId={product.id}
+					/>
 					<TeamPurchaseControls teamMode={teamMode} />
 					{buyButton ?? (
 						<GatedBuyButton
@@ -419,7 +418,10 @@ export function EarlyBirdCodeNotice({
 		)
 	if (reasons?.includes(EARLY_BIRD_CODE_REASONS.ended))
 		return (
-			<p role="status" className={cn(TYPE.metaSm, 'text-muted-foreground mt-2')}>
+			<p
+				role="status"
+				className={cn(TYPE.metaSm, 'text-muted-foreground mt-2')}
+			>
 				This early-bird code has ended.
 			</p>
 		)
@@ -593,7 +595,9 @@ const SaleCountdownBox = ({
 
 	const expires = formattedPrice?.defaultCoupon?.expires
 	const deadline = formatDeadline(expires, 'short')
-	const endsLabel = deadline ? `Price goes up ${deadline}` : 'Price goes up soon'
+	const endsLabel = deadline
+		? `Price goes up ${deadline}`
+		: 'Price goes up soon'
 	const blocks: Array<[number, string]> = [
 		[days, 'days'],
 		[hours, 'hours'],
@@ -699,7 +703,6 @@ export const RegionalPricingBox = () => {
 				isTeamPurchaseActive: false,
 			}),
 		})
-
 
 	const rawDiscount = pppCoupon?.percentageDiscount as
 		| string

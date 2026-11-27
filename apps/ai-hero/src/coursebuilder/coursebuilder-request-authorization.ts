@@ -14,6 +14,8 @@ type ProtectCourseBuilderRequestOptions = {
 		} | null>
 	}
 	verifiedUserId?: string
+	onPaidCouponUsedUp?: () => void
+	onAuthoritativeQuote?: () => void
 	/**
 	 * Products the app's authoritative-price hook prices. Their only client
 	 * input is the PPP consent (`AUTHORITATIVE_PPP_OFFER_ID`); every coupon
@@ -123,6 +125,8 @@ const protectPricesFormattedRequest = async (
 		adapter,
 		verifiedUserId,
 		authoritativeProductIds,
+		onPaidCouponUsedUp,
+		onAuthoritativeQuote,
 	}: ProtectCourseBuilderRequestOptions,
 ) => {
 	const body = await parsePricesFormattedBody(request)
@@ -135,12 +139,14 @@ const protectPricesFormattedRequest = async (
 	if (!productId) return requestWithJsonBody(request, body)
 
 	if (authoritativeProductIds?.has(productId)) {
+		onAuthoritativeQuote?.()
 		// The hook decides the price. The PPP toggle echoes the offer id as the
 		// buyer's consent; nothing else the client sends selects a discount.
 		const merchantCoupon = isRecord(body.merchantCoupon)
 			? body.merchantCoupon
 			: undefined
-		if (merchantCoupon?.id !== AUTHORITATIVE_PPP_OFFER_ID) delete body.merchantCoupon
+		if (merchantCoupon?.id !== AUTHORITATIVE_PPP_OFFER_ID)
+			delete body.merchantCoupon
 		delete body.couponId
 		delete body.code
 		delete body.country
@@ -158,8 +164,23 @@ const protectPricesFormattedRequest = async (
 		productId,
 		quantity: numberValue(body.quantity),
 		requestedMerchantCouponId: stringValue(merchantCoupon?.id),
-		requestedSiteCouponId: stringValue(body.couponId),
+		requestedSiteCouponId:
+			stringValue(body.couponId) ??
+			stringValue(body.code) ??
+			stringValue(request.nextUrl.searchParams.get('code')),
 	})
+
+	if (decision.paidCouponUsedUp) {
+		onPaidCouponUsedUp?.()
+		delete body.code
+		delete body.merchantCoupon
+		body.couponId = decision.entitlementCouponId
+		if (decision.entitlementMerchantCouponId) {
+			body.merchantCoupon = await adapter.getMerchantCoupon(
+				decision.entitlementMerchantCouponId,
+			)
+		}
+	}
 
 	if (!decision.authorized) {
 		delete body.merchantCoupon
@@ -182,6 +203,7 @@ const protectCheckoutRequest = async (
 		verifiedUserId,
 		authoritativeProductIds,
 		resolveServerComputedMerchantCoupon,
+		onPaidCouponUsedUp,
 	}: ProtectCourseBuilderRequestOptions,
 ) => {
 	// Vercel country is trusted; the checkout query is caller-controlled.
@@ -218,8 +240,19 @@ const protectCheckoutRequest = async (
 		productId,
 		quantity,
 		requestedMerchantCouponId: stringValue(url.searchParams.get('couponId')),
-		requestedSiteCouponId: stringValue(url.searchParams.get('usedCouponId')),
+		requestedSiteCouponId:
+			stringValue(url.searchParams.get('usedCouponId')) ??
+			stringValue(url.searchParams.get('code')),
 	})
+
+	if (decision.paidCouponUsedUp) {
+		onPaidCouponUsedUp?.()
+		url.searchParams.delete('code')
+		url.searchParams.delete('couponId')
+		if (decision.entitlementMerchantCouponId) {
+			url.searchParams.set('couponId', decision.entitlementMerchantCouponId)
+		}
+	}
 
 	if (decision.authorized && decision.entitlementCouponId) {
 		url.searchParams.set('usedCouponId', decision.entitlementCouponId)
@@ -229,12 +262,15 @@ const protectCheckoutRequest = async (
 		url.searchParams.delete('couponId')
 		url.searchParams.delete('usedCouponId')
 
-		const serverComputedCoupon = await resolveServerComputedMerchantCoupon?.({
-			productId,
-			quantity,
-			verifiedUserId,
-			country: trustedCountry,
-		})
+		const serverComputedCoupon =
+			decision.paidCouponUsedUp && !decision.requestedPPP && quantity < 2
+				? null
+				: await resolveServerComputedMerchantCoupon?.({
+						productId,
+						quantity,
+						verifiedUserId,
+						country: trustedCountry,
+					})
 		if (
 			serverComputedCoupon?.type === 'bulk' ||
 			(serverComputedCoupon?.type === 'ppp' && decision.requestedPPP)

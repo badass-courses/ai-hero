@@ -17,6 +17,7 @@ import type {
 
 import { GatedPPPToggle } from './regional-toggle-gate'
 import { GatedBuyButton } from './gated-buy-button'
+import { UsedCouponNotice } from './used-coupon-notice'
 import { CheckoutSurveyBuyButton } from './checkout-survey-buy-button'
 import { ProductPricingFeatures } from './product-pricing-features'
 
@@ -58,6 +59,7 @@ export const PricingWidget: React.FC<{
 		>
 			<BuyPathPricingBeacon productId={product.id} />
 			<Pricing.Product className="w-full">
+				<UsedCouponNotice coupon={couponFromCode} />
 				<Pricing.Purchased className="gap-1">
 					<Link
 						className="hover:underline"

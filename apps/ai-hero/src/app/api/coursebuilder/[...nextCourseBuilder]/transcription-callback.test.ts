@@ -20,6 +20,7 @@ vi.mock('@/coursebuilder/protect-commerce-request', () => ({
 		userId: null,
 	}),
 	authoritativeCheckoutProduct: () => null,
+	isProtectedCommerceRequest: () => false,
 }))
 vi.mock('@/coursebuilder/stripe-provider', () => ({
 	stripeProvider: { options: { paymentsAdapter: { stripe: {} } } },

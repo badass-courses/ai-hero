@@ -34,6 +34,7 @@ const { mockDb, mockAdapter } = vi.hoisted(() => {
 		updateUser: vi.fn(),
 		// Adapter helpers used by refactored methods
 		getDefaultCoupon: vi.fn(),
+		getCouponForDisplay: vi.fn(),
 		couponForIdOrCode: vi.fn(),
 		getEntitlementsForUser: vi.fn(),
 		getMembershipsForUser: vi.fn(),
@@ -88,6 +89,7 @@ function makeThenable(resolveValue: any) {
 vi.mock('@/db', () => ({
 	db: mockDb,
 	courseBuilderAdapter: mockAdapter,
+	rawCourseBuilderAdapter: mockAdapter,
 }))
 
 // The provisioning boundary is covered by src/server/user-provisioning.test.ts.
@@ -465,7 +467,7 @@ describe('AI Hero Support Integration', () => {
 		})
 
 		it('returns coupon info for a valid coupon', async () => {
-			mockAdapter.couponForIdOrCode.mockResolvedValue({
+			const coupon = {
 				id: 'coupon-1',
 				code: 'SAVE30',
 				percentageDiscount: 0.3,
@@ -487,8 +489,9 @@ describe('AI Hero Support Integration', () => {
 					merchantAccountId: 'ma-1',
 					status: 0,
 				},
-			})
-
+			}
+			mockAdapter.couponForIdOrCode.mockResolvedValue(coupon)
+			mockAdapter.getCouponForDisplay.mockResolvedValue(coupon)
 			const result = await integration.getCouponInfo!('SAVE30')
 
 			expect(result).toEqual({
@@ -503,15 +506,15 @@ describe('AI Hero Support Integration', () => {
 			})
 		})
 
-		it('returns invalid when coupon is exhausted', async () => {
-			mockAdapter.couponForIdOrCode.mockResolvedValue({
+		it('returns usage and invalid status when the display read finds a paid use', async () => {
+			const coupon = {
 				id: 'coupon-2',
 				code: 'USED',
 				percentageDiscount: 0.1,
 				amountDiscount: null,
 				expires: null,
 				maxUses: 5,
-				usedCount: 5,
+				usedCount: 4,
 				status: 1,
 				fields: {},
 				default: false,
@@ -526,9 +529,16 @@ describe('AI Hero Support Integration', () => {
 					merchantAccountId: 'ma-1',
 					status: 0,
 				},
+			}
+			mockAdapter.couponForIdOrCode.mockResolvedValue(coupon)
+			mockAdapter.getCouponForDisplay.mockResolvedValue({
+				...coupon,
+				usedCount: 5,
+				paidCouponUsedUp: true,
 			})
-
 			const result = await integration.getCouponInfo!('USED')
+			expect(mockAdapter.getCouponForDisplay).toHaveBeenCalledWith(coupon.id)
+			expect(result?.usageCount).toBe(5)
 
 			expect(result).not.toBeNull()
 			expect(result!.valid).toBe(false)
@@ -564,7 +574,7 @@ describe('AI Hero Support Integration', () => {
 		})
 
 		it('returns promotion when default coupon is active', async () => {
-			mockAdapter.getDefaultCoupon.mockResolvedValue({
+			const sale = {
 				defaultCoupon: {
 					id: 'coupon-1',
 					code: 'SALE2024',
@@ -583,10 +593,10 @@ describe('AI Hero Support Integration', () => {
 					merchantAccountId: 'ma-1',
 					status: 0,
 				},
-			})
-
+			}
+			mockAdapter.getDefaultCoupon.mockResolvedValue(sale)
+			mockAdapter.getCouponForDisplay.mockResolvedValue(sale.defaultCoupon)
 			const result = await integration.getActivePromotions!()
-
 			expect(result).toHaveLength(1)
 			expect(result[0]).toEqual({
 				id: 'coupon-1',

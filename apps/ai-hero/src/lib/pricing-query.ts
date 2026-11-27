@@ -4,13 +4,14 @@ import { courseBuilderAdapter } from '@/db'
 import { getServerAuthSession } from '@/server/auth'
 
 import { formatPricesForProduct } from '@coursebuilder/commerce'
-import { propsForCommerce } from '@coursebuilder/commerce/props-for-commerce'
+import { propsForCommerce } from '@/lib/coupon-display'
 import { productSchema, Purchase } from '@coursebuilder/core/schemas'
 import {
 	PricingData,
 	type FormatPricesForProductOptions,
 } from '@coursebuilder/commerce/types'
 
+import { paidCouponPricingView } from './paid-coupon-pricing-view'
 import { getProducts } from './products-query'
 import { getSeatsTaken, seatsLeft } from './seats-taken-query'
 
@@ -26,7 +27,7 @@ export async function getPricingData(
 
 	const formattedPrice = await formatPricesForProduct({
 		...options,
-		ctx: courseBuilderAdapter,
+		ctx: paidCouponPricingView(courseBuilderAdapter),
 	})
 
 	const product = await courseBuilderAdapter.getProduct(options.productId)

@@ -5,7 +5,7 @@ import { getPricingData } from '@/lib/pricing-query'
 import { getProduct } from '@/lib/products-query'
 import { getCachedAllWorkshopProducts } from '@/lib/workshops-query'
 
-import { propsForCommerce } from '@coursebuilder/commerce/props-for-commerce'
+import { propsForCommerce } from '@/lib/coupon-display'
 
 import type { Product } from '@coursebuilder/core/schemas'
 
