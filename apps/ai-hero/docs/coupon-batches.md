@@ -11,6 +11,8 @@ All calls are under `/api/commerce/coupon-batches`. Send an expiring desk PAT in
 3. `GET /{batchId}?cursor=N` for up to 100 outcomes and aggregate counts. `POST /lookup` with `{ intentKeys: [...] }` for at most 100 keys. A pending item is not unknown. Duplicate intent keys inside one manifest are invalid. If a batch cannot mint because its credential, policy, deadline or export window is no longer valid, unminted keys can be submitted again in a new confirmed batch with a new request key and valid terms. Status and lookup never return redemption codes.
 4. `POST /export` with `{ batchId, cursor? }` after completion, or while the batch is stopped or parked. A stopped or parked export returns only codes already committed, never a code for pending work. Resume scanning from cursor zero after progress, because a previously queued row may have minted. Only the initiating desk principal can export, with the read grant and a valid PAT. The response is private and no-store. Codes stop exporting after 24 hours or coupon expiry, whichever comes first. A second batch that references the same intent cannot extend that window.
 
+Preview and submit accept up to 12,000 items and 4 MiB of request body. Above either hard input limit they return `413 manifest_too_large` without admitting a partial manifest. The volume alarms below those limits still do not refuse requests.
+
 Codes transfer until spent or expired. The private client submits the code in the body of the existing `/api/coursebuilder/redeem/coupon` free claim, never in a checkout URL or Stripe metadata. When `AIH_COUPON_BATCH_ENABLED=true`, the C5 `?code=` presentation resolves a reserved bearer for the free claim dialog; only a reserved bearer gets private/no-store and no-referrer headers. The page deliberately does not clear the URL: sign-in redirects and the claim dialog may still need it. Do not enable link delivery until first-request host, access-log and browser capture are verified. Comp claims require `Content-Type: application/json` with a `productIds` array. Non-JSON requests with a comp selector are refused; ordinary claims retain Course Builder’s existing parsing. Do not copy codes into receipts, logs or support transcripts. Coupon refs in status are not selectors. The template owns the C5 sold-out bypass; a different product cannot borrow it.
 
 ## Enable and stop
@@ -34,8 +36,13 @@ With `AIH_COUPON_BATCH_ENABLED=true`, existing C5 seat-cap readers omit only dir
 
 Before using the flag, confirm whether the C5 cap is meant to bound real room size, such as live-session or Discord capacity. If it is, comps need a separate limit. This PR does not add one.
 
+`pricing-decisions.seatsTaken` is a TypeScript specification with no production callers. Only `pricing-decisions.test.ts`, `seats-taken-query.mysql.test.ts`, and `coupon-batches/capacity.mysql.test.ts` call it. Production pricing and availability use `seats-taken-query.ts`; row-count readers use `purchase-count.ts` or apply the shared predicate to their existing count.
+
 ## Before enabling
 
+Ledger’s deployment-only findings remain in this checklist: check the database and lock headroom, delivery, telemetry, cache behavior, and the credential and bearer lifecycle before rollout. Local fixes are not hosted proof.
+
+- **Ledger 17 — C5 count load.** The flag-on C5 row-count path bypasses the persisted purchase-count cache, even with `quantityAvailable=-1`. Measure query volume, latency and database load for real C5 read traffic before enabling. Also verify the rare selector-collision index readback on the deployment database alongside the claim lock and worker session checks.
 - **Course Builder rollout.** Verify checkout, webhook and video paths beyond loopback. Review upstream Course Builder port conformance; app fixtures do not replace that suite.
 - **14 — Deployment database.** All fixtures use loopback mysql2. Verify the issuer’s required session `SET` statements and the app pool’s claim `FOR UPDATE` on PlanetScale/Vitess. A rejected `SET` leaves the issuer unavailable until restart. Do not enable until both paths pass.
 - **15 — First claims and access.** Comp claims use the app’s organization policy and commit the first user, owner membership and purchase together. The wrapper busts the claimant’s access cache after commit. A rolled-back first claim leaves no user to repair. Check cohort and included-workshop access with hosted auth and real product config; local proof used a synthetic session cache, product configuration and email.
@@ -53,4 +60,4 @@ Before using the flag, confirm whether the C5 cap is meant to bound real room si
 
 ## Synthetic proof
 
-Run `src/lib/coupon-batches/*.test.ts` and `src/lib/coupon-mint.mysql.test.ts` with fresh disposable loopback MySQL schemas generated from the app schema. See the guarded cases in `.github/workflows/evergreen-journey-mysql.yaml`. They use fixture PATs and synthetic accounts. No Stripe, customer data, delivery or production access is required. The fixture drain is not a claim about production queue latency or checkout p95.
+Run `src/lib/coupon-batches/*.test.ts` and `src/lib/coupon-mint.mysql.test.ts` with fresh disposable loopback MySQL schemas generated from the app schema. See the guarded cases in `.github/workflows/evergreen-journey-mysql.yaml`. Use distinct loopback schemas: `AIH_COUPON_BATCH_MYSQL_URL` for batch and selector-collision tests and `AIH_COUPON_CAPACITY_MYSQL_URL` for capacity. They use fixture PATs and synthetic accounts. No Stripe, customer data, delivery or production access is required. The fixture drain is not a claim about production queue latency or checkout p95.

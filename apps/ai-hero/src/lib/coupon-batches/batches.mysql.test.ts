@@ -1,5 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import * as schema from '@/db/schema'
+import { mysqlTable } from '@/db/mysql-table'
+import { DrizzleAdapter } from '@coursebuilder/adapter-drizzle'
+import {
+	requireCouponBatchInsert,
+	type CouponInsertRow,
+} from '@coursebuilder/core/ports'
+import type { MySqlDatabase } from 'drizzle-orm/mysql-core'
+import { isSelectorCollision } from './selector-collision'
 import { and, eq, inArray, sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/mysql2'
 import type { Pool } from 'mysql2/promise'
@@ -201,6 +209,48 @@ describe.skipIf(!uri)(
 			const { previewReceipt } = await preview.json()
 			return { ...body, previewReceipt }
 		}
+
+		it('distinguishes the selector index from a primary duplicate after adapter redaction', async () => {
+			const row: CouponInsertRow = {
+				id: `batch-coupon-${run}-collision`,
+				code: `c5hash_${run}`,
+				merchantCouponId: null,
+				restrictedToProductId: template.productId,
+				percentageDiscount: '1.00',
+				expires: null,
+				maxUses: 1,
+				usedCount: 0,
+				status: 1,
+				default: false,
+				fields: {},
+			}
+			await db.transaction(async (tx) => {
+				const insert = requireCouponBatchInsert(
+					DrizzleAdapter<MySqlDatabase<any, any, any>>(tx, mysqlTable),
+				)
+				await insert([row])
+				for (const [candidate, expected] of [
+					[{ ...row, id: `${row.id}-different` }, true],
+					[{ ...row, code: `${row.code}-different` }, false],
+					[row, false],
+				] as const) {
+					const error = await insert([candidate]).then(
+						() => null,
+						(error: unknown) => error,
+					)
+					expect(error).toMatchObject({ code: 'COUPON_SELECTOR_COLLISION' })
+					expect(await isSelectorCollision(error, tx, [candidate])).toBe(
+						expected,
+					)
+				}
+				expect(
+					await isSelectorCollision({ code: 'ER_DUP_ENTRY', errno: 1062 }, tx, [
+						row,
+					]),
+				).toBe(false)
+				await tx.delete(schema.coupon).where(eq(schema.coupon.id, row.id))
+			})
+		})
 
 		it('reports an absent control row without querying the pager or exporting', async () => {
 			await db

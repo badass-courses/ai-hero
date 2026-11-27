@@ -579,7 +579,7 @@ describe.skipIf(!uri)(
 					if (index === 0) delete process.env.AIH_COUPON_BATCH_ENABLED
 					else process.env.AIH_COUPON_BATCH_ENABLED = 'true'
 					// Main's direct legacy free claim does not consult the seat cap.
-					const legacy = await claim(id, `legacy-claimant-${index}`)
+					const legacy = await claim(id, `c5comp_legacy-claimant-${index}`)
 					expect(legacy.status).toBe(200)
 					expect(await legacy.json()).toMatchObject({
 						purchase: { couponId: id, status: 'Valid' },
@@ -613,6 +613,26 @@ describe.skipIf(!uri)(
 			expect(
 				await rawCourseBuilderAdapter.getPurchaseWithUser(purchase.id),
 			).toMatchObject({ id: purchase.id })
+
+			const secondBearer = newSelector()
+			const secondCouponRef = `batch-coupon-${key('owner-refusal')}`
+			await runtime.db.insert(coupon).values({
+				id: secondCouponRef, code: selectorDigest(secondBearer),
+				percentageDiscount: '1.00', restrictedToProductId: C5_PRODUCT_ID,
+				status: 1, maxUses: 1, expires: new Date(Date.now() + 300000),
+				fields: { couponBatchTemplate: 'c5-comp-v1', bypassSoldOut: true },
+			})
+			const alreadyOwned = await claim(secondBearer, 'first-claimant')
+			expect(alreadyOwned.status).toBe(200)
+			const refusal = await alreadyOwned.text()
+			expect(JSON.parse(refusal)).toEqual({
+				purchase: null, redeemingForCurrentUser: true,
+				error: { message: 'already-purchased-c5' },
+			})
+			expect(refusal).not.toContain(secondBearer)
+			expect(refusal).not.toContain('@example.test')
+			expect(await rawCourseBuilderAdapter.getCoupon(secondCouponRef)).toMatchObject({ usedCount: 0 })
+			expect(await rawCourseBuilderAdapter.getPurchasesForUser(purchase.userId)).toHaveLength(1)
 		})
 
 		it('uses the real HTTP pricing handlers for Stripe session creation and preserves late fulfillment', async () => {

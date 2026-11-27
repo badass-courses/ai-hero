@@ -4,6 +4,8 @@ import {
 	checkDeadline,
 	confirmPreview,
 	issuePreview,
+	MAX_MANIFEST_BYTES,
+	MAX_MANIFEST_ITEMS,
 	readManifest,
 } from './contract'
 
@@ -74,6 +76,50 @@ describe('desk comp manifest and preview', () => {
 		} finally {
 			await a.close()
 			await b.close()
+		}
+	})
+
+	it('accepts the exact item cap and rejects one more with 413', async () => {
+		const items = Array.from({ length: MAX_MANIFEST_ITEMS }, (_, i) => ({
+			intentKey: `limit-${i}`,
+		}))
+		const manifest = await read({ ...body, items })
+		try {
+			expect(manifest.total).toBe(MAX_MANIFEST_ITEMS)
+		} finally {
+			await manifest.close()
+		}
+		await expect(
+			read({ ...body, items: [...items, { intentKey: 'over-limit' }] }),
+		).rejects.toMatchObject({ status: 413, code: 'manifest_too_large' })
+	})
+
+	it('bounds streamed wire bytes even without an honest content length', async () => {
+		const manifest = JSON.stringify(body)
+		const atLimit = manifest.padEnd(MAX_MANIFEST_BYTES, ' ')
+		const exact = await readManifest(
+			new Request('https://example.test', { method: 'POST', body: atLimit }),
+		)
+		await exact.close()
+		const bytes = new TextEncoder().encode(atLimit + ' ')
+		for (const headers of [undefined, { 'content-length': '1' }]) {
+			const stream = new ReadableStream<Uint8Array>({
+				start(controller) {
+					controller.enqueue(bytes.subarray(0, bytes.length - 1))
+					controller.enqueue(bytes.subarray(bytes.length - 1))
+					controller.close()
+				},
+			})
+			await expect(
+				readManifest(
+					new Request('https://example.test', {
+						method: 'POST',
+						headers,
+						body: stream,
+						duplex: 'half',
+					} as RequestInit),
+				),
+			).rejects.toMatchObject({ status: 413, code: 'manifest_too_large' })
 		}
 	})
 

@@ -52,7 +52,7 @@ vi.mock('@/coursebuilder/stripe-provider', () => ({
 	},
 }))
 
-const mysqlUrl = process.env.AIH_COUPON_BATCH_MYSQL_URL
+const mysqlUrl = process.env.AIH_COUPON_CAPACITY_MYSQL_URL
 const run = randomUUID().slice(0, 8)
 const key = (value: string) => `capacity-${run}-${value}`
 const cap = 8
@@ -113,7 +113,7 @@ describe.skipIf(!mysqlUrl)('C5 cap reads with the production queries', () => {
 		if (
 			url.protocol !== 'mysql:' ||
 			url.hostname !== '127.0.0.1' ||
-			!/^\/coupon_batch_fixture(?:_[a-z0-9]+)?$/.test(url.pathname)
+			!/^\/coupon_capacity_fixture(?:_[a-z0-9]+)?$/.test(url.pathname)
 		)
 			throw new Error('unsafe capacity fixture database')
 		vi.stubEnv('DATABASE_URL', url.toString())

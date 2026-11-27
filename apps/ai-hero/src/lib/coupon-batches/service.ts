@@ -47,6 +47,7 @@ import {
 	selectorDigest,
 } from './selector'
 import { ROW_PREFIX } from './namespace'
+import { isSelectorCollision } from './selector-collision'
 
 export const CONTROL_ID = 'ai-hero'
 const exportOrRead = COUPON_BATCH_READ_SCOPE
@@ -384,27 +385,12 @@ export function createCouponBatchService(options: ServiceOptions) {
 			}
 			return { i, row }
 		}
-		// This port inserts coupon rows only. Its unique keys are row id and
-		// code digest; both are regenerated locally after a duplicate.
-		const isCollision = (err: unknown) => {
-			const outer = err as {
-				code?: unknown
-				errno?: unknown
-				cause?: unknown
-			} | null
-			const inner = outer?.cause as { code?: unknown; errno?: unknown } | null
-			return [outer, inner].some(
-				(e) =>
-					e?.code === 'COUPON_SELECTOR_COLLISION' ||
-					e?.code === 'ER_DUP_ENTRY' ||
-					e?.errno === 1062,
-			)
-		}
 		async function isolated(rows: ReturnType<typeof candidate>[]) {
+			const proposed = rows.map(({ row }) => row)
 			try {
-				await insert(rows.map(({ row }) => row))
+				await insert(proposed)
 			} catch (error) {
-				if (!isCollision(error)) throw error
+				if (!(await isSelectorCollision(error, tx, proposed))) throw error
 				if (rows.length > 1) {
 					const half = Math.ceil(rows.length / 2)
 					await isolated(rows.slice(0, half))
@@ -417,7 +403,7 @@ export function createCouponBatchService(options: ServiceOptions) {
 						await insert([row])
 						return
 					} catch (retry) {
-						if (!isCollision(retry)) throw retry
+						if (!(await isSelectorCollision(retry, tx, [row]))) throw retry
 					}
 				}
 				Object.assign(rows[0]!.i, {

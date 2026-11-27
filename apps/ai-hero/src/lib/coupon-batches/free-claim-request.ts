@@ -1,10 +1,11 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 
 import {
-	containsCompReference,
-	inSelectorNamespace,
-	isPrivateCompReference,
-} from './namespace'
+	hasReservedCouponField,
+	isReservedCouponField,
+	readCouponRequestBody,
+} from './coupon-request-fields'
+import { inSelectorNamespace } from './namespace'
 import { selectorDigest } from './selector'
 
 export const INTERNAL_COMP_CLAIM = 'batch-coupon-claim'
@@ -30,30 +31,26 @@ export async function withPrivateCompClaim<T>(
 			headers: { 'Cache-Control': 'no-store' },
 		})
 	if (
-		[...new URL(request.url).searchParams.values()].some(isPrivateCompReference)
+		hasReservedCouponField(new URL(request.url).searchParams, [
+			'coupon',
+			'code',
+			'couponId',
+		])
 	)
 		return reject(400)
-	if (!request.body) return run(request)
-	const raw = await request.clone().text()
-	const mediaType = request.headers.get('content-type')?.split(';', 1)[0]
-	const json = mediaType?.trim().toLowerCase() === 'application/json'
-	if (!json) {
-		const form = new URLSearchParams(raw)
-		return containsCompReference(raw) ||
-			[...form.values()].some(isPrivateCompReference)
-			? reject(415)
-			: run(request)
-	}
-	let body: Record<string, unknown>
-	try {
-		body = JSON.parse(raw)
-	} catch {
-		return containsCompReference(raw) ? reject(400) : run(request)
-	}
-	if (!inSelectorNamespace(body?.couponId))
-		return isPrivateCompReference(body?.couponId) || containsCompReference(raw)
-			? reject(400)
-			: run(request)
+	const {
+		json: body,
+		isJson,
+		reserved,
+	} = await readCouponRequestBody(request, ['couponId', 'code'])
+	if (!reserved) return run(request)
+	if (!isJson) return reject(415)
+	if (
+		!body ||
+		!inSelectorNamespace(body.couponId) ||
+		isReservedCouponField(body.code)
+	)
+		return reject(400)
 	const digest = selectorDigest(body.couponId)
 	if (!digest) return reject(400)
 	body.couponId = INTERNAL_COMP_CLAIM

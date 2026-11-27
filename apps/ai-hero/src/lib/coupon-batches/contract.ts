@@ -11,6 +11,8 @@ export { PRODUCT, TEMPLATE } from './namespace'
 export const PAGE = 100
 export const REQUEST_ALARM = 3000
 export const DAILY_ALARM = 4000
+export const MAX_MANIFEST_ITEMS = 12_000
+export const MAX_MANIFEST_BYTES = 4 * 1024 * 1024
 export const POLICY_REVISION = '1'
 export const EXPORT_MS = 24 * 3600_000
 const PREVIEW_MS = 5 * 60_000
@@ -27,6 +29,9 @@ export class BatchProblem extends Error {
 }
 const invalid = (): never => {
 	throw new BatchProblem(400, 'invalid_manifest')
+}
+const tooLarge = (): never => {
+	throw new BatchProblem(413, 'manifest_too_large')
 }
 export const key = z
 	.string()
@@ -64,8 +69,8 @@ export const sha = (value: string) =>
 	createHash('sha256').update(value).digest('hex')
 
 /** Frame the top-level JSON object and stream only its items array. JSON.parse
- * still does the syntax checking on each bounded value. No aggregate size
- * cutoff: request/transport failures may interrupt a spool, not admit a prefix. */
+ * still does the syntax checking on each bounded value. An oversized or
+ * interrupted spool never admits a prefix. */
 async function* frames(body: ReadableStream<Uint8Array>) {
 	const reader = body.getReader()
 	const decoder = new TextDecoder('utf-8', { fatal: true })
@@ -81,6 +86,7 @@ async function* frames(body: ReadableStream<Uint8Array>) {
 		| 'item-separator'
 		| 'done' = 'start'
 	let remaining = ''
+	let received = 0
 	let token = ''
 	let name = ''
 	let quoted = false
@@ -103,6 +109,8 @@ async function* frames(body: ReadableStream<Uint8Array>) {
 	try {
 		for (;;) {
 			const next = await reader.read()
+			received += next.value?.byteLength ?? 0
+			if (received > MAX_MANIFEST_BYTES) tooLarge()
 			remaining = decoder.decode(next.value, { stream: !next.done })
 			for (const c of remaining) {
 				if (quoted) {
@@ -197,6 +205,13 @@ async function* frames(body: ReadableStream<Uint8Array>) {
 
 export async function readManifest(request: Request): Promise<Manifest> {
 	if (!request.body) throw new BatchProblem(400, 'invalid_manifest')
+	const declaredLength = request.headers.get('content-length')
+	if (
+		declaredLength &&
+		/^\d+$/.test(declaredLength) &&
+		Number(declaredLength) > MAX_MANIFEST_BYTES
+	)
+		tooLarge()
 	const dir = await mkdtemp(join(tmpdir(), 'aih-coupon-'))
 	const path = join(dir, 'manifest')
 	const close = async () => {
@@ -229,6 +244,7 @@ export async function readManifest(request: Request): Promise<Manifest> {
 					if (frame.name !== 'items') fields[frame.name] = frame.value
 					continue
 				}
+				if (total >= MAX_MANIFEST_ITEMS) tooLarge()
 				const parsed = item.safeParse(frame.value)
 				if (!parsed.success) throw new BatchProblem(400, 'invalid_item')
 				if (intentKeys.has(parsed.data.intentKey))

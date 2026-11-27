@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 import { BatchProblem, key, PAGE, readManifest } from './contract'
+import { couponBatchRoute, logCouponBatchFailure } from './failures'
 import type { createCouponBatchService } from './service'
 import { COUPON_BATCH_MINT_SCOPE } from '@/lib/personal-access-tokens'
 
@@ -57,10 +58,15 @@ function validate<T>(schema: z.ZodType<T>, raw: unknown) {
 	return parsed.data
 }
 
-async function respond(run: () => Promise<Response>) {
+async function respond(
+	route: keyof typeof couponBatchRoute,
+	run: () => Promise<Response>,
+) {
 	try {
 		return await run()
 	} catch (error) {
+		if (!(error instanceof BatchProblem))
+			await logCouponBatchFailure(route, 'request', error)
 		const { status, code } =
 			error instanceof BatchProblem
 				? error
@@ -85,7 +91,7 @@ export function couponBatchHandlers(
 ) {
 	return {
 		preview: (request: Request) =>
-			respond(async () => {
+			respond('preview', async () => {
 				const token = bearer(request)
 				const issuer = service()
 				await issuer.authorize(token, COUPON_BATCH_MINT_SCOPE)
@@ -99,7 +105,7 @@ export function couponBatchHandlers(
 				}
 			}),
 		submit: (request: Request) =>
-			respond(async () => {
+			respond('submit', async () => {
 				const token = bearer(request)
 				const issuer = service()
 				// Keep the cheap auth check before spooling; admit fences new keys only.
@@ -122,8 +128,9 @@ export function couponBatchHandlers(
 					if (status.counts.queued) {
 						try {
 							wake()
-						} catch {
-							/* Sweeper owns recovery. */
+						} catch (error) {
+							// The sweeper still owns durable recovery.
+							await logCouponBatchFailure('submit', 'wake', error)
 						}
 					}
 					return Response.json(status, {
@@ -135,7 +142,7 @@ export function couponBatchHandlers(
 				}
 			}),
 		status: (request: Request, batchId: string) =>
-			respond(async () => {
+			respond('status', async () => {
 				const token = bearer(request)
 				const cursor = new URL(request.url).searchParams.get('cursor') ?? '0'
 				if (!/^\d{1,10}$/.test(cursor))
@@ -150,7 +157,7 @@ export function couponBatchHandlers(
 				)
 			}),
 		lookup: (request: Request) =>
-			respond(async () => {
+			respond('lookup', async () => {
 				const token = bearer(request)
 				const input = validate(lookupSchema, await readSmall(request))
 				return Response.json(await service().lookup(token, input.intentKeys), {
@@ -158,7 +165,7 @@ export function couponBatchHandlers(
 				})
 			}),
 		exportPage: (request: Request) =>
-			respond(async () => {
+			respond('exportPage', async () => {
 				const token = bearer(request)
 				const input = validate(exportSchema, await readSmall(request))
 				return Response.json(

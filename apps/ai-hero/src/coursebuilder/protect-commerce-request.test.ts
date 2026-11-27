@@ -65,6 +65,58 @@ beforeEach(() => {
 })
 
 describe('protectCommerceRequest', () => {
+	it.each([
+		JSON.stringify({
+			email: 'c5comp_customer@example.test',
+			metadata: { code: 'batch-coupon-note' },
+		}),
+		new URLSearchParams({ email: 'c5comp_customer@example.test' }),
+	])(
+		'leaves reserved-looking non-selector checkout data alone',
+		async (body) => {
+			const input = new NextRequest(
+				'https://app.test/api/coursebuilder/checkout/stripe',
+				{ method: 'POST', body },
+			)
+			const result = await protectCommerceRequest(input)
+			expect(result.request).toBe(input)
+			expect(input.bodyUsed).toBe(false)
+		},
+	)
+
+	it('leaves reserved-looking non-selector checkout query data alone', async () => {
+		const input = new NextRequest(
+			'https://app.test/api/coursebuilder/checkout/stripe?email=c5comp_customer%40example.test',
+			{ method: 'POST' },
+		)
+		expect((await protectCommerceRequest(input)).request).toBe(input)
+	})
+
+	it.each(['coupon', 'code', 'couponId', 'usedCouponId'])(
+		'refuses a reserved checkout query %s',
+		async (key) => {
+			const input = new NextRequest(
+				`https://app.test/api/coursebuilder/checkout/stripe?${key}=c5comp_fixture`,
+				{ method: 'POST' },
+			)
+			const { request } = await protectCommerceRequest(input)
+			expect(request).toBeInstanceOf(Response)
+			expect((request as Response).status).toBe(400)
+			expect(protectCourseBuilderRequest).not.toHaveBeenCalled()
+		},
+	)
+
+	it('refuses a reserved checkout form selector', async () => {
+		const body = new URLSearchParams({ code: 'c5comp_fixture' })
+		const input = new NextRequest(
+			'https://app.test/api/coursebuilder/checkout/stripe',
+			{ method: 'POST', body },
+		)
+		const { request } = await protectCommerceRequest(input)
+		expect((request as Response).status).toBe(400)
+		expect(protectCourseBuilderRequest).not.toHaveBeenCalled()
+	})
+
 	it('returns the quote notice signal without blocking the price request', async () => {
 		vi.mocked(protectCourseBuilderRequest).mockImplementationOnce(
 			async (request, options) => {

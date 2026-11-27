@@ -1,12 +1,12 @@
 import 'server-only'
 import type { DbExecutor } from '@/db/client'
-import { coupon } from '@/db/schema'
+import { coupon, purchases } from '@/db/schema'
 import { cloneAdapter } from '@/lib/paid-coupon-pricing-view'
 import { log } from '@/server/logger'
 import type { CouponPort, PurchasePort } from '@coursebuilder/core/ports'
 import { couponSchema } from '@coursebuilder/core/schemas'
 import { createPersonalOrganizationService } from '@coursebuilder/organizations'
-import { and, eq, getTableColumns, sql } from 'drizzle-orm'
+import { and, eq, getTableColumns, isNull, sql } from 'drizzle-orm'
 
 import {
 	PRODUCT,
@@ -127,6 +127,28 @@ export async function redeemPrivateComp(
 			const txAdapter = adapterFor(tx)
 			// Provision atomically: a losing or rolled-back claim creates no user or org.
 			const { user, isNewUser } = await txAdapter.findOrCreateUser(input.email)
+			const alreadyOwned = {
+				purchase: null,
+				redeemingForCurrentUser: input.currentUserId === user.id,
+				error: { message: 'already-purchased-c5' },
+			}
+			if (!isNewUser) {
+				// The SDK hydrates the whole existing purchase before it can refuse
+				// a duplicate. Old rows need only meet its ownership predicate.
+				const [owned] = await tx
+					.select({ id: purchases.id })
+					.from(purchases)
+					.where(
+						and(
+							eq(purchases.userId, user.id),
+							eq(purchases.productId, PRODUCT),
+							eq(purchases.status, 'Valid'),
+							isNull(purchases.bulkCouponId),
+						),
+					)
+					.limit(1)
+				if (owned) return alreadyOwned
+			}
 			if (isNewUser) {
 				await createPersonalOrganizationService({
 					organizations: txAdapter,
@@ -138,6 +160,9 @@ export async function redeemPrivateComp(
 				couponId: row.id,
 			})
 			if (isNewUser && !result?.purchase) throw rollbackFirstClaim
+			// Keep the dialog's refusal prefix without echoing the claimant email.
+			if (result?.error?.message.startsWith('already-purchased-'))
+				return alreadyOwned
 			return result ?? invalid()
 		})
 	} catch (error) {

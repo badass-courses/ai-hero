@@ -6,9 +6,9 @@ import { courseBuilderAdapter, db } from '@/db'
 import { purchases } from '@/db/schema'
 import { AUTHORITATIVE_PRODUCT_IDS } from '@/lib/c5-pricing/decision'
 import {
-	containsCompReference,
-	isPrivateCompReference,
-} from '@/lib/coupon-batches/namespace'
+	hasReservedCouponField,
+	readCouponRequestBody,
+} from '@/lib/coupon-batches/coupon-request-fields'
 import { REGIONAL_UPGRADE_PATH } from '@/lib/c5-pricing/products'
 import { getProduct } from '@/lib/products-query'
 import {
@@ -25,29 +25,20 @@ import type { NextRequest } from 'next/server'
 
 import { AUTHORITATIVE_PPP_OFFER_ID } from '@coursebuilder/commerce/authoritative-price'
 
-function hasCompValue(value: unknown): boolean {
-	if (typeof value === 'string') return isPrivateCompReference(value)
-	return (
-		value !== null &&
-		typeof value === 'object' &&
-		Object.values(value).some(hasCompValue)
-	)
-}
-
 async function hasCompCheckoutInput(request: NextRequest) {
+	// couponId and usedCouponId are also selector fields in the Stripe handoff.
 	if (
-		containsCompReference(request.nextUrl.pathname) ||
-		[...request.nextUrl.searchParams.values()].some(isPrivateCompReference)
+		hasReservedCouponField(request.nextUrl.searchParams, [
+			'coupon',
+			'code',
+			'couponId',
+			'usedCouponId',
+		])
 	)
 		return true
-	if (!request.body) return false
-	const raw = await request.clone().text()
-	if (containsCompReference(raw)) return true
-	try {
-		return hasCompValue(JSON.parse(raw))
-	} catch {
-		return [...new URLSearchParams(raw).values()].some(isPrivateCompReference)
-	}
+	return (
+		await readCouponRequestBody(request, ['couponId', 'code', 'usedCouponId'])
+	).reserved
 }
 
 export const isProtectedCommerceRequest = (request: NextRequest) =>

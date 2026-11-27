@@ -5,7 +5,11 @@ import { PRODUCT } from './namespace'
 
 const path = 'https://example.test/api/coursebuilder/redeem/coupon'
 const code = 'c5comp_' + 'a'.repeat(40)
-const ordinary = { couponId: 'ordinary-free', productIds: [PRODUCT] }
+const ordinary = {
+	couponId: 'ordinary-free',
+	productIds: [PRODUCT],
+	email: 'c5comp_student@example.test',
+}
 
 beforeEach(() => {
 	vi.stubEnv('AIH_COUPON_BATCH_ENABLED', '')
@@ -26,10 +30,14 @@ it.each([
 	],
 	[
 		'legacy form',
-		new URLSearchParams({ couponId: ordinary.couponId }),
+		new URLSearchParams({ couponId: ordinary.couponId, email: ordinary.email }),
 		undefined,
 	],
-	['malformed ordinary JSON', '{broken', 'application/json'],
+	[
+		'malformed ordinary JSON',
+		'{"email":"c5comp_student@example.test",',
+		'application/json',
+	],
 ] as const)(
 	'passes ordinary flag-off redeem unchanged: %s',
 	async (_, body, contentType) => {
@@ -46,6 +54,34 @@ it.each([
 		})
 		expect(await withPrivateCompClaim(request, dispatch)).toBe(response)
 		expect(dispatch).toHaveBeenCalledOnce()
+	},
+)
+
+it('passes an unrelated flag-off query parameter unchanged', async () => {
+	const request = new Request(
+		`${path}?email=${encodeURIComponent(ordinary.email)}`,
+		{ method: 'POST' },
+	)
+	expect(await withPrivateCompClaim(request, async (input) => input)).toBe(
+		request,
+	)
+})
+
+it.each(['coupon', 'code', 'couponId'])(
+	'rejects a reserved redeem query selector in %s',
+	async (key) => {
+		const dispatch = vi.fn(async () => new Response(null))
+		const response = await withPrivateCompClaim(
+			new Request(`${path}?${key}=${code}`, {
+				method: 'POST',
+				body: JSON.stringify(ordinary),
+				headers: { 'content-type': 'application/json' },
+			}),
+			dispatch,
+		)
+		expect(response.status).toBe(400)
+		expect(await response.text()).not.toContain(code)
+		expect(dispatch).not.toHaveBeenCalled()
 	},
 )
 
@@ -75,6 +111,7 @@ it.each([
 		return form
 	},
 	() => new URLSearchParams({ couponId: code, productIds: PRODUCT }),
+	() => new URLSearchParams({ coupon: code }),
 ])(
 	'refuses non-JSON comp claims without dispatching or echoing the selector',
 	async (form) => {
