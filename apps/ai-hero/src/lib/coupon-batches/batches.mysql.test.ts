@@ -113,6 +113,7 @@ describe.skipIf(!uri)(
 		let rolloverAt: number
 		let envEnabled = false
 		let observeCouponInserts: number[] | undefined
+		let manifestPageWrites: number | undefined
 		let onCouponInsert: (() => void) | undefined
 		const wake = vi.fn()
 		const page = vi.fn(async (_value: unknown) => {})
@@ -132,6 +133,7 @@ describe.skipIf(!uri)(
 				mode: 'planetscale',
 				logger: {
 					logQuery(query) {
+						if (manifestPageWrites !== undefined && query.startsWith('insert into `AI_CouponBatchItem`')) manifestPageWrites++
 						if (query.startsWith('insert into `AI_Coupon`')) {
 							observeCouponInserts?.push(query.split(/\),\s*\(/).length)
 							onCouponInsert?.()
@@ -710,6 +712,8 @@ describe.skipIf(!uri)(
 		})
 
 		it('durably drains 3,058 with bounded chunks and alarms once across Pacific rollover', async () => {
+			envEnabled = true
+			await setControl({ enabled: 1 })
 			const large = await confirm(payload('wave', 3058))
 			const rollover = await confirm(payload('old-day-second', 950))
 			const a = await api.submit(request(large, `wave-${run}`))
@@ -1019,6 +1023,38 @@ describe.skipIf(!uri)(
 					.sort(),
 			).toEqual(['aging', 'stuck'])
 		})
+
+		it('admits the 12,000-item hard limit in 120 pages before returning', async () => {
+			envEnabled = true
+			await setControl({ enabled: 1 })
+			const body = payload('route-limit', 12_000)
+			const confirmed = await confirm(body)
+			const submit = request(confirmed, `limit-${run}`)
+			const bytes = Buffer.byteLength(JSON.stringify(confirmed))
+			manifestPageWrites = 0
+			const started = performance.now()
+			let admitted: string | undefined
+			try {
+				const response = await api.submit(submit)
+				const elapsedMs = Math.round(performance.now() - started)
+				expect(response.status).toBe(202)
+				const status = await response.json()
+				admitted = status.batchId
+				expect(status.counts).toEqual({ total: 12_000, queued: 12_000, minted: 0, refused: 0 })
+				expect(manifestPageWrites).toBe(120)
+				const [stored] = await db.select({ count: sql<number>`COUNT(*)` }).from(schema.couponBatchItem)
+					.where(eq(schema.couponBatchItem.batchId, admitted!))
+				expect(Number(stored?.count)).toBe(12_000)
+				console.info('fixture 12000-item admission', { bytes, writes: manifestPageWrites, elapsedMs })
+			} finally {
+				manifestPageWrites = undefined
+				if (admitted) {
+					await db.delete(schema.couponBatchAlert).where(eq(schema.couponBatchAlert.batchId, admitted))
+					await db.delete(schema.couponBatchItem).where(eq(schema.couponBatchItem.batchId, admitted))
+					await db.delete(schema.couponBatch).where(eq(schema.couponBatch.id, admitted))
+				}
+			}
+		}, 15_000)
 
 		it('overlap keeps the terminal result but cannot renew its code export window', async () => {
 			const body = payload('export-window')

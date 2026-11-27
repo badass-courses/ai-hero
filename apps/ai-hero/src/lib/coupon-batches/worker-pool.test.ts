@@ -12,6 +12,7 @@ it('keeps encoded credentials, port and TLS settings from a deployment-shaped My
 		const { config } = (pool as unknown as { pool: { config: unknown } }).pool
 		expect(config).toMatchObject({
 			connectionLimit: 1,
+			queueLimit: 4,
 			maxIdle: 0,
 			idleTimeout: 7500,
 			connectionConfig: {
@@ -26,6 +27,25 @@ it('keeps encoded credentials, port and TLS settings from a deployment-shaped My
 		})
 	} finally {
 		await pool.end()
+	}
+})
+
+it('releases a connection granted after the acquire deadline', async () => {
+	const late = Promise.withResolvers<unknown>()
+	const release = vi.fn()
+	const query = vi.fn()
+	const create = vi.spyOn(mysql, 'createPool').mockReturnValue({
+		getConnection: () => late.promise,
+	} as never)
+	try {
+		const pool = createCouponBatchWorkerPool('mysql://root@127.0.0.1/fixture', 15, 5)
+		await expect(pool.getConnection()).rejects.toThrow('coupon_batch_worker_acquire_unavailable')
+		late.resolve({ connection: {}, release, query })
+		await Promise.resolve()
+		expect(release).toHaveBeenCalledOnce()
+		expect(query).not.toHaveBeenCalled()
+	} finally {
+		create.mockRestore()
 	}
 })
 

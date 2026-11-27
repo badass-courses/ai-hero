@@ -1,10 +1,13 @@
 import { randomUUID } from 'node:crypto'
+import { NextRequest } from 'next/server'
+import { createAppAbility } from '@/ability'
 import { eq, inArray, sql } from 'drizzle-orm'
 import { userSchema } from '@coursebuilder/core/schemas'
 import { CourseBuilder } from '@coursebuilder/server/http'
 import { getCouponForCode } from './coupon-display'
 import { couponBatchHandlers } from './coupon-batches/http'
-import { c5CompPresentation } from './coupon-batches/free-selector'
+import { c5CompAvailable } from './coupon-batches/free-selector'
+import { CLAIM_CONTROL_ID } from './coupon-batches/namespace'
 import { createAppCommerceAdapter } from '@/db/commerce-adapter'
 import { createSessionAccessCache } from '@/server/session-access-cache'
 import { withPrivateCompClaim } from './coupon-batches/free-claim-request'
@@ -20,7 +23,9 @@ import type { Pool } from 'mysql2/promise'
 import {
 	concurrentlyBehindRowLock,
 	createCouponFixturePool,
+	waitForFixtureLock,
 } from './coupon-batches/mysql-fixture'
+import { openCouponBatchDatabase } from './coupon-batches/runtime'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import * as schema from '@/db/schema'
@@ -29,6 +34,7 @@ import * as schema from '@/db/schema'
 // and a 100% mint must never touch it.
 const state = vi.hoisted(() => ({
 	database: undefined as unknown,
+	patSecret: 'synthetic-compatibility-pat-secret',
 	adapter: undefined as unknown,
 	logger: {
 		debug: vi.fn(),
@@ -49,10 +55,14 @@ vi.mock('@/db', () => ({
 		return state.adapter
 	},
 }))
-vi.mock('@/server/logger', () => ({ log: state.logger }))
+vi.mock('@/server/logger', () => ({
+	log: state.logger,
+	createRequestContext: () => ({ requestId: 'synthetic-pat-request' }),
+	withLogContext: (_context: unknown, fn: () => unknown) => fn(),
+}))
 vi.mock('@coursebuilder/utils/logger', () => ({ logger: state.logger }))
 vi.mock('@/env.mjs', () => ({
-	env: { NEXT_PUBLIC_URL: 'https://example.test' },
+	env: { NEXT_PUBLIC_URL: 'https://example.test', PERSONAL_ACCESS_TOKEN_SECRET: state.patSecret },
 }))
 vi.mock('@/config', () => ({ default: {} }))
 vi.mock('@/server/auth', () => ({ getServerAuthSession: async () => ({}) }))
@@ -85,7 +95,7 @@ import {
 	type CouponMintDeps,
 } from './coupon-mint'
 import { drizzleCouponMintStore } from './coupon-mint-drizzle'
-import { isMysqlDuplicateEntryError } from './mysql-primary-key-retry'
+import { isMysqlDuplicateEntryError, withMysqlPrimaryKeyRetry } from './mysql-primary-key-retry'
 
 // A database prepared by `scripts/test-mysql.sh schema <db>`.
 const uri = process.env.AIH_COUPON_MINT_MYSQL_URL
@@ -236,6 +246,82 @@ suite('coupon minting against real MySQL', () => {
 		).toMatchObject({ state: 'replayed', coupons: a.coupons })
 	})
 
+	it('lists stored commerce PAT scopes and verifies mixed scopes without granting analytics', async () => {
+		const account = { id: `fixture-pat-${run}`, email: `fixture-pat-${run}@example.test` }
+		await db.insert(schema.users).values(account)
+		const token = createPersonalAccessToken({
+			userId: account.id, name: 'synthetic scoped reader', hashSecret: state.patSecret,
+			expiresAt: new Date(Date.now() + 3600_000),
+			scopes: [COUPON_BATCH_MINT_SCOPE, COUPON_BATCH_READ_SCOPE, 'analytics:read'],
+		})
+		await db.insert(schema.personalAccessToken).values(token.record)
+		const auth = await import('@/server/ability-for-request')
+		const request = new NextRequest('https://example.test/api/analytics', {
+			headers: { Authorization: `Bearer ${token.rawToken}` },
+		})
+		const authenticated = await auth.getUserAbilityForRequest(request)
+		expect(authenticated.authMethod).toBe('personal-access-token')
+		expect(authenticated.user?.id).toBe(account.id)
+		expect(authenticated.ability.can('view', 'Analytics')).toBe(false)
+		expect(authenticated.ability.can('manage', 'all')).toBe(false)
+
+		// Substitute only the caller's admin authorization. Listing must read
+		// back the persisted scopes and omit both the raw token and its hash.
+		const admin = vi.spyOn(auth, 'getUserAbilityForRequest').mockResolvedValue({
+			...authenticated, ability: createAppAbility([{ action: 'manage', subject: 'all' }]),
+		})
+		try {
+			const { GET } = await import('@/app/api/personal-access-tokens/route')
+			const response = await GET(new NextRequest('https://example.test/api/personal-access-tokens'))
+			expect(response.status).toBe(200)
+			const listed = await response.json()
+			expect(listed).toMatchObject([{ id: token.record.id, scopes: token.record.scopes }])
+			expect(JSON.stringify(listed)).not.toContain(token.rawToken)
+			expect(JSON.stringify(listed)).not.toContain(token.record.tokenHash)
+		} finally {
+			admin.mockRestore()
+		}
+	})
+
+	it('retries a real adapter 3.3.0 createCoupon primary-key collision', async () => {
+		const id = `legacy-collision-${run}`
+		const trigger = `AI_fixture_legacy_collision_${run}`
+		const merchantId = `legacy-merchant-coupon-${run}`
+		await db.insert(schema.merchantCoupon).values({
+			id: merchantId, merchantAccountId: `fixture-merchant-${run}`,
+			percentageDiscount: '0.95', type: 'special',
+		})
+		await db.insert(schema.coupon).values({ id, restrictedToProductId: product })
+		await pool.query(
+			`CREATE TRIGGER \`${trigger}\` BEFORE INSERT ON AI_Coupon FOR EACH ROW
+			SET NEW.id = IF(NEW.restrictedToProductId = ?
+			AND JSON_UNQUOTE(JSON_EXTRACT(NEW.fields, '$.forceFixtureCollision')) = 'yes', ?, NEW.id)`,
+			[product, id],
+		)
+		try {
+			const operation = vi.fn(async (attempt: number) => {
+				try {
+					return await adapter.createCoupon({
+						quantity: '1', maxUses: 1, expires: null, restrictedToProductId: product,
+						percentageDiscount: '0.95', status: 1, default: false,
+						fields: { forceFixtureCollision: attempt === 0 ? 'yes' : 'no' },
+					})
+				} catch (error) {
+					expect(isMysqlDuplicateEntryError(error)).toBe(true)
+					throw error
+				}
+			})
+			const minted = await withMysqlPrimaryKeyRetry(operation)
+			expect(operation).toHaveBeenCalledTimes(2)
+			expect(minted).toHaveLength(1)
+			expect(minted[0]).not.toBe(id)
+		} finally {
+			await pool.query(`DROP TRIGGER \`${trigger}\``)
+			await db.delete(schema.coupon).where(eq(schema.coupon.merchantCouponId, merchantId))
+			await db.delete(schema.merchantCoupon).where(eq(schema.merchantCoupon.id, merchantId))
+		}
+	})
+
 	it('redeems a minted 100% coupon through redeemFullPriceCoupon, once', async () => {
 		const minted = await mintCoupons(
 			{
@@ -384,10 +470,12 @@ suite('coupon minting against real MySQL', () => {
 			.values({ principalId: operator.record.userId, canMint: 1, canRead: 1 })
 		await db
 			.insert(schema.couponBatchControl)
-			.values({ id: CONTROL_ID, enabled: 1, claimsEnabled: 1, paceMs: 0 })
+			.values({ id: CONTROL_ID, enabled: 1, paceMs: 0 })
 			.onDuplicateKeyUpdate({
-				set: { enabled: 1, claimsEnabled: 1, paceMs: 0, nextChunkAt: null },
+				set: { enabled: 1, paceMs: 0, nextChunkAt: null },
 			})
+		await db.insert(schema.couponBatchControl).values({ id: CLAIM_CONTROL_ID, claimsEnabled: 1 })
+			.onDuplicateKeyUpdate({ set: { claimsEnabled: 1 } })
 		const service = createCouponBatchService({
 			db: db as unknown as typeof import('@/db/client').db,
 			enabled: () => true,
@@ -415,8 +503,16 @@ suite('coupon minting against real MySQL', () => {
 					Math.ceil(Date.now() / 1000) * 1000 + 300_000,
 				).toISOString(),
 			},
-			items: [{ intentKey: `first-${run}` }, { intentKey: `expire-${run}` }],
+			items: ['first', 'expire', 'contended', 'inflight'].map((kind) => ({ intentKey: `${kind}-${run}` })),
 		}
+		const [[near]] = await pool.query<import('mysql2').RowDataPacket[]>(`
+			SELECT DATE_FORMAT(UTC_TIMESTAMP(3) + INTERVAL 2 SECOND, '%Y-%m-%dT%H:%i:%sZ') AS deadline
+		`)
+		const nearExpiry = await api.preview(request({
+			...body, template: { ...body.template, deadlineAt: new Date(near!.deadline).toISOString() },
+		}))
+		expect(nearExpiry.status).toBe(422)
+		expect(await nearExpiry.json()).toMatchObject({ title: 'invalid_deadline' })
 		const preview = await api.preview(request(body))
 		expect(preview.status).toBe(200)
 		const submitted = await api.submit(
@@ -430,28 +526,13 @@ suite('coupon minting against real MySQL', () => {
 		expect((await service.runChunk(batchId)).state).toBe('worked')
 		const exported = await api.exportPage(request({ batchId }))
 		expect(exported.status).toBe(200)
-		const [live, expired] = (await exported.json()).outcomes as {
+		const [live, expired, contended, inFlight] = (await exported.json()).outcomes as {
 			code: string
 			couponRef: string
 		}[]
-		if (!live || !expired) throw new Error('missing synthetic selectors')
+		if (!live || !expired || !contended || !inFlight) throw new Error('missing synthetic selectors')
 		const presentationDb = db as unknown as typeof import('@/db/client').db
-		const opened = await getCouponForCode(
-			live.code,
-			[c5],
-			c5CompPresentation(adapter, presentationDb, c5),
-		)
-		expect(opened).toMatchObject({
-			isRedeemable: true,
-			fields: { bypassSoldOut: true },
-		})
-		expect(
-			await getCouponForCode(
-				live.code,
-				[workshop],
-				c5CompPresentation(adapter, presentationDb, workshop),
-			),
-		).toBeUndefined()
+		expect(await c5CompAvailable(presentationDb, live.code)).toBe(true)
 		const rawLegacy = await mintCoupons(
 			{
 				actor,
@@ -501,7 +582,7 @@ suite('coupon minting against real MySQL', () => {
 						logger: state.logger,
 					}),
 			).then(async (response) => response.json())
-		const setClaims = (claimsEnabled: number) => db.update(schema.couponBatchControl).set({ claimsEnabled }).where(eq(schema.couponBatchControl.id, CONTROL_ID))
+		const setClaims = (claimsEnabled: number) => db.update(schema.couponBatchControl).set({ claimsEnabled }).where(eq(schema.couponBatchControl.id, CLAIM_CONTROL_ID))
 		await setClaims(0)
 		try {
 			expect(await redeem(live.code, first.email)).toMatchObject({ purchase: null, error: { message: 'coupon-is-invalid' } })
@@ -517,20 +598,10 @@ suite('coupon minting against real MySQL', () => {
 		await db.transaction(async (tx) => {
 			await tx.execute(sql`SET SESSION time_zone = '+07:00'`)
 			try {
-				const display = c5CompPresentation(
-					adapter,
-					tx as unknown as typeof presentationDb,
-					c5,
-				)
-				expect(await getCouponForCode(live.code, [c5], display)).toMatchObject({
-					isRedeemable: true,
-				})
-				expect(
-					await getCouponForCode(expired.code, [c5], display),
-				).toBeUndefined()
-				expect(
-					await getCouponForCode(live.couponRef, [c5], display),
-				).toBeUndefined()
+				const claimDb = tx as unknown as typeof presentationDb
+				expect(await c5CompAvailable(claimDb, live.code)).toBe(true)
+				expect(await c5CompAvailable(claimDb, expired.code)).toBe(false)
+				expect(await c5CompAvailable(claimDb, live.couponRef)).toBe(false)
 			} finally {
 				await tx.execute(sql`SET SESSION time_zone = '+00:00'`)
 			}
@@ -707,6 +778,88 @@ suite('coupon minting against real MySQL', () => {
 				'cohort-xdy1m',
 			),
 		).toBe(false)
+		// Same one-connection pool factory and MySQL service as the production
+		// runtime. The drain holds the issuer fence while blocked on its batch.
+		const pendingBody = { ...body, items: [{ intentKey: `pending-${run}` }] }
+		const pendingPreview = await api.preview(request(pendingBody))
+		const pendingRequest = new Request(request(null).url, {
+			method: 'POST',
+			headers: { Authorization: `Bearer ${operator.rawToken}`, 'Idempotency-Key': `contention-${run}` },
+			body: JSON.stringify({ ...pendingBody, previewReceipt: (await pendingPreview.json()).previewReceipt }),
+		})
+		const pendingResponse = await api.submit(pendingRequest)
+		expect(pendingResponse.status).toBe(202)
+		const pendingId = (await pendingResponse.json()).batchId as string
+		const issuer = openCouponBatchDatabase(uri!)
+		const worker = createCouponBatchService({
+			db: issuer.db,
+			enabled: () => true, patSecret: () => tokenSecret, batchSecret: () => 'synthetic-batch-secret',
+		})
+		const workerApi = couponBatchHandlers(() => worker, vi.fn())
+		const gate = await pool.getConnection()
+		let drain: ReturnType<typeof worker.runChunk> | undefined
+		try {
+			await gate.beginTransaction()
+			await gate.query('SELECT id FROM AI_CouponBatch WHERE id = ? FOR UPDATE', [pendingId])
+			drain = worker.runChunk(pendingId)
+			await waitForFixtureLock(pool, gate.threadId, 'from `ai_couponbatch`')
+			const read = new Request(request(null).url, {
+				headers: { Authorization: `Bearer ${operator.rawToken}` },
+			})
+			const status = workerApi.status(read, batchId)
+			const exportPage = workerApi.exportPage(request({ batchId }))
+			expect(await redeem(contended.code, `contended-${run}@example.test`)).toMatchObject({
+				purchase: { couponId: contended.couponRef, status: 'Valid' },
+			})
+			for (const response of await Promise.all([status, exportPage])) {
+				expect(response.status).toBe(503)
+				expect(await response.json()).toMatchObject({ title: 'coupon_batch_unavailable' })
+			}
+		} finally {
+			await gate.rollback()
+			gate.release()
+			if (drain) await expect(drain).resolves.toMatchObject({ state: 'worked' })
+			await issuer.close()
+		}
+
+		const couponGate = await pool.getConnection()
+		const stopConnection = await pool.getConnection()
+		let takingClaim: ReturnType<typeof redeem> | undefined
+		let stop: Promise<unknown> | undefined
+		try {
+			await couponGate.beginTransaction()
+			await couponGate.query('SELECT id FROM AI_Coupon WHERE id = ? FOR UPDATE', [inFlight.couponRef])
+			takingClaim = redeem(inFlight.code, `in-flight-${run}@example.test`)
+			await waitForFixtureLock(pool, couponGate.threadId, 'from `ai_coupon`')
+			const [[holder]] = await couponGate.query<import('mysql2').RowDataPacket[]>(`
+				SELECT requester.PROCESSLIST_ID AS id FROM performance_schema.data_lock_waits w
+				JOIN performance_schema.threads requester ON requester.THREAD_ID = w.REQUESTING_THREAD_ID
+				JOIN performance_schema.threads blocker ON blocker.THREAD_ID = w.BLOCKING_THREAD_ID
+				WHERE blocker.PROCESSLIST_ID = ? AND LOWER(requester.PROCESSLIST_INFO) LIKE '%from \`ai_coupon\`%'`,
+				[couponGate.threadId])
+			expect(holder?.id).toBeDefined()
+			stop = stopConnection.query('UPDATE AI_CouponBatchControl SET claimsEnabled=0 WHERE id=?', [CLAIM_CONTROL_ID]).then(async () => {
+				const [[used]] = await stopConnection.query<import('mysql2').RowDataPacket[]>('SELECT usedCount FROM AI_Coupon WHERE id=?', [inFlight.couponRef])
+				expect(used?.usedCount).toBe(1)
+			})
+			await waitForFixtureLock(pool, Number(holder?.id), 'update ai_couponbatchcontrol')
+		} finally {
+			await couponGate.rollback()
+			couponGate.release()
+			try {
+				await stop
+			} finally {
+				stopConnection.release()
+			}
+		}
+		try {
+			expect(await takingClaim).toMatchObject({ purchase: { couponId: inFlight.couponRef, status: 'Valid' } })
+			expect((await adapter.getCoupon(inFlight.couponRef))?.usedCount).toBe(1)
+			expect(await redeem(inFlight.code, `after-stop-${run}@example.test`)).toMatchObject({ purchase: null })
+		} finally {
+			await setClaims(1)
+		}
+
 		const legacyClaim = await redeem(
 			rawLegacy.coupons[0]!.id,
 			second.email,
@@ -722,7 +875,7 @@ suite('coupon minting against real MySQL', () => {
 			events,
 			traces: Object.values(state.logger).map((fn) => fn.mock.calls),
 		})
-		for (const coupon of [live, expired])
+		for (const coupon of [live, expired, contended, inFlight])
 			expect(wire.toLowerCase().includes(coupon.code)).toBe(false)
-	})
+	}, 15_000)
 })

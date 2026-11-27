@@ -52,7 +52,7 @@ export const courseBuilderConfig = {
 } satisfies NextCourseBuilderConfig
 
 export const {
-	handlers: { POST: post, GET },
+	handlers: { POST: post, GET: get },
 	coursebuilder,
 } = NextCourseBuilder(courseBuilderConfig)
 
@@ -64,19 +64,19 @@ type CourseBuilderRouteHandler = (
 	context?: CourseBuilderRouteContext,
 ) => Promise<Response>
 
-export function POST(
-	request: NextRequest,
-	context?: CourseBuilderRouteContext,
-) {
+function withPrivateClaimBoundary(handler: unknown): CourseBuilderRouteHandler {
 	// The dependency's declaration omits context. Forward the Next argument
 	// regardless, including for unchanged Stripe requests.
-	return withPrivateCompClaim(request, (safe) =>
-		(post as CourseBuilderRouteHandler)(
+	return (request, context) => withPrivateCompClaim(request, (safe) =>
+		(handler as CourseBuilderRouteHandler)(
 			safe === request ? request : new NextRequest(safe),
 			context,
 		),
 	)
 }
+
+export const GET = withPrivateClaimBoundary(get)
+export const POST = withPrivateClaimBoundary(post)
 
 // Separate HTTP pricing handlers; purchase/webhook writes retain the raw adapter.
 export const { handlers: commercePricingHandlers } = NextCourseBuilder({

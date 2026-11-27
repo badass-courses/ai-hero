@@ -20,6 +20,7 @@ const selector = `c5comp_${'a'.repeat(40)}`
 const digest = `c5hash_${createHash('sha256').update(selector).digest('hex')}`
 const couponId = `batch-coupon-${randomUUID()}`
 const email = `comp-${randomUUID()}@example.test`
+const signedIn = { id: randomUUID(), email: `signed-in-${randomUUID()}@example.test`, token: randomUUID(), selector: `c5comp_${'b'.repeat(40)}`, couponId: `batch-coupon-${randomUUID()}` }
 const db = await mysql.createConnection(dbUrl.toString())
 let app, browser
 let appError = ''
@@ -32,7 +33,7 @@ const jobs = createServer((req, res) => {
   let body = ''
   req.on('data', (chunk) => { body += chunk })
   req.on('end', () => {
-    if (body.includes(selector)) { res.writeHead(400).end(); return }
+    if (body.includes(selector) || body.includes(signedIn.selector)) { res.writeHead(400).end(); return }
     if (body.includes('commerce/full-price-coupon-redeemed')) redeemedEvents++
     res.writeHead(200, { 'Content-Type': 'application/json' }).end('{"status":200,"ids":["fixture-event"]}')
   })
@@ -44,12 +45,24 @@ try {
     ('product-s00zs','Synthetic C5 Header Proof','cohort',1,0,JSON_OBJECT('slug','synthetic-c5-header-proof','state','published','openEnrollment','2025-01-01T00:00:00Z','closeEnrollment','2025-02-01T00:00:00Z'))`)
   await db.query("INSERT INTO AI_Price (id,productId,status,unitAmount) VALUES ('comp-browser-price','product-s00zs',1,299.00)")
   await db.query(`INSERT INTO AI_ContentResource (id,type,createdById,fields) VALUES
-    ('comp-browser-cohort','cohort','comp-browser-owner',JSON_OBJECT('slug','synthetic-c5-header-proof','title','Synthetic C5 Header Proof','description','Synthetic route fixture','body','Synthetic fixture only','state','published','visibility','public','startsAt','2027-01-02T00:00:00Z','endsAt','2027-01-09T00:00:00Z'))`)
+    ('comp-browser-cohort','cohort','comp-browser-owner',JSON_OBJECT('slug','synthetic-c5-header-proof','title','Synthetic C5 Header Proof','description','Synthetic route fixture','body','<Enroll />','state','published','visibility','public','startsAt','2027-01-02T00:00:00Z','endsAt','2027-01-09T00:00:00Z'))`)
   await db.query("INSERT INTO AI_ContentResourceProduct (productId,resourceId) VALUES ('product-s00zs','comp-browser-cohort')")
-  await db.query("INSERT INTO AI_CouponBatchControl (id,enabled,claimsEnabled) VALUES ('ai-hero',0,1)")
+  await db.query("INSERT INTO AI_CouponBatchControl (id,enabled,claimsEnabled) VALUES ('ai-hero-claims',0,1)")
   // Keep UI proof away from the expiry boundary even on non-UTC fixture servers.
   await db.query(`INSERT INTO AI_Coupon (id,code,restrictedToProductId,percentageDiscount,status,maxUses,expires,fields)
     VALUES (?,?,'product-s00zs',1,1,1,DATE_ADD(NOW(),INTERVAL 2 DAY),JSON_OBJECT('couponBatchTemplate','c5-comp-v1','bypassSoldOut',true))`, [couponId, digest])
+  await db.query(`INSERT INTO AI_Coupon (id,code,restrictedToProductId,percentageDiscount,status,maxUses,expires,fields)
+    VALUES (?,?,'product-s00zs',1,1,1,DATE_ADD(NOW(),INTERVAL 2 DAY),JSON_OBJECT('couponBatchTemplate','c5-comp-v1','bypassSoldOut',true))`,
+    [signedIn.couponId, `c5hash_${createHash('sha256').update(signedIn.selector).digest('hex')}`])
+  await db.query('INSERT INTO AI_User (id,email,name) VALUES (?,?,?)', [signedIn.id, signedIn.email, 'Synthetic signed-in claimant'])
+  const org = 'comp-signed-in-personal-org', member = 'comp-signed-in-membership', role = 'comp-signed-in-owner'
+  await db.query('INSERT INTO AI_Organization (id,name,personalOrganizationUserId) VALUES (?,?,?)', [org, `Personal organization for ${signedIn.email}`, signedIn.id])
+  await db.query("INSERT INTO AI_OrganizationMembership (id,organizationId,userId,personalOrganizationUserId,invitedById,role) VALUES (?,?,?,?,?,'owner')",
+    [member, org, signedIn.id, signedIn.id, signedIn.id])
+  await db.query("INSERT INTO AI_Role (id,name,organizationId,active) VALUES (?,'owner',?,1)", [role, org])
+  await db.query('INSERT INTO AI_OrganizationMembershipRole (organizationMembershipId,roleId,organizationId) VALUES (?,?,?)', [member, role, org])
+  await db.query('INSERT INTO AI_Session (sessionToken,userId,expires) VALUES (?,?,DATE_ADD(NOW(),INTERVAL 2 DAY))',
+    [signedIn.token, signedIn.id])
   await new Promise((resolve, reject) => jobs.once('error', reject).listen(18288, '127.0.0.1', resolve))
   app = spawn(process.execPath, ['node_modules/next/dist/bin/next', 'start', '--hostname', '127.0.0.1', '--port', '3310'], {
     env: { ...process.env, COURSEBUILDER_URL: url, AUTH_URL: url, NEXTAUTH_URL: url, AUTH_TRUST_HOST: 'true', AUTH_SECRET: 'comp-browser-fixture-secret',
@@ -66,9 +79,12 @@ try {
   let urlOrBodyLeak = false
   let checkedOut = false
   const entry = `${url}${path}?code=${selector}`
+  const signedEntry = `${url}${path}?code=${signedIn.selector}`
   await page.route('**/*', (route) => {
     const req = route.request()
-    if ((req.url() !== entry && req.url().includes(selector)) || req.postData()?.includes(selector) || req.headers().referer?.includes(selector)) urlOrBodyLeak = true
+    for (const [link, secret] of [[entry, selector], [signedEntry, signedIn.selector]]) {
+      if ((req.url() !== link && req.url().includes(secret)) || req.postData()?.includes(secret) || req.headers().referer?.includes(secret)) urlOrBodyLeak = true
+    }
     if (req.url().includes('/checkout/stripe') || req.url().includes('stripe.com')) checkedOut = true
     return new URL(req.url()).origin === url ? route.continue() : route.abort()
   })
@@ -80,6 +96,11 @@ try {
   const rsc = await page.request.get(`${url}${path}`, { headers: { RSC: '1' } })
   assert.equal(rsc.status(), 200)
   assert.match(rsc.headers()['content-type'] ?? '', /text\/x-component/)
+  const rscCache = (rsc.headers()['cache-control'] ?? '').split(',').map((directive) => directive.trim().toLowerCase())
+  assert(rscCache.includes('private') && rscCache.includes('no-store') && !rscCache.includes('public'))
+  assert.equal(await page.locator('#buy').count(), 1)
+  assert.equal(await page.locator('#buy [data-private-comp-offer]').count(), 1)
+  assert(await page.locator('a[href="#buy"]').count() > 0, 'the cohort CTA links to the offer rail')
   assert(!(await rsc.text()).includes(selector))
   const login = offer.getByRole('link', { name: 'Sign in' })
   const callback = new URL(await login.getAttribute('href'), url).searchParams.get('callbackUrl')
@@ -105,11 +126,36 @@ try {
   const [[coupon]] = await db.query('SELECT usedCount FROM AI_Coupon WHERE id = ?', [couponId])
   assert.equal(coupon.usedCount, 1)
   assert.equal(redeemedEvents, 1)
+
+  await page.context().addCookies([{ name: 'authjs.session-token', value: signedIn.token, url }])
+  await page.goto(signedEntry)
+  assert.equal(page.url(), `${url}${path}`)
+  await offer.getByText('$0', { exact: true }).waitFor()
+  assert.equal(await offer.getByLabel('Email address').inputValue(), signedIn.email)
+  assert(!(await page.content()).includes(signedIn.selector))
+  const signedRedeem = page.waitForResponse((response) => response.url().endsWith('/api/coursebuilder/redeem/coupon') && response.request().method() === 'POST')
+  const sessionUpdate = page.waitForResponse((response) => response.url() === `${url}/api/auth/session?update`)
+  await offer.getByRole('button', { name: 'Claim your seat' }).click()
+  const signedResponse = await signedRedeem
+  assert.equal(signedResponse.status(), 200)
+  const signedResult = await signedResponse.json()
+  assert.equal(signedResult.redeemingForCurrentUser, true)
+  assert(signedResult.purchase?.id)
+  assert.equal((await sessionUpdate).status(), 200)
+  await page.waitForURL((location) => location.pathname === '/welcome' && location.searchParams.get('purchaseId') === signedResult.purchase.id)
+  const [[signedPurchase]] = await db.query('SELECT userId, status, totalAmount, merchantChargeId FROM AI_Purchase WHERE couponId = ?', [signedIn.couponId])
+  assert.equal(signedPurchase.userId, signedIn.id)
+  assert.equal(signedPurchase.status, 'Valid')
+  assert.equal(Number(signedPurchase.totalAmount), 0)
+  assert.equal(signedPurchase.merchantChargeId, null)
+  const [[signedCoupon]] = await db.query('SELECT usedCount FROM AI_Coupon WHERE id = ?', [signedIn.couponId])
+  assert.equal(signedCoupon.usedCount, 1)
+  assert.equal(redeemedEvents, 2)
   assert.equal(urlOrBodyLeak, false)
   assert.equal(checkedOut, false)
-  console.log('Browser: $0 offer, clean sign-in return URL, one real free claim, no Stripe checkout')
+  console.log('Browser: $0 offer, clean sign-in return URL, anonymous and signed-in claims, session refresh and welcome, no Stripe checkout')
 } catch (error) {
-  process.stderr.write(appError.replaceAll(selector, '[fixture selector]'))
+  process.stderr.write(appError.replaceAll(selector, '[fixture selector]').replaceAll(signedIn.selector, '[fixture selector]').replaceAll(signedIn.token, '[fixture session]'))
   throw error
 } finally {
   await browser?.close()

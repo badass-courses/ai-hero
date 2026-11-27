@@ -1,20 +1,17 @@
 import 'server-only'
 import type { DbExecutor } from '@/db/client'
 import { coupon, couponBatchControl, purchases } from '@/db/schema'
-import { cloneAdapter } from '@/lib/paid-coupon-pricing-view'
 import { SEAT_HOLDING_STATUSES } from '@/lib/pricing-decisions'
 import { log } from '@/server/logger'
-import type { CouponPort, PurchasePort } from '@coursebuilder/core/ports'
-import { couponSchema } from '@coursebuilder/core/schemas'
+import type { PurchasePort } from '@coursebuilder/core/ports'
 import { createPersonalOrganizationService } from '@coursebuilder/organizations'
 import { and, eq, getTableColumns, inArray, isNull, sql } from 'drizzle-orm'
 
 import {
-	CONTROL_ID,
+	CLAIM_CONTROL_ID,
 	PRODUCT,
 	TEMPLATE,
 	inRowNamespace,
-	inSelectorNamespace,
 } from './namespace'
 import {
 	activeCompClaimDigest,
@@ -35,7 +32,7 @@ async function claimsEnabled(tx: DbExecutor, lock = false) {
 	const query = tx
 		.select({ enabled: couponBatchControl.claimsEnabled })
 		.from(couponBatchControl)
-		.where(eq(couponBatchControl.id, CONTROL_ID))
+		.where(eq(couponBatchControl.id, CLAIM_CONTROL_ID))
 	const [row] = lock ? await query.for('share') : await query
 	return row?.enabled === 1
 }
@@ -86,43 +83,6 @@ export async function c5CompAvailable(db: BatchCouponDb, code: string) {
 	} catch {
 		throw new Error('c5_comp_lookup_unavailable')
 	}
-}
-
-/** Only the C5 free-claim page may present these coupons. The dialog carries
- * the original bearer in its existing `couponId` field; the real row ID is
- * not a redeemable value. Other product pages do not inherit the bypass. */
-export function c5CompPresentation<
-	T extends Pick<CouponPort, 'getCoupon'> & {
-		getCouponForDisplay?: CouponPort['getCoupon']
-	},
->(adapter: T, db: BatchCouponDb, productId: string): T {
-	if (productId !== PRODUCT) return adapter
-	const display = async (key: string) => {
-		if (inRowNamespace(key)) return null
-		if (!inSelectorNamespace(key))
-			return (adapter.getCouponForDisplay ?? adapter.getCoupon).call(
-				adapter,
-				key,
-			)
-		const digest = selectorDigest(key)
-		if (!digest) return null
-		try {
-			if (!(await claimsEnabled(db))) return null
-			const [row] = await lookup(db, digest)
-			if (!isComp(row)) return null
-			return couponSchema.parse({
-				...row,
-				id: key.toLowerCase(),
-				code: null,
-			})
-		} catch {
-			throw new Error('c5_comp_lookup_unavailable')
-		}
-	}
-	return Object.assign(cloneAdapter(adapter), {
-		getCoupon: display,
-		getCouponForDisplay: display,
-	})
 }
 
 /** The coupon row is locked on the normal app connection for the whole claim. */

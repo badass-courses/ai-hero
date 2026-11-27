@@ -42,6 +42,21 @@ describe('withSkill', () => {
 		loggerMocks.error.mockResolvedValue(undefined)
 	})
 
+	it('redacts a comp bearer under an unrelated key, in a key, and in a referer', async () => {
+		const selector = 'c5comp_' + 'a'.repeat(40)
+		const query = new URLSearchParams([['utm_content', selector], ['q', 'ordinary'], [selector, 'value']])
+		await withSkill(async () => new Response('ok'))(
+			new Request(`https://aihero.dev/api/posts?${query}`, {
+				headers: { referer: `https://aihero.dev/cohorts/c5?${query}` },
+			}),
+		)
+		const payload = loggerMocks.info.mock.calls[0]?.[1]
+		expect(JSON.stringify(payload)).not.toContain(selector)
+		expect(payload).toMatchObject({ queryKeys: ['[c5-comp-selector]', 'q', 'utm_content'], queryParamCount: 3 })
+		expect(payload.queryString).toContain('q=ordinary')
+		expect(payload.queryString).toContain('utm_content=%5Bc5-comp-selector%5D')
+	})
+
 	it('emits started/completed events and redacts sensitive query params', async () => {
 		const handler = withSkill(async () => {
 			return new Response(JSON.stringify({ ok: true }), { status: 201 })

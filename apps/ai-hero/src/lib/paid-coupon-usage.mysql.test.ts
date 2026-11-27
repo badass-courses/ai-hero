@@ -20,7 +20,9 @@ import {
 	propsForCommerce,
 	getCouponForCode as appGetCouponForCode,
 } from './coupon-display'
-import { cohortCouponPresentation } from './coupon-batches/cohort-presentation'
+import { c5CompAvailable } from './coupon-batches/free-selector'
+import { CLAIM_CONTROL_ID } from './coupon-batches/namespace'
+import { COMP_REDEEM_COOKIE } from './coupon-batches/browser-claim'
 import { newSelector, selectorDigest } from './coupon-batches/selector'
 import {
 	coupon,
@@ -457,7 +459,7 @@ describe.skipIf(!uri)(
 		it('redeems a C5 bearer through the real POST wrapper and provisions a first claimant', async () => {
 			vi.stubEnv('AIH_COUPON_BATCH_ENABLED', 'true')
 			paymentCalls.mockClear()
-			await runtime.db.insert(couponBatchControl).values({ id: 'ai-hero', claimsEnabled: 1 })
+			await runtime.db.insert(couponBatchControl).values({ id: CLAIM_CONTROL_ID, claimsEnabled: 1 })
 				.onDuplicateKeyUpdate({ set: { claimsEnabled: 1 } })
 			const { POST } =
 				await import('@/app/api/coursebuilder/[...nextCourseBuilder]/route')
@@ -496,41 +498,11 @@ describe.skipIf(!uri)(
 				enumerable: false,
 			})
 			const previousFlag = process.env.AIH_COUPON_BATCH_ENABLED
-			const presentation = (code: string) =>
-				cohortCouponPresentation(
-					productionAdapter,
-					runtime.db,
-					C5_PRODUCT_ID,
-					code,
-				)
-			let display: typeof productionAdapter
-			try {
-				delete process.env.AIH_COUPON_BATCH_ENABLED
-				expect(await presentation(bearer)).toBe(productionAdapter)
-				process.env.AIH_COUPON_BATCH_ENABLED = 'true'
-				display = await presentation(bearer)
-			} finally {
-				if (previousFlag === undefined)
-					delete process.env.AIH_COUPON_BATCH_ENABLED
-				else process.env.AIH_COUPON_BATCH_ENABLED = previousFlag
-			}
-			const comp = await appGetCouponForCode(bearer, [C5_PRODUCT_ID], display)
-			expect(comp).toMatchObject({ isRedeemable: true })
-			const c5 = await productionAdapter.getProduct(C5_PRODUCT_ID)
-			if (!c5) throw new Error('missing C5 product fixture')
-			const displayProps = async (userId: string) =>
-				propsForCommerce(
-					{
-						query: { code: bearer },
-						userId,
-						products: [c5],
-					},
-					display,
-				)
-			expect(await displayProps(key('no-purchases'))).toMatchObject({
-				couponFromCode: { id: bearer, isRedeemable: true },
-				purchases: [],
-			})
+			vi.stubEnv('AIH_COUPON_BATCH_ENABLED', '')
+			expect(await c5CompAvailable(runtime.db, bearer)).toBe(false)
+			vi.stubEnv('AIH_COUPON_BATCH_ENABLED', 'true')
+			expect(await c5CompAvailable(runtime.db, bearer)).toBe(true)
+			expect(await appGetCouponForCode(bearer, [C5_PRODUCT_ID], productionAdapter)).toBeUndefined()
 			const ordinary = ['off', 'on'].map((flag) =>
 				key(`regular-free-coupon-${flag}`),
 			)
@@ -544,7 +516,7 @@ describe.skipIf(!uri)(
 			const regular = await appGetCouponForCode(
 				ordinary[0]!,
 				[C5_PRODUCT_ID],
-				display,
+				productionAdapter,
 			)
 			expect(regular).toMatchObject({ isRedeemable: true })
 			const { cohortCallsToAction } =
@@ -566,7 +538,7 @@ describe.skipIf(!uri)(
 			expect(
 				cohortCallsToAction({
 					...closed,
-					bypassSoldOut: comp?.fields?.bypassSoldOut === true,
+					bypassSoldOut: await c5CompAvailable(runtime.db, bearer),
 				}).canEnroll,
 			).toBe(true)
 			const claim = (
@@ -577,7 +549,7 @@ describe.skipIf(!uri)(
 				POST(
 					request('/redeem/coupon', {
 						method: 'POST',
-						headers: { 'content-type': mediaType },
+						headers: { 'content-type': mediaType, cookie: `${COMP_REDEEM_COOKIE}=${bearer}` },
 						body: JSON.stringify({
 							couponId,
 							email: `${key(claimant)}@example.test`,
