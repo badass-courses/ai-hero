@@ -3,6 +3,7 @@ name: Evergreen Journey MySQL
 on:
   pull_request:
     paths:
+      - "packages/front-desk-support/**"
       - "apps/ai-hero/next.config.mjs"
       - "apps/ai-hero/scripts/test-mysql-schema.mjs"
       - "apps/ai-hero/src/app/(content)/cohorts/**"
@@ -126,6 +127,7 @@ on:
   push:
     branches: [main]
     paths:
+      - "packages/front-desk-support/**"
       - "apps/ai-hero/next.config.mjs"
       - "apps/ai-hero/scripts/test-mysql-schema.mjs"
       - "apps/ai-hero/src/app/(content)/cohorts/**"

@@ -17,15 +17,22 @@ export const couponBatchDrain = inngest.createFunction(
 	[{ event: COUPON_BATCH_WAKE }, { cron: '* * * * *' }],
 	async ({ step }) => {
 		if (!couponBatchEnabled()) return { state: 'disabled' }
+		let lastChunkWorked = false
 		for (let i = 0; i < 40; i++) {
 			const result = await step.run(`chunk-${i}`, () =>
 				couponBatchWorker().runChunk(),
 			)
 			switch (result.state) {
 				case 'paced':
+					// Only a run that just advanced the DB cursor may park once.
+					// Other wakes exit on their first paced step; if another run
+					// wins the next window, this one also yields instead of piling up.
+					if (!lastChunkWorked || i === 39) return result
+					lastChunkWorked = false
 					await step.sleep(`pace-${i}`, Math.max(1000, result.waitMs))
 					break
 				case 'worked':
+					lastChunkWorked = true
 					break
 				case 'retry':
 					await log.warn('coupon_batch.worker_retry', {

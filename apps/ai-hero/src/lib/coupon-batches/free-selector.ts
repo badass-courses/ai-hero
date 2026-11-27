@@ -2,11 +2,12 @@ import 'server-only'
 import type { DbExecutor } from '@/db/client'
 import { coupon, purchases } from '@/db/schema'
 import { cloneAdapter } from '@/lib/paid-coupon-pricing-view'
+import { SEAT_HOLDING_STATUSES } from '@/lib/pricing-decisions'
 import { log } from '@/server/logger'
 import type { CouponPort, PurchasePort } from '@coursebuilder/core/ports'
 import { couponSchema } from '@coursebuilder/core/schemas'
 import { createPersonalOrganizationService } from '@coursebuilder/organizations'
-import { and, eq, getTableColumns, isNull, sql } from 'drizzle-orm'
+import { and, eq, getTableColumns, inArray, isNull, sql } from 'drizzle-orm'
 
 import {
 	PRODUCT,
@@ -41,6 +42,7 @@ function lookup(tx: DbExecutor, digest: string) {
 		.where(
 			and(
 				eq(coupon.code, digest),
+				sql`BINARY ${coupon.code} = BINARY ${digest}`,
 				eq(coupon.restrictedToProductId, PRODUCT),
 				eq(coupon.status, 1),
 				eq(coupon.default, false),
@@ -133,8 +135,7 @@ export async function redeemPrivateComp(
 				error: { message: 'already-purchased-c5' },
 			}
 			if (!isNewUser) {
-				// The SDK hydrates the whole existing purchase before it can refuse
-				// a duplicate. Old rows need only meet its ownership predicate.
+				// Check all seat-holding statuses without hydrating legacy purchases.
 				const [owned] = await tx
 					.select({ id: purchases.id })
 					.from(purchases)
@@ -142,7 +143,7 @@ export async function redeemPrivateComp(
 						and(
 							eq(purchases.userId, user.id),
 							eq(purchases.productId, PRODUCT),
-							eq(purchases.status, 'Valid'),
+							inArray(purchases.status, [...SEAT_HOLDING_STATUSES]),
 							isNull(purchases.bulkCouponId),
 						),
 					)

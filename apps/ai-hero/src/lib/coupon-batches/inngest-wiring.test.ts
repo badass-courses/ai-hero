@@ -34,6 +34,7 @@ const wake = 'commerce/coupon-batches.wake'
 function invoke(
 	id: string,
 	enqueue: (event: { name: string }) => void = () => {},
+	sleep: (id: string, ms: number) => void | Promise<void> = () => {},
 ) {
 	const registered = fixture.registrations.get(id) as {
 		triggers: object[]
@@ -43,7 +44,7 @@ function invoke(
 	}
 	const step = {
 		run: async (_id: string, fn: () => unknown) => fn(),
-		sleep: vi.fn(),
+		sleep: vi.fn(sleep),
 		sendEvent: vi.fn(async (_id: string, event: { name: string }) => {
 			// Inngest drops a wake arriving while a skip singleton is active.
 			if (registered.singleton?.mode !== 'skip') enqueue(event)
@@ -55,6 +56,7 @@ function invoke(
 }
 
 beforeEach(() => {
+	fixture.runChunk.mockReset()
 	vi.stubEnv('AIH_COUPON_BATCH_ENABLED', 'true')
 	vi.stubEnv('AIH_COUPON_BATCH_SECRET', '')
 })
@@ -107,6 +109,60 @@ it('drains a 41-chunk backlog from one wake without waiting for cron', async () 
 	})
 	expect(remaining).toBe(0)
 	expect(fixture.runChunk).toHaveBeenCalledTimes(42)
+})
+
+it('paced cron and admission wakes add no parked runs or continuation events', async () => {
+	let nextChunkAt = 0
+	let now = 0
+	let chunks = 0
+	fixture.runChunk.mockImplementation(async () => {
+		if (now < nextChunkAt) return { state: 'paced', waitMs: nextChunkAt - now }
+		chunks++
+		nextChunkAt = now + 60_000
+		return { state: 'worked' }
+	})
+	const queued = vi.fn()
+	const parked: (() => void)[] = []
+	const sleep = () => new Promise<void>((resolve) => parked.push(resolve))
+	let active = invoke('coupon-batch-drain', queued, sleep)
+	for (let minute = 0; minute < 3; minute++) {
+		// Let the runner that advanced the cursor reach its durable sleep.
+		await vi.waitFor(() => expect(parked).toHaveLength(1))
+		const extra = Array.from({ length: 4 }, () =>
+			invoke('coupon-batch-drain', queued),
+		)
+		for (const run of extra) {
+			await expect(run.result).resolves.toMatchObject({ state: 'paced' })
+			expect(run.step.sleep).not.toHaveBeenCalled()
+		}
+		expect(parked).toHaveLength(1)
+		expect(queued).not.toHaveBeenCalled()
+		expect(chunks).toBe(minute + 1)
+		if (minute < 2) {
+			// The next cron wins that window before the older sleep resumes.
+			now += 60_000
+			const release = parked.shift()!
+			const next = invoke('coupon-batch-drain', queued, sleep)
+			release()
+			await expect(active.result).resolves.toMatchObject({ state: 'paced' })
+			active = next
+		}
+	}
+	parked.shift()!()
+	await expect(active.result).resolves.toMatchObject({ state: 'paced' })
+	expect(queued).not.toHaveBeenCalled()
+})
+
+it('does not enqueue a continuation when the last step was paced', async () => {
+	let i = 0
+	fixture.runChunk.mockImplementation(async () =>
+		i++ % 2 === 0 ? { state: 'worked' } : { state: 'paced', waitMs: 250 },
+	)
+	const { result, step } = invoke('coupon-batch-drain')
+	await expect(result).resolves.toMatchObject({ state: 'paced' })
+	expect(fixture.runChunk).toHaveBeenCalledTimes(40)
+	expect(step.sleep).toHaveBeenCalledTimes(19)
+	expect(step.sendEvent).not.toHaveBeenCalled()
 })
 
 it('both cron handlers exit before steps on an untouched deployment', async () => {

@@ -573,6 +573,18 @@ describe.skipIf(!uri)(
 						}),
 					}),
 				)
+			for (const prefix of ['bátch-coupon-', 'ｂａｔｃｈ-coupon-']) {
+				const lookalike = couponRef.replace('batch-coupon-', prefix)
+				// The raw DB matches these inputs under its default collation.
+				const [matched] = await runtime.db.select({ id: coupon.id }).from(coupon).where(eq(coupon.id, lookalike))
+				expect(matched?.id).toBe(couponRef)
+				expect(await rawCourseBuilderAdapter.getCoupon(lookalike)).toBeNull()
+				expect(await rawCourseBuilderAdapter.getCouponWithBulkPurchases(lookalike)).toBeNull()
+				const refused = await claim(lookalike, 'lookalike-claimant')
+				expect(refused.status).toBe(200)
+				expect(await refused.json()).toMatchObject({ purchase: null, error: { message: 'coupon-is-invalid' } })
+			}
+			expect(await rawCourseBuilderAdapter.getCoupon(couponRef)).toMatchObject({ id: couponRef, code: null, usedCount: 0 })
 			let response: Response
 			try {
 				for (const [index, id] of ordinary.entries()) {
@@ -622,15 +634,18 @@ describe.skipIf(!uri)(
 				status: 1, maxUses: 1, expires: new Date(Date.now() + 300000),
 				fields: { couponBatchTemplate: 'c5-comp-v1', bypassSoldOut: true },
 			})
-			const alreadyOwned = await claim(secondBearer, 'first-claimant')
-			expect(alreadyOwned.status).toBe(200)
-			const refusal = await alreadyOwned.text()
-			expect(JSON.parse(refusal)).toEqual({
-				purchase: null, redeemingForCurrentUser: true,
-				error: { message: 'already-purchased-c5' },
-			})
-			expect(refusal).not.toContain(secondBearer)
-			expect(refusal).not.toContain('@example.test')
+			for (const status of ['Valid', 'Restricted']) {
+				await runtime.db.update(purchases).set({ status }).where(eq(purchases.id, purchase.id))
+				const alreadyOwned = await claim(secondBearer, 'first-claimant')
+				expect(alreadyOwned.status).toBe(200)
+				const refusal = await alreadyOwned.text()
+				expect(JSON.parse(refusal)).toEqual({
+					purchase: null, redeemingForCurrentUser: true,
+					error: { message: 'already-purchased-c5' },
+				})
+				expect(refusal).not.toContain(secondBearer)
+				expect(refusal).not.toContain('@example.test')
+			}
 			expect(await rawCourseBuilderAdapter.getCoupon(secondCouponRef)).toMatchObject({ usedCount: 0 })
 			expect(await rawCourseBuilderAdapter.getPurchasesForUser(purchase.userId)).toHaveLength(1)
 		})
@@ -1077,20 +1092,24 @@ describe.skipIf(!uri)(
 
 			// A signed legacy session might already carry metadata. Preserve the
 			// paid purchase without ever associating or counting the comp row.
-			const paid = await runtime.rawCourseBuilderAdapter.createMerchantChargeAndPurchase({
-				userId: user,
-				productId,
-				merchantAccountId: account,
-				merchantProductId: product,
-				merchantCustomerId: customer,
-				stripeChargeId: key('charge-reserved-metadata'),
-				checkoutSessionId: key('session-reserved-metadata'),
-				stripeChargeAmount: 29_900,
-				usedCouponId: noPaidRef,
-				upgradedFromPurchaseId: undefined,
-				appliedPPPStripeCouponId: undefined,
-			})
-			expect(paid.couponId).toBeNull()
+			for (const [i, prefix] of ['batch-coupon-', 'bátch-coupon-', 'ｂａｔｃｈ-coupon-'].entries()) {
+				const alias = noPaidRef.replace('batch-coupon-', prefix)
+				expect(await runtime.rawCourseBuilderAdapter.couponForIdOrCode({ couponId: alias })).toBeNull()
+				const paid = await runtime.rawCourseBuilderAdapter.createMerchantChargeAndPurchase({
+					userId: user,
+					productId,
+					merchantAccountId: account,
+					merchantProductId: product,
+					merchantCustomerId: customer,
+					stripeChargeId: key(`charge-reserved-metadata-${i}`),
+					checkoutSessionId: key(`session-reserved-metadata-${i}`),
+					stripeChargeAmount: 29_900,
+					usedCouponId: alias,
+					upgradedFromPurchaseId: undefined,
+					appliedPPPStripeCouponId: undefined,
+				})
+				expect(paid.couponId).toBeNull()
+			}
 			expect(await usedCount(noPaidRef)).toBe(0)
 		})
 

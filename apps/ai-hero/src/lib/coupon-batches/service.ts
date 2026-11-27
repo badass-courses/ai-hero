@@ -6,6 +6,7 @@ import {
 	couponBatchAlert as alert,
 	couponBatchControl as control,
 	couponBatchDay as day,
+	couponBatchExportAudit as exportAudit,
 	couponBatchGrant as grant,
 	couponBatchIntent as intent,
 	couponBatchItem as item,
@@ -197,6 +198,7 @@ export function createCouponBatchService(options: ServiceOptions) {
 		const token = await authenticate(db, raw, mintScope, when)
 		checkDeadline(manifest.terms.deadlineAt, when)
 		let eligible = 0,
+			alreadyMinted = 0,
 			refused = 0
 		const outcomes: { intentKey: string; state: string; reason?: string }[] = []
 		for await (const page of manifest.pages()) {
@@ -205,6 +207,7 @@ export function createCouponBatchService(options: ServiceOptions) {
 					id: intent.id,
 					principalId: intent.principalId,
 					fingerprint: intent.fingerprint,
+					couponRef: intent.couponRef,
 					refused: intent.refused,
 				})
 				.from(intent)
@@ -218,20 +221,23 @@ export function createCouponBatchService(options: ServiceOptions) {
 					row.fingerprint !== manifest.itemFingerprint
 						? 'intent_conflict'
 						: row.refused)
-				if (reason) refused++
+				const state = reason
+					? 'refused'
+					: row?.couponRef
+						? 'already_minted'
+						: 'eligible'
+				if (state === 'refused') refused++
+				else if (state === 'already_minted') alreadyMinted++
 				else eligible++
 				if (outcomes.length < PAGE)
-					outcomes.push(
-						reason
-							? { intentKey, state: 'refused', reason }
-							: { intentKey, state: 'eligible' },
-					)
+					outcomes.push({ intentKey, state, ...(reason ? { reason } : {}) })
 			}
 		}
 		return {
 			templateId: TEMPLATE,
 			template: manifest.terms,
 			eligible,
+			alreadyMinted,
 			refused,
 			outcomes,
 			outcomesTruncated: manifest.total > PAGE,
@@ -287,10 +293,6 @@ export function createCouponBatchService(options: ServiceOptions) {
 			)
 			const requestAlarm = Number(manifest.total > REQUEST_ALARM)
 			const acceptedDay = pacificDay(when)
-			const [counter] = await tx
-				.select()
-				.from(day)
-				.where(eq(day.day, acceptedDay))
 			await tx.insert(batch).values({
 				id: batchId,
 				principalId: token.userId,
@@ -308,7 +310,6 @@ export function createCouponBatchService(options: ServiceOptions) {
 				total: manifest.total,
 				nextAttemptAt: when,
 				requestAlarm,
-				dailyAlarm: Number((counter?.intents ?? 0) > DAILY_ALARM),
 			})
 			let ordinal = 0
 			const outcomes: { intentKey: string; state: 'queued' }[] = []
@@ -529,34 +530,34 @@ export function createCouponBatchService(options: ServiceOptions) {
 						set: { result: sql`VALUES(${item.result})` },
 					})
 				const newMints = [...fresh.values()].filter((i) => i.couponRef).length
-				const [counter] = await tx
-					.select()
-					.from(day)
-					.where(eq(day.day, b.acceptedDay))
-				const count = (counter?.intents ?? 0) + fresh.size
-				if (fresh.size)
+				let dailyAlarm = b.dailyAlarm
+				if (fresh.size) {
+					const [counter] = await tx
+						.select()
+						.from(day)
+						.where(eq(day.day, b.acceptedDay))
+					const previous = counter?.intents ?? 0
+					const count = previous + fresh.size
+					const mints = (counter?.mints ?? 0) + newMints
 					await tx
 						.insert(day)
-						.values({
-							day: b.acceptedDay,
-							intents: count,
-							mints: (counter?.mints ?? 0) + newMints,
-						})
-						.onDuplicateKeyUpdate({
-							set: { intents: count, mints: (counter?.mints ?? 0) + newMints },
-						})
-				if (count > DAILY_ALARM && (counter?.intents ?? 0) <= DAILY_ALARM) {
-					await tx
-						.insert(alert)
-						.values({
-							id: `day:${b.acceptedDay}`,
-							batchId: b.id,
-							kind: 'daily',
-							count,
-							threshold: DAILY_ALARM,
-							nextAttemptAt: when,
-						})
-						.onDuplicateKeyUpdate({ set: { id: sql`${alert.id}` } })
+						.values({ day: b.acceptedDay, intents: count, mints })
+						.onDuplicateKeyUpdate({ set: { intents: count, mints } })
+					if (count > DAILY_ALARM) {
+						dailyAlarm = 1
+						if (previous <= DAILY_ALARM)
+							await tx
+								.insert(alert)
+								.values({
+									id: `day:${b.acceptedDay}`,
+									batchId: b.id,
+									kind: 'daily',
+									count,
+									threshold: DAILY_ALARM,
+									nextAttemptAt: when,
+								})
+								.onDuplicateKeyUpdate({ set: { id: sql`${alert.id}` } })
+					}
 				}
 				const processed = b.processed + chunk.length
 				await tx
@@ -567,7 +568,7 @@ export function createCouponBatchService(options: ServiceOptions) {
 						refused: b.refused + chunk.length - minted,
 						newIntents: b.newIntents + fresh.size,
 						newMints: b.newMints + newMints,
-						dailyAlarm: Number(count > DAILY_ALARM),
+						dailyAlarm,
 						attempts: 0,
 						nextAttemptAt: when,
 						finishedAt: processed === b.total ? when : null,
@@ -779,24 +780,56 @@ export function createCouponBatchService(options: ServiceOptions) {
 				.where(and(eq(item.batchId, b.id), gt(item.ordinal, cursor)))
 				.orderBy(item.ordinal)
 				.limit(PAGE)
+			let codeCount = 0
+			const batchSecret = options.batchSecret()
+			const outcomes = page.map((row) => {
+				const outcome = itemOutcome(row)
+				if (
+					!(
+						row.result === 'minted' &&
+						row.expiresAt &&
+						row.expiresAt > when &&
+						row.exportUntil &&
+						row.exportUntil > when &&
+						row.sealedCode &&
+						row.couponRef
+					)
+				)
+					return outcome
+				try {
+					if (batchSecret) {
+						const code = openSelector(
+							row.sealedCode,
+							batchSecret,
+							row.couponRef,
+						)
+						codeCount++
+						return { ...outcome, code }
+					}
+				} catch {
+					// Key mismatch or corrupted ciphertext: never emit the raw error.
+				}
+				return {
+					intentKey: row.intentKey,
+					state: 'refused',
+					reason: 'export_code_unavailable',
+				}
+			})
+			// Commit the audit before handing any plaintext to the response layer.
+			await tx.insert(exportAudit).values({
+				id: randomUUID(),
+				principalId: token.userId,
+				batchId: b.id,
+				exportedAt: when,
+				codeCount,
+			})
 			return {
 				batchId,
 				nextCursor:
 					page.at(-1) && page.at(-1)!.ordinal < b.total
 						? page.at(-1)!.ordinal
 						: null,
-				outcomes: page.map((row) => ({
-					...itemOutcome(row),
-					...(row.result === 'minted' &&
-					row.expiresAt &&
-					row.expiresAt > when &&
-					row.exportUntil &&
-					row.exportUntil > when &&
-					row.sealedCode &&
-					row.couponRef
-						? { code: openSelector(row.sealedCode, secret(), row.couponRef) }
-						: {}),
-				})),
+				outcomes,
 			}
 		})
 	}

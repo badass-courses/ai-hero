@@ -909,7 +909,7 @@ export {
 export { drovrOutbox } from './drovr-outbox-schema'
 export { integrationToken } from './integration-token-schema'
 export {
-	couponBatch, couponBatchAlert, couponBatchControl, couponBatchDay,
+	couponBatch, couponBatchAlert, couponBatchControl, couponBatchDay, couponBatchExportAudit,
 	couponBatchGrant, couponBatchIntent, couponBatchItem,
 } from './coupon-batch-schema'
 

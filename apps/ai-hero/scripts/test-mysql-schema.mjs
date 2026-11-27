@@ -29,7 +29,7 @@ function assertDisposableDatabase(rawUrl) {
 
 async function checkCouponBatchMigration(databaseUrl, mirror) {
   const scratch = `aih_batch_ddl_${randomUUID().replaceAll('-', '')}`
-  const tables = ['Control', 'Grant', '', 'Item', 'Intent', 'Day', 'Alert']
+  const tables = ['Control', 'Grant', '', 'Item', 'Intent', 'Day', 'Alert', 'ExportAudit']
     .map(suffix => `AI_CouponBatch${suffix}`).sort()
   const connection = await mysql.createConnection({ uri: databaseUrl, multipleStatements: true })
   const generated = new URL(databaseUrl).pathname.slice(1)
@@ -40,6 +40,8 @@ async function checkCouponBatchMigration(databaseUrl, mirror) {
     await connection.query(`USE \`${scratch}\``)
     const migration = await readFile(join(mirror, 'src/db/migrations/20261126_ai_hero_coupon_batches.sql'), 'utf8')
     await connection.query(migration)
+    const exportAudit = await readFile(join(mirror, 'src/db/migrations/20261127_ai_hero_coupon_batch_export_audit.sql'), 'utf8')
+    await connection.query(exportAudit)
     const [actual] = await connection.query('SELECT table_name AS name FROM information_schema.tables WHERE table_schema = DATABASE()')
     deepStrictEqual(actual.map(row => row.name).sort(), tables)
     for (const table of tables) {
