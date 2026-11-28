@@ -33,7 +33,7 @@ type Partner = {
 const PARTNERS: Partner[] = [
 	{
 		name: 'inovex',
-		line: 'Live, instructor-led AI Hero trainings in Germany and Switzerland.',
+		line: 'Live, instructor-led AI Hero trainings in Europe.',
 		logo: {
 			light: '/partners/inovex-logo.svg',
 			dark: '/partners/inovex-logo-white.svg',
@@ -43,7 +43,7 @@ const PARTNERS: Partner[] = [
 	},
 	{
 		name: 'This Dot Labs',
-		line: 'Live, instructor-led AI Hero trainings.',
+		line: 'Live, instructor-led AI Hero trainings outside Europe.',
 		logo: {
 			light: '/partners/thisdot-labs-logo.svg',
 			dark: '/partners/thisdot-labs-logo.svg',
@@ -71,6 +71,10 @@ export default function TrainingPartnersPage() {
 
 				<section aria-label="Team inquiry" className="border-b">
 					<div className="mx-auto max-w-2xl px-[18px] py-12 sm:px-11">
+						<p className={cn(TYPE.body, 'text-muted-foreground mb-6')}>
+							Tell us about your team and what you need. We'll match you with
+							the right partner and introduce you.
+						</p>
 						<TeamInquiryForm
 							location="/training-partners"
 							source="training-partners"

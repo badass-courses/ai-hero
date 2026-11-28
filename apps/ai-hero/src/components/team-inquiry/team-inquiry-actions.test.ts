@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
 	info: vi.fn(),
 	error: vi.fn(),
 	scheduleProductEvents: vi.fn(),
+	allowed: true,
 }))
 vi.mock('next/headers', () => ({ headers: async () => new Headers() }))
 vi.mock('@/lib/subscriber-marketing/product-events-live', () => ({
@@ -27,7 +28,7 @@ vi.mock('@upstash/ratelimit', () => ({
 			return {}
 		}
 		async limit() {
-			return { success: true, limit: 3, remaining: 2, reset: 0 }
+			return { success: mocks.allowed, limit: 3, remaining: 2, reset: 0 }
 		}
 	},
 }))
@@ -43,9 +44,20 @@ const values = () => ({
 	website: '',
 	timestamp: new Date(Date.now() - 5000).toISOString(),
 })
+const live = {
+	country: 'CH',
+	trainingType: 'live',
+	engineersToTrain: '10-25',
+	format: 'Remote',
+	topics: ['Other'],
+	timing: 'This month',
+} as const
+const context = { source: 'training-partners', url: '/training-partners' }
+const fields = () => ({ ...live, topics: [...live.topics] })
 
 beforeEach(() => {
 	vi.clearAllMocks()
+	mocks.allowed = true
 })
 
 describe('team inquiry submission timing', () => {
@@ -133,35 +145,51 @@ describe('team inquiry submission timing', () => {
 
 describe('team inquiry email', () => {
 	it.each(['live', 'self-paced'] as const)(
-		'includes partner subject and %s routing fields',
+		'includes %s routing fields and preserves delivery and log contracts',
 		async (trainingType) => {
 			expect(
 				await sendTeamInquiry({
 					...values(),
-					country: 'Switzerland',
+					...fields(),
 					trainingType,
-					context: { source: 'training-partners', url: '/training-partners' },
+					context,
 				}),
 			).toEqual({ success: true })
 			expect(mocks.sendAnEmail).toHaveBeenCalledWith(
 				expect.objectContaining({
-					Subject:
-						'Training partners inquiry from Test Company (11-50 employees)',
+					Subject: `Training request: Test Company, CH, route ${trainingType === 'live' ? 'inovex (3.2)' : 'team-sales (self-paced)'}`,
+					To: 'support@example.test',
 					ReplyTo: 'team@example.test',
-					componentProps: expect.objectContaining({
-						body: expect.stringContaining('Country: Switzerland'),
-					}),
+					type: 'transactional',
 				}),
 			)
-			expect(mocks.sendAnEmail.mock.calls[0]![0].componentProps.body).toContain(
+			const body = mocks.sendAnEmail.mock.calls[0]![0].componentProps.body
+			for (const label of [
+				'Country: CH',
 				`Training type: ${trainingType}`,
+				'Training location: same',
+				'Training country: CH',
+				'Engineers to train:',
+				'Format:',
+				'Topics:',
+				'Timing:',
+				'Partner preference: No preference',
+				'Suggested route:',
+			])
+				expect(body).toContain(label)
+			expect(body).toContain(
+				trainingType === 'live'
+					? 'Engineers to train: 10-25'
+					: 'Engineers to train: Not applicable',
 			)
 			expect(mocks.info).toHaveBeenCalledWith(
 				'team_inquiry.submitted',
 				expect.objectContaining({
-					country: 'Switzerland',
+					country: 'CH',
 					trainingType,
 					email: 'team@example.test',
+					suggestedRoute: trainingType === 'live' ? 'inovex' : 'team-sales',
+					topics: trainingType === 'live' ? ['Other'] : undefined,
 				}),
 			)
 			expect(mocks.scheduleProductEvents).toHaveBeenCalledWith(
@@ -176,13 +204,14 @@ describe('team inquiry email', () => {
 			)
 		},
 	)
-
-	it.each([undefined, 'workshop'])(
-		'keeps the old subject and optional fields for source %s',
+	it.each([undefined, 'workshop', 'for-teams-page'])(
+		'keeps other sources unchanged: %s',
 		async (source) => {
 			expect(
 				await sendTeamInquiry({
 					...values(),
+					country: '<script>unsafe</script>',
+					trainingType: '<b>x</b>' as 'live',
 					context: { source, url: '/for-your-team' },
 				}),
 			).toEqual({ success: true })
@@ -190,63 +219,70 @@ describe('team inquiry email', () => {
 			expect(email.Subject).toBe(
 				'Team Inquiry from Test Company (11-50 employees)',
 			)
-			expect(email.componentProps.body).not.toContain('Country:')
-			expect(email.componentProps.body).not.toContain('Training type:')
+			for (const field of [
+				'Country:',
+				'Training type:',
+				'Suggested route:',
+				'<b>x</b>',
+				'<script>',
+			])
+				expect(email.componentProps.body).not.toContain(field)
 		},
 	)
-
-	it.each([undefined, 'workshop'])(
-		'omits unvalidated partner fields from other sources: %s',
-		async (source) => {
-			expect(
-				await sendTeamInquiry({
-					...values(),
-					country: '<script>unsafe</script>',
-					// Model an untrusted server-action payload, not a typed form value.
-					trainingType: '<b>x</b>' as unknown as 'live',
-					context: { source, url: '/for-your-team' },
-				}),
-			).toEqual({ success: true })
-			const body = mocks.sendAnEmail.mock.calls[0]![0].componentProps.body
-			expect(body).not.toContain('Country:')
-			expect(body).not.toContain('Training type:')
-			expect(body).not.toContain('<b>x</b>')
-			expect(body).not.toContain('<script>')
-		},
-	)
-
-	it('sanitizes the validated partner country before building the email', async () => {
+	it('sanitizes the named partner and subject, and records an alternate training country', async () => {
 		expect(
 			await sendTeamInquiry({
 				...values(),
-				country: 'Germany<script>unsafe</script>',
-				trainingType: 'live',
-				context: { source: 'training-partners', url: '/training-partners' },
+				...fields(),
+				country: 'US',
+				trainingLocation: 'elsewhere',
+				trainingCountry: 'GB',
+				partnerPreference: 'specific',
+				specificPartner: '<b>Partner</b><script>unsafe</script>',
+				companyName: '<b>Company</b>\r\n',
+				context,
 			}),
 		).toEqual({ success: true })
-		const body = mocks.sendAnEmail.mock.calls[0]![0].componentProps.body
-		expect(body).toContain('Country: Germany')
-		expect(body).toContain('Training type: live')
-		expect(body).not.toContain('<script>')
-		expect(body).not.toContain('unsafe')
+		const email = mocks.sendAnEmail.mock.calls[0]![0]
+		expect(email.Subject).toBe(
+			'Training request: Company  , US, route review (4.4-client-preference)',
+		)
+		expect(email.componentProps.body).toContain('Partner preference: Partner')
+		expect(email.componentProps.body).toContain('Training country: GB')
+		expect(email.componentProps.body).not.toContain('unsafe')
+		expect(email.componentProps.body).not.toContain('<b>Partner</b>')
 	})
-
 	it.each([
 		{},
 		{ country: 'Germany' },
 		{ trainingType: 'live' as const },
-		{ country: '   ', trainingType: 'live' as const },
-	])(
-		'rejects incomplete partner requests on the server: %j',
-		async (fields) => {
-			const result = await sendTeamInquiry({
-				...values(),
-				...fields,
-				context: { source: 'training-partners', url: '/training-partners' },
-			})
-			expect(result.error).toBeTruthy()
+		{ ...fields(), country: 'ZZ' },
+		{ ...fields(), topics: [] },
+		{ ...fields(), trainingLocation: 'elsewhere' as const },
+	])('rejects incomplete or invalid partner requests: %j', async (data) => {
+		expect(
+			(await sendTeamInquiry({ ...values(), ...data, context })).error,
+		).toBeTruthy()
+		expect(mocks.sendAnEmail).not.toHaveBeenCalled()
+		expect(mocks.scheduleProductEvents).not.toHaveBeenCalled()
+	})
+	it.each(['honeypot', 'fast', 'expired', 'rate-limit'])(
+		'preserves spam guard: %s',
+		async (guard) => {
+			mocks.allowed = guard !== 'rate-limit'
+			expect(
+				await sendTeamInquiry({
+					...values(),
+					...fields(),
+					context,
+					...(guard === 'honeypot' ? { website: 'bot' } : {}),
+					...(guard === 'fast' ? { timestamp: new Date().toISOString() } : {}),
+					...(guard === 'expired'
+						? { timestamp: new Date(Date.now() - 3601000).toISOString() }
+						: {}),
+				}),
+			).toEqual({ success: true })
 			expect(mocks.sendAnEmail).not.toHaveBeenCalled()
-			expect(mocks.scheduleProductEvents).not.toHaveBeenCalled()
 		},
 	)
 })
