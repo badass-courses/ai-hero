@@ -41,8 +41,9 @@ async function liveDeps(): Promise<InterestFactRecorderDeps> {
 				(await resolveDrovrContacts({ emails: [email], config })).get(
 					normalizeResolveEmail(email),
 				),
-			record: (fact) =>
-				recordInterestFacts({ facts: [fact], config, firstWins: true }),
+			record: async (fact) => {
+				await recordInterestFacts({ facts: [fact], config, firstWins: true })
+			},
 		},
 	}
 }

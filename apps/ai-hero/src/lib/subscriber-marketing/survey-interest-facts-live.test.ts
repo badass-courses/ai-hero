@@ -9,9 +9,15 @@ vi.mock('@/inngest/inngest.server', () => ({ inngest: { send: mocks.send } }))
 import {
 	recordGoalInterestFact,
 	recordInterestFacts,
+	recordScopeInterestFactBatches,
 	scheduleGoalInterestFact,
 } from './survey-interest-facts-live'
-import { goalInterestFact, GOAL_QUESTION_ID } from './survey-interest-facts'
+import {
+	goalInterestFact,
+	GOAL_QUESTION_ID,
+	SCOPE_QUESTION_ID,
+	type ScopeInterestFact,
+} from './survey-interest-facts'
 
 const config = { baseUrl: 'https://drovr.example.test/', apiKey: 'test-key' }
 const row = {
@@ -220,7 +226,7 @@ describe('live goal interest facts', () => {
 						Response.json({ inserted: 0, duplicates: 1, conflicts: [] }),
 					),
 			}),
-		).resolves.toBeUndefined()
+		).resolves.toEqual({ inserted: 0, duplicates: 1, conflicts: 0 })
 		await expect(
 			recordInterestFacts({
 				facts: [fact],
@@ -231,6 +237,70 @@ describe('live goal interest facts', () => {
 						Response.json({ inserted: 0, duplicates: 0, conflicts: [] }),
 					),
 			}),
+		).rejects.toThrow('interest-fact-not-acknowledged')
+	})
+})
+
+const scopeFacts = (length: number): ScopeInterestFact[] =>
+	Array.from({ length }, (_, index) => ({
+		contactId: 'drovr-contact',
+		at: row.createdAt.toISOString(),
+		kind: `survey.answer.inferred.${SCOPE_QUESTION_ID}`,
+		role: 'personal',
+		sourceId: JSON.stringify(['aihero', 'AI_ContactEvent', `event-${index}`]),
+	}))
+
+describe('scope fact write readback', () => {
+	it('splits at 500 in source order and sums inserts, duplicates and first-wins conflicts', async () => {
+		const facts = scopeFacts(501)
+		const fetcher = vi
+			.fn<Parameters<typeof fetch>, ReturnType<typeof fetch>>()
+			.mockResolvedValueOnce(Response.json({
+				inserted: 497,
+				duplicates: 2,
+				conflicts: [facts[0]?.sourceId],
+			}))
+			.mockResolvedValueOnce(Response.json({ inserted: 0, duplicates: 1, conflicts: [] }))
+		await expect(
+			recordScopeInterestFactBatches({ facts, config, fetcher }),
+		).resolves.toEqual({
+			batches: 2,
+			inserted: 497,
+			duplicates: 3,
+			conflicts: 1,
+			failedBatch: null,
+		})
+		expect(fetcher.mock.calls.map(([, init]) => JSON.parse(String(init?.body)).facts))
+			.toEqual([facts.slice(0, 500), facts.slice(500)])
+	})
+
+	it('stops on the first unacknowledged batch and keeps only the earlier readback', async () => {
+		const fetcher = vi
+			.fn<Parameters<typeof fetch>, ReturnType<typeof fetch>>()
+			.mockResolvedValueOnce(Response.json({ inserted: 490, duplicates: 10, conflicts: [] }))
+			.mockRejectedValueOnce(new Error('private provider exception'))
+		await expect(
+			recordScopeInterestFactBatches({ facts: scopeFacts(1001), config, fetcher }),
+		).resolves.toEqual({
+			batches: 1,
+			inserted: 490,
+			duplicates: 10,
+			conflicts: 0,
+			failedBatch: 2,
+		})
+		expect(fetcher).toHaveBeenCalledTimes(2)
+	})
+
+	it('rejects conflicts on a source outside the current batch even with first-wins enabled', async () => {
+		const fetcher = vi
+			.fn<Parameters<typeof fetch>, ReturnType<typeof fetch>>()
+			.mockResolvedValueOnce(Response.json({
+				inserted: 0,
+				duplicates: 0,
+				conflicts: ['unknown-source'],
+			}))
+		await expect(
+			recordInterestFacts({ facts: scopeFacts(1), config, firstWins: true, fetcher }),
 		).rejects.toThrow('interest-fact-not-acknowledged')
 	})
 })

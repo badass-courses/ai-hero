@@ -8,6 +8,7 @@ import {
 } from './drovr-purchase-resolve'
 import {
 	goalInterestFact,
+	type ScopeInterestFact,
 	type SurveyInterestFact,
 } from './survey-interest-facts'
 
@@ -29,6 +30,8 @@ async function logFailure(logger: Logger, rowId: string, reason: string) {
 	}
 }
 
+const MAX_INTEREST_FACTS_PER_BATCH = 500
+
 export async function recordInterestFacts(args: {
 	facts: readonly (
 		| SurveyInterestFact
@@ -46,7 +49,7 @@ export async function recordInterestFacts(args: {
 	 * first fact for it, which stands; anything else is still refused. */
 	firstWins?: boolean
 }) {
-	if (args.facts.length === 0 || args.facts.length > 500)
+	if (args.facts.length === 0 || args.facts.length > MAX_INTEREST_FACTS_PER_BATCH)
 		throw new Error('invalid-fact-batch-size')
 	const response = await (args.fetcher ?? fetch)(
 		`${args.config.baseUrl.replace(/\/+$/, '')}/record_interest_facts`,
@@ -86,6 +89,33 @@ export async function recordInterestFacts(args: {
 	) {
 		throw new Error('interest-fact-not-acknowledged')
 	}
+	return {
+		inserted: body.inserted,
+		duplicates: body.duplicates,
+		conflicts: body.conflicts.length,
+	}
+}
+
+export async function recordScopeInterestFactBatches(args: {
+	facts: readonly ScopeInterestFact[]
+	config: { baseUrl: string; apiKey: string }
+	fetcher?: typeof fetch
+}) {
+	const readback = { batches: 0, inserted: 0, duplicates: 0, conflicts: 0 }
+	for (let start = 0; start < args.facts.length; start += MAX_INTEREST_FACTS_PER_BATCH) {
+		const facts = args.facts.slice(start, start + MAX_INTEREST_FACTS_PER_BATCH)
+		try {
+			const ack = await recordInterestFacts({ ...args, facts, firstWins: true })
+			readback.batches++
+			readback.inserted += ack.inserted
+			readback.duplicates += ack.duplicates
+			readback.conflicts += ack.conflicts
+		} catch {
+			// The failed batch may have landed. Only report acknowledged counts.
+			return { ...readback, failedBatch: readback.batches + 1 }
+		}
+	}
+	return { ...readback, failedBatch: null }
 }
 
 /** Records one saved survey goal answer in drovr. Transport failures throw so

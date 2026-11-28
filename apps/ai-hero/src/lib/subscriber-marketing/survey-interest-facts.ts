@@ -24,6 +24,10 @@ export type SurveyInterestFact = {
 	sourceId: string
 }
 
+export type ScopeInterestFact = SurveyInterestFact & {
+	kind: `survey.answer.inferred.${typeof SCOPE_QUESTION_ID}`
+}
+
 export function goalInterestFact(args: {
 	id: string
 	questionId: string
@@ -57,6 +61,24 @@ export type ScopeAnswerSource = {
 	stepClicks: number
 }
 
+/** Filter SQL results, not click history: each row keeps its SQL window totals. */
+export function selectScopeAnswerRows(args: {
+	rows: readonly ScopeAnswerSource[]
+	contacts?: ReadonlySet<string>
+}) {
+	const { contacts } = args
+	const rows = contacts
+		? args.rows.filter((row) => contacts.has(row.contactId))
+		: args.rows
+	const matchedContacts = new Set(rows.map((row) => row.contactId)).size
+	return {
+		rows,
+		requestedContacts: contacts?.size ?? null,
+		matchedContacts,
+		requestedWithNoScopeRow: contacts ? contacts.size - matchedContacts : 0,
+	}
+}
+
 /** No per-event scanner flag exists. Reuse the app's volume classification,
  * then quarantine ambiguous multi-option scope selections rather than calling
  * any of them a human statement. Repeated source IDs alone are duplicates;
@@ -87,7 +109,7 @@ export function planScopeInterestFacts(args: {
 	}
 	const seen = new Set<string>()
 	const unresolved = new Map<string, string>()
-	const facts: SurveyInterestFact[] = []
+	const facts: ScopeInterestFact[] = []
 	for (const row of args.rows) {
 		const sourceId = JSON.stringify(['aihero', 'AI_ContactEvent', row.id])
 		if (seen.has(sourceId)) {

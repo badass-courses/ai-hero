@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { parseScopeArgs } from '../../../scripts/scope-interest-facts-dry-run'
 import type { DrovrContactResolution } from './drovr-purchase-resolve'
 import {
 	goalInterestFact,
@@ -7,6 +8,7 @@ import {
 	GOAL_ROLES,
 	planScopeInterestFacts,
 	SCOPE_QUESTION_ID,
+	selectScopeAnswerRows,
 	type ScopeAnswerSource,
 } from './survey-interest-facts'
 
@@ -23,6 +25,52 @@ const row = (extra: Partial<ScopeAnswerSource> = {}): ScopeAnswerSource => ({
 const resolved = new Map<string, DrovrContactResolution>([
 	['human@example.test', { status: 'resolved', contactId: 'drovr-contact' }],
 ])
+
+describe('scope backfill selection', () => {
+	const reader = '/absolute/aihero-support/tmp/db/reader.cjs'
+	const contacts = '/absolute/contacts.txt'
+
+	it('refuses apply without an absolute contacts file and defaults to dry run', () => {
+		expect(parseScopeArgs(['--reader', reader, '--apply'])).toEqual({
+			error: expect.stringContaining('--apply --contacts /absolute/contacts.txt'),
+		})
+		expect(parseScopeArgs(['--reader', reader, '--apply', '--contacts', 'relative.txt'])).toEqual({
+			error: expect.stringContaining('absolute path'),
+		})
+		expect(parseScopeArgs(['--reader', reader])).toMatchObject({ mode: 'dry-run', reader })
+		expect(parseScopeArgs(['--contacts', contacts, '--reader', reader])).toEqual({
+			mode: 'dry-run', reader, contacts,
+		})
+		expect(parseScopeArgs(['--contacts', contacts, '--apply', '--reader', reader])).toEqual({
+			mode: 'apply', reader, contacts,
+		})
+	})
+
+	it('retains both whole-history click counts even when only one scope row per scanner is selected', () => {
+		const rows = [
+			row({ id: 'across-steps', contactId: 'scan-contact', contactClicks: 15 }),
+			row({ id: 'scope-step', contactId: 'scan-step', stepClicks: 3 }),
+			row(),
+			row({ id: 'not-requested', contactId: 'outside' }),
+		]
+		const selection = selectScopeAnswerRows({
+			rows,
+			contacts: new Set(['scan-contact', 'scan-step', 'app-contact', 'no-row']),
+		})
+		expect(selection).toEqual({
+			rows: rows.slice(0, 3),
+			requestedContacts: 4,
+			matchedContacts: 3,
+			requestedWithNoScopeRow: 1,
+		})
+		const plan = planScopeInterestFacts({ rows: selection.rows, resolved })
+		expect(plan.counts.scannerDrops).toBe(2)
+		expect(plan.facts).toHaveLength(1)
+		expect(plan.facts[0]?.sourceId).toBe('["aihero","AI_ContactEvent","event-1"]')
+		expect(selectScopeAnswerRows({ rows }).rows).toBe(rows)
+		expect(selectScopeAnswerRows({ rows, contacts: new Set() }).rows).toEqual([])
+	})
+})
 
 describe('survey interest facts', () => {
 	it.each(GOAL_ROLES)(
