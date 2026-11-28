@@ -20,8 +20,9 @@ import { getSkillsWorkflowEmailStep } from './skills-workflow-path'
 import {
 	SHADOW_NEWSLETTER_JOURNEY_ID,
 	SHADOW_NEWSLETTER_CATALOG_REVISION,
-	shadowNewsletterSequenceForMessage,
+	shadowNewsletterCatalogEntry,
 } from './drovr-shadow-newsletter'
+import { parseNewsletterExitFlag } from './newsletter-exit-flags.mjs'
 import {
 	createOldNewsletterExitGate,
 	OldNewsletterExitRefusedError,
@@ -147,6 +148,10 @@ export async function personalizeDrovrIntent(args: {
 	identityConflict?: boolean
 	/** See DOUBLE_OPT_IN_RESUBSCRIBE_AFTER_UNSUBSCRIBE. */
 	resubscribeAfterUnsubscribe?: boolean
+	/** Skip the old-newsletter exit gate for Kit-era shadow-newsletter issues.
+	 * Default from AIH_SHADOW_NEWSLETTER_PERSONALIZE_EXIT_GATE_OFF, unset = gated
+	 * (Joel's call). Contact stops and suppressions still apply. */
+	kitExitGateOff?: boolean
 	linkAnchors?: ValuePathLinkAnchorStore
 	warn?: (event: string, fields: Record<string, unknown>) => unknown
 }): Promise<DrovrPersonalizeAnswer | undefined> {
@@ -198,14 +203,22 @@ export async function personalizeDrovrIntent(args: {
 			else variables = offer.variables
 		}
 	} else if (request.journeyId === SHADOW_NEWSLETTER_JOURNEY_ID) {
-		if (
-			!shadowNewsletterSequenceForMessage(
-				SHADOW_NEWSLETTER_CATALOG_REVISION,
-				request.emailKey,
+		const entry = shadowNewsletterCatalogEntry(
+			SHADOW_NEWSLETTER_CATALOG_REVISION,
+			request.emailKey,
+		)
+		if (!entry) {
+			reasons.push('email-resource-missing')
+		} else if (
+			// A drovr-rendered issue has no Kit twin, so it cannot be a duplicate.
+			entry.kind === 'kit' &&
+			!(
+				args.kitExitGateOff ??
+				parseNewsletterExitFlag(
+					process.env.AIH_SHADOW_NEWSLETTER_PERSONALIZE_EXIT_GATE_OFF,
+				)
 			)
 		) {
-			reasons.push('email-resource-missing')
-		} else {
 			try {
 				// PostShiba bypasses the Kit sender; require the same positive exit
 				// proof here without requesting an exit or writing any provider state.
