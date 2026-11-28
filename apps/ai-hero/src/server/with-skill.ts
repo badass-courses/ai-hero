@@ -39,7 +39,7 @@ const SENSITIVE_QUERY_KEY_PATTERN =
 function redactSearchParams(params: URLSearchParams): URLSearchParams {
 	const safeEntries: [string, string][] = Array.from(params.entries()).map(
 		([key, value]) => [
-			key,
+			redactCompBearer(key),
 			SENSITIVE_QUERY_KEY_PATTERN.test(key) ? '[REDACTED]' : redactCompBearer(value),
 		],
 	)
@@ -62,7 +62,7 @@ function extractRequestTelemetry(req: Request): RequestTelemetry {
 	const queryEntries = Array.from(url.searchParams.entries())
 	const safeSearchParams = redactSearchParams(url.searchParams)
 	const safeQueryString = safeSearchParams.toString()
-	const queryKeys = Array.from(new Set(queryEntries.map(([key]) => key).sort()))
+	const queryKeys = Array.from(new Set(safeSearchParams.keys())).sort()
 	const pathWithQuery = `${url.pathname}${safeQueryString ? `?${safeQueryString}` : ''}`
 	const envDeploymentUrl = process.env.VERCEL_URL
 		? `https://${process.env.VERCEL_URL}`

@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { INTERNAL_COMP_CLAIM, withPrivateCompClaim } from './free-claim-request'
-import { cohortCouponPresentation } from './cohort-presentation'
+import {
+	activeCompClaimDigest,
+	INTERNAL_COMP_CLAIM,
+	withPrivateCompClaim,
+} from './free-claim-request'
+import { COMP_REDEEM_COOKIE } from './browser-claim'
+import { BROWSER_COMP_CLAIM } from './namespace'
+import { selectorDigest } from './selector'
 import { PRODUCT } from './namespace'
 
 const path = 'https://example.test/api/coursebuilder/redeem/coupon'
@@ -85,23 +91,32 @@ it.each(['coupon', 'code', 'couponId'])(
 	},
 )
 
-it('does not resolve even a reserved cohort selector while the flag is unset', async () => {
-	const adapter = { getCoupon: vi.fn() }
-	for (const queryCode of [
-		undefined,
-		'ordinary-free',
-		'legacy-promotion',
-		code,
-	])
-		expect(
-			await cohortCouponPresentation(
-				adapter,
-				undefined as never,
-				PRODUCT,
-				queryCode,
-			),
-		).toBe(adapter)
-	expect(adapter.getCoupon).not.toHaveBeenCalled()
+it('strips the comp cookie even on a non-POST redeem path', async () => {
+	const request = new Request(path, {
+		headers: { cookie: `${COMP_REDEEM_COOKIE}=${code}; other=value` },
+	})
+	await withPrivateCompClaim(request, async (forwarded) => {
+		expect(forwarded.headers.get('cookie')).toBe('other=value')
+		expect(forwarded.method).toBe('GET')
+		expect(forwarded.body).toBeNull()
+	})
+})
+
+it('strips the comp cookie from an ordinary claim without rewriting its body', async () => {
+	const request = new Request(path, {
+		method: 'POST',
+		headers: {
+			'content-type': 'application/json; charset=utf-8',
+			cookie: `${COMP_REDEEM_COOKIE}=${code}; authjs.session-token=dummy; ${COMP_REDEEM_COOKIE}=${code}`,
+		},
+		body: JSON.stringify(ordinary),
+	})
+	await withPrivateCompClaim(request, async (forwarded) => {
+		expect(forwarded.headers.get('cookie')).toBe('authjs.session-token=dummy')
+		expect(forwarded.headers.get('content-type')).toBe('application/json; charset=utf-8')
+		expect(await forwarded.text()).toBe(JSON.stringify(ordinary))
+		expect(activeCompClaimDigest()).toBeNull()
+	})
 })
 
 it.each([
@@ -111,6 +126,7 @@ it.each([
 		return form
 	},
 	() => new URLSearchParams({ couponId: code, productIds: PRODUCT }),
+	() => new URLSearchParams({ couponId: BROWSER_COMP_CLAIM }),
 	() => new URLSearchParams({ coupon: code }),
 ])(
 	'refuses non-JSON comp claims without dispatching or echoing the selector',
@@ -125,6 +141,44 @@ it.each([
 		expect(dispatch).not.toHaveBeenCalled()
 	},
 )
+
+it('accepts a scoped cookie with same-origin or absent fetch metadata and removes it from dispatch', async () => {
+	const dispatch = vi.fn(async (request: Request) => {
+		expect(activeCompClaimDigest()).toBe(selectorDigest(code))
+		expect(request.headers.get('cookie')).toBe('authjs.session-token=dummy')
+		expect(await request.json()).toMatchObject({
+			couponId: INTERNAL_COMP_CLAIM,
+		})
+		return new Response(null)
+	})
+	for (const [site, hasCookie, status] of [
+		['cross-site', true, 400],
+		['same-origin', false, 400],
+		['same-origin', true, 200],
+		[undefined, true, 200],
+	] as const) {
+		const headers = new Headers({
+			'content-type': 'application/json',
+		})
+		if (site) headers.set('sec-fetch-site', site)
+		if (hasCookie)
+			headers.set(
+				'cookie',
+				`${COMP_REDEEM_COOKIE}=${encodeURIComponent(`/cohorts/c5~${code}`)}; authjs.session-token=dummy`,
+			)
+		const response = await withPrivateCompClaim(
+			new Request(path, {
+				method: 'POST',
+				headers,
+				body: JSON.stringify({ ...ordinary, couponId: BROWSER_COMP_CLAIM }),
+			}),
+			dispatch,
+		)
+		expect(response.status).toBe(status)
+	}
+	expect(dispatch).toHaveBeenCalledTimes(2)
+	expect(activeCompClaimDigest()).toBeNull()
+})
 
 it.each(['application/json', 'Application/JSON; charset=utf-8'])(
 	'accepts comp claims sent as %s and preserves the productId array',

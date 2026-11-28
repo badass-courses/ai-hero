@@ -4,6 +4,11 @@ export const ROW_PREFIX = 'batch-coupon-'
 export const DIGEST_PREFIX = 'c5hash_'
 export const TEMPLATE = 'c5-comp-v1'
 export const PRODUCT = 'product-s00zs'
+export const CONTROL_ID = 'ai-hero'
+// Issuer transactions never lock this row. Claims and the claim stop do.
+export const CLAIM_CONTROL_ID = 'ai-hero-claims'
+// Inert action marker, never sufficient to redeem without the HttpOnly cookie.
+export const BROWSER_COMP_CLAIM = 'batch-coupon-browser-claim'
 
 export const inSelectorNamespace = (value: unknown): value is string =>
 	typeof value === 'string' && value.toLowerCase().startsWith(SELECTOR_PREFIX)

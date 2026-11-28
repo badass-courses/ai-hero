@@ -24,7 +24,13 @@ import {
 	concurrentlyBehindRowLock,
 	createCouponFixturePool,
 } from './mysql-fixture'
+import { newSelector, sealSelector, selectorDigest } from './selector'
 import { createCouponBatchWorkerPool } from './worker-pool'
+
+vi.mock('./selector', async (original) => {
+	const actual = await original<typeof import('./selector')>()
+	return { ...actual, newSelector: vi.fn(actual.newSelector) }
+})
 
 const uri = process.env.AIH_COUPON_BATCH_MYSQL_URL
 const run = randomUUID().slice(0, 8)
@@ -106,6 +112,9 @@ describe.skipIf(!uri)(
 		let nextDay: string
 		let rolloverAt: number
 		let envEnabled = false
+		let observeCouponInserts: number[] | undefined
+		let manifestPageWrites: number | undefined
+		let onCouponInsert: (() => void) | undefined
 		const wake = vi.fn()
 		const page = vi.fn(async (_value: unknown) => {})
 		const log = vi.fn(async (_value: unknown) => {})
@@ -122,6 +131,15 @@ describe.skipIf(!uri)(
 			db = drizzle(pool, {
 				schema,
 				mode: 'planetscale',
+				logger: {
+					logQuery(query) {
+						if (manifestPageWrites !== undefined && query.startsWith('insert into `AI_CouponBatchItem`')) manifestPageWrites++
+						if (query.startsWith('insert into `AI_Coupon`')) {
+							observeCouponInserts?.push(query.split(/\),\s*\(/).length)
+							onCouponInsert?.()
+						}
+					},
+				},
 			}) as unknown as typeof db
 			// Repeat runs share the fixture DB but never reuse another wave's days.
 			for (let attempt = 0; attempt < 460; attempt++) {
@@ -458,6 +476,22 @@ describe.skipIf(!uri)(
 				fields: { couponBatchTemplate: 'c5-comp-v1', bypassSoldOut: true },
 			})
 			expect(stored!.code).not.toBe(issued.code)
+			const sameTermsWithNewKey = {
+				...body,
+				items: [...body.items, { intentKey: `${run}-preview-new` }],
+			}
+			const preview = await api
+				.preview(request(sameTermsWithNewKey))
+				.then((r) => r.json())
+			expect(preview).toMatchObject({
+				eligible: 1,
+				alreadyMinted: 1,
+				refused: 0,
+			})
+			expect(preview.outcomes).toEqual([
+				{ intentKey: body.items[0]!.intentKey, state: 'already_minted' },
+				{ intentKey: `${run}-preview-new`, state: 'eligible' },
+			])
 			const replay = await api
 				.submit(request(body, `overlap-${run}`))
 				.then((r) => r.json())
@@ -483,6 +517,181 @@ describe.skipIf(!uri)(
 			])
 		})
 
+		it('splits a colliding mint chunk, regenerates one selector and refuses another after three retries', async () => {
+			const collision = newSelector()
+			const regenerated = newSelector()
+			const unaffected = newSelector()
+			const occupiedId = `batch-coupon-${run}-occupied`
+			await db
+				.insert(schema.coupon)
+				.values({ id: occupiedId, code: selectorDigest(collision) })
+			const generate = vi.mocked(newSelector)
+			generate.mockClear()
+			generate
+				.mockReturnValueOnce(collision)
+				.mockReturnValueOnce(unaffected)
+				.mockReturnValueOnce(collision)
+				.mockReturnValueOnce(regenerated)
+				.mockReturnValueOnce(collision)
+				.mockReturnValueOnce(collision)
+				.mockReturnValueOnce(collision)
+			try {
+				const body = await confirm(payload('selector-collision', 3))
+				const { batchId } = await api
+					.submit(request(body, `selector-collision-${run}`))
+					.then((r) => r.json())
+				observeCouponInserts = []
+				expect(await service.runChunk(batchId)).toMatchObject({
+					state: 'worked',
+					finished: true,
+				})
+				expect(generate).toHaveBeenCalledTimes(7)
+				expect(observeCouponInserts).toEqual([3, 2, 1, 1, 1, 1, 1, 1, 1])
+				const { outcomes } = await api
+					.exportPage(request({ batchId }))
+					.then((r) => r.json())
+				expect(outcomes).toMatchObject([
+					{ state: 'minted', code: regenerated },
+					{ state: 'minted', code: unaffected },
+					{ state: 'refused', reason: 'selector_collision' },
+				])
+				expect(outcomes[2]).not.toHaveProperty('code')
+				const [refused] = await db
+					.select({
+						couponRef: schema.couponBatchIntent.couponRef,
+						sealedCode: schema.couponBatchIntent.sealedCode,
+						refused: schema.couponBatchIntent.refused,
+					})
+					.from(schema.couponBatchIntent)
+					.innerJoin(
+						schema.couponBatchItem,
+						eq(schema.couponBatchItem.intentId, schema.couponBatchIntent.id),
+					)
+					.where(
+						and(
+							eq(schema.couponBatchItem.batchId, batchId),
+							eq(schema.couponBatchItem.ordinal, 3),
+						),
+					)
+				expect(refused).toBeUndefined()
+				const retry = await confirm({ ...body, items: [body.items[2]!] })
+				const admitted = await api.submit(request(retry, `regenerate-${run}`))
+				const replacement = (await admitted.json()).batchId
+				expect(await service.runChunk(replacement)).toMatchObject({
+					state: 'worked',
+				})
+				const regeneratedPage = await api
+					.exportPage(request({ batchId: replacement }))
+					.then((r) => r.json())
+				expect(regeneratedPage.outcomes).toMatchObject([
+					{ state: 'minted', code: expect.stringMatching(/^c5comp_/) },
+				])
+				expect(
+					(await api.status(request(undefined), batchId).then((r) => r.json()))
+						.outcomes[2],
+				).toMatchObject({ state: 'refused', reason: 'selector_collision' })
+			} finally {
+				observeCouponInserts = undefined
+				const actual =
+					await vi.importActual<typeof import('./selector')>('./selector')
+				generate.mockReset().mockImplementation(actual.newSelector)
+				await db.delete(schema.coupon).where(eq(schema.coupon.id, occupiedId))
+			}
+		})
+
+		it('rolls back the inserted selector if the export window crosses during the coupon insert', async () => {
+			const started = clock
+			const code = newSelector()
+			const body = await confirm(payload('cross-export-window'))
+			const { batchId } = await api
+				.submit(request(body, `cross-export-window-${run}`))
+				.then((r) => r.json())
+			const record = await db.query.couponBatch.findFirst({
+				where: eq(schema.couponBatch.id, batchId),
+			})
+			vi.mocked(newSelector).mockReturnValueOnce(code)
+			onCouponInsert = () => {
+				clock = new Date(+record!.exportUntil + 1)
+			}
+			try {
+				expect(await service.runChunk(batchId)).toMatchObject({
+					state: 'retry',
+					reason: 'export_window_crossed',
+				})
+				expect(
+					await db.query.coupon.findFirst({
+						where: eq(schema.coupon.code, selectorDigest(code)!),
+					}),
+				).toBeUndefined()
+				expect(
+					(await api.status(request(undefined), batchId).then((r) => r.json()))
+						.counts,
+				).toMatchObject({ minted: 0, queued: 1 })
+				clock = new Date(+clock + 60_000)
+				expect(await service.runChunk(batchId)).toMatchObject({
+					state: 'worked',
+					finished: true,
+				})
+			} finally {
+				onCouponInsert = undefined
+				clock = started
+				await setControl({ nextChunkAt: null })
+			}
+		})
+
+		it('audits export pages atomically and refuses only the item sealed under the wrong key', async () => {
+			const body = await confirm(payload('export-audit', 2))
+			const { batchId } = await api
+				.submit(request(body, `export-audit-${run}`))
+				.then((r) => r.json())
+			expect(await service.runChunk(batchId)).toMatchObject({
+				state: 'worked',
+				finished: true,
+			})
+			const status = await api
+				.status(request(undefined), batchId)
+				.then((r) => r.json())
+			const changed = newSelector()
+			await db
+				.update(schema.couponBatchIntent)
+				.set({
+					sealedCode: sealSelector(
+						changed,
+						'retired-synthetic-secret',
+						status.outcomes[1].couponRef,
+					),
+				})
+				.where(
+					eq(schema.couponBatchIntent.couponRef, status.outcomes[1].couponRef),
+				)
+			const response = await api.exportPage(request({ batchId }))
+			expect(response.status).toBe(200)
+			const { outcomes } = await response.json()
+			expect(outcomes[0]).toMatchObject({
+				state: 'minted',
+				code: expect.stringMatching(/^c5comp_/),
+			})
+			expect(outcomes[1]).toEqual({
+				intentKey: body.items[1]!.intentKey,
+				state: 'refused',
+				reason: 'export_code_unavailable',
+			})
+			const audits = await db
+				.select()
+				.from(schema.couponBatchExportAudit)
+				.where(eq(schema.couponBatchExportAudit.batchId, batchId))
+			expect(audits).toEqual([
+				{
+					id: expect.any(String),
+					principalId: operator.record.userId,
+					batchId,
+					exportedAt: clock,
+					codeCount: 1,
+				},
+			])
+			expect(JSON.stringify(audits)).not.toMatch(/c5comp_|sealedCode/)
+		})
+
 		it('the DB releases a dropped worker transaction so the kill switch can commit', async () => {
 			const isolated = createCouponBatchWorkerPool(uri!, 1)
 			const worker = await isolated.getConnection()
@@ -503,6 +712,8 @@ describe.skipIf(!uri)(
 		})
 
 		it('durably drains 3,058 with bounded chunks and alarms once across Pacific rollover', async () => {
+			envEnabled = true
+			await setControl({ enabled: 1 })
 			const large = await confirm(payload('wave', 3058))
 			const rollover = await confirm(payload('old-day-second', 950))
 			const a = await api.submit(request(large, `wave-${run}`))
@@ -605,6 +816,44 @@ describe.skipIf(!uri)(
 				.where(eq(schema.couponBatch.id, oldDay.batchId))
 			expect(older).toMatchObject({ acceptedDay: firstDay, dailyAlarm: 1 })
 			expect(late).toMatchObject({ acceptedDay: nextDay, dailyAlarm: 0 })
+
+			// A replay of minted keys after the threshold is not new work.
+			await db
+				.update(schema.couponBatchDay)
+				.set({ intents: 4100 })
+				.where(eq(schema.couponBatchDay.day, nextDay))
+			try {
+				await setControl({ paceMs: 0, nextChunkAt: null, chunkSize: 100 })
+				const { batchId } = await api
+					.submit(request(await confirm(after), `replay-over-threshold-${run}`))
+					.then((r) => r.json())
+				const findBatch = () =>
+					db.query.couponBatch.findFirst({
+						where: eq(schema.couponBatch.id, batchId),
+					})
+				expect(await findBatch()).toMatchObject({
+					dailyAlarm: 0,
+					newIntents: 0,
+				})
+				await service.runChunk(batchId)
+				await service.runChunk(batchId)
+				expect(await findBatch()).toMatchObject({
+					dailyAlarm: 0,
+					newIntents: 0,
+					minted: 103,
+					processed: 103,
+				})
+				expect(
+					await db.query.couponBatchAlert.findFirst({
+						where: eq(schema.couponBatchAlert.id, `day:${nextDay}`),
+					}),
+				).toBeUndefined()
+			} finally {
+				await db
+					.update(schema.couponBatchDay)
+					.set({ intents: 103 })
+					.where(eq(schema.couponBatchDay.day, nextDay))
+			}
 		}, 45_000)
 
 		it('rechecks an admitted credential and refuses remaining work without a second mint', async () => {
@@ -774,6 +1023,38 @@ describe.skipIf(!uri)(
 					.sort(),
 			).toEqual(['aging', 'stuck'])
 		})
+
+		it('admits the 12,000-item hard limit in 120 pages before returning', async () => {
+			envEnabled = true
+			await setControl({ enabled: 1 })
+			const body = payload('route-limit', 12_000)
+			const confirmed = await confirm(body)
+			const submit = request(confirmed, `limit-${run}`)
+			const bytes = Buffer.byteLength(JSON.stringify(confirmed))
+			manifestPageWrites = 0
+			const started = performance.now()
+			let admitted: string | undefined
+			try {
+				const response = await api.submit(submit)
+				const elapsedMs = Math.round(performance.now() - started)
+				expect(response.status).toBe(202)
+				const status = await response.json()
+				admitted = status.batchId
+				expect(status.counts).toEqual({ total: 12_000, queued: 12_000, minted: 0, refused: 0 })
+				expect(manifestPageWrites).toBe(120)
+				const [stored] = await db.select({ count: sql<number>`COUNT(*)` }).from(schema.couponBatchItem)
+					.where(eq(schema.couponBatchItem.batchId, admitted!))
+				expect(Number(stored?.count)).toBe(12_000)
+				console.info('fixture 12000-item admission', { bytes, writes: manifestPageWrites, elapsedMs })
+			} finally {
+				manifestPageWrites = undefined
+				if (admitted) {
+					await db.delete(schema.couponBatchAlert).where(eq(schema.couponBatchAlert.batchId, admitted))
+					await db.delete(schema.couponBatchItem).where(eq(schema.couponBatchItem.batchId, admitted))
+					await db.delete(schema.couponBatch).where(eq(schema.couponBatch.id, admitted))
+				}
+			}
+		}, 15_000)
 
 		it('overlap keeps the terminal result but cannot renew its code export window', async () => {
 			const body = payload('export-window')

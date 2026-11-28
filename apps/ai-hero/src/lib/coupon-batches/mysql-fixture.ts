@@ -19,6 +19,32 @@ export function createCouponFixturePool(uri: string) {
 	return pool
 }
 
+/** Wait for positive server evidence, not a race against a sleep. */
+export async function waitForFixtureLock(
+	pool: Pool,
+	blocker: number,
+	queryFragment: string,
+) {
+	await expectFixturePoll(async () => {
+		const [rows] = await pool.query<RowDataPacket[]>(`
+			SELECT 1 FROM performance_schema.data_lock_waits w
+			JOIN performance_schema.threads requester ON requester.THREAD_ID = w.REQUESTING_THREAD_ID
+			JOIN performance_schema.threads holder ON holder.THREAD_ID = w.BLOCKING_THREAD_ID
+			WHERE holder.PROCESSLIST_ID = ? AND LOWER(requester.PROCESSLIST_INFO) LIKE ?`,
+			[blocker, `%${queryFragment.toLowerCase()}%`])
+		return rows.length > 0
+	}, queryFragment)
+}
+
+async function expectFixturePoll(test: () => Promise<boolean>, label: string) {
+	const deadline = performance.now() + 2500
+	while (performance.now() < deadline) {
+		if (await test()) return
+		await new Promise((resolve) => setTimeout(resolve, 20))
+	}
+	throw new Error(`missing MySQL lock waiter: ${label}`)
+}
+
 export async function concurrentlyBehindRowLock<T>(
 	pool: Pool,
 	lockSql: string,

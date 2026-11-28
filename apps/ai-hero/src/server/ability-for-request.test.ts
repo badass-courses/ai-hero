@@ -104,6 +104,29 @@ describe('getUserAbilityForRequest', () => {
 		expect(auth.ability.cannot('read', 'Content')).toBe(true)
 	})
 
+	it('authenticates a stored PAT with commerce and existing scopes without granting analytics or admin', async () => {
+		const { row, rawToken } = personalAccessTokenFixture()
+		mocks.personalAccessTokenFindFirst.mockResolvedValue({
+			...row,
+			scopes: ['commerce:coupons:mint', 'commerce:coupons:read', 'analytics:read', 'content:read'],
+		})
+		const analyticsRequest = new NextRequest('http://localhost:3000/api/analytics', { headers: { authorization: `Bearer ${rawToken}` } })
+		const auth = await getUserAbilityForRequest(analyticsRequest)
+		expect(auth.authMethod).toBe('personal-access-token')
+		expect(auth.user?.id).toBe(user.id)
+		expect(auth.ability.can('read', 'Content')).toBe(true)
+		expect(auth.ability.can('view', 'Analytics')).toBe(false)
+		expect(auth.ability.can('manage', 'all')).toBe(false)
+	})
+
+	it('does not treat a commerce-only PAT as a generic app credential', async () => {
+		const { row, rawToken } = personalAccessTokenFixture()
+		mocks.personalAccessTokenFindFirst.mockResolvedValue({
+			...row, scopes: ['commerce:coupons:mint', 'commerce:coupons:read'],
+		})
+		expect((await getUserAbilityForRequest(request(rawToken))).authMethod).toBe('anonymous')
+	})
+
 	it('builds ability from PAT scopes, not the attributed admin roles', async () => {
 		const fixture = personalAccessTokenFixture()
 		mocks.personalAccessTokenFindFirst.mockResolvedValue(fixture.row)

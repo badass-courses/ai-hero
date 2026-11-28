@@ -17,6 +17,7 @@ const time = (name: string) => timestamp(name, { mode: 'date', fsp: 3 })
 export const couponBatchControl = mysqlTable('CouponBatchControl', {
 	id: id('id').primaryKey(),
 	enabled: int('enabled').notNull().default(0),
+	claimsEnabled: int('claimsEnabled').notNull().default(0),
 	chunkSize: int('chunkSize').notNull().default(100),
 	paceMs: int('paceMs').notNull().default(250),
 	nextChunkAt: time('nextChunkAt'),
@@ -95,6 +96,24 @@ export const couponBatchIntent = mysqlTable('CouponBatchIntent', {
 	exportUntil: time('exportUntil').notNull(),
 	refused: varchar('refused', { length: 48 }),
 })
+
+// One record per export response page, including pages returning zero codes.
+export const couponBatchExportAudit = mysqlTable(
+	'CouponBatchExportAudit',
+	{
+		id: id('id').primaryKey(),
+		principalId: id('principalId').notNull(),
+		batchId: id('batchId').notNull(),
+		exportedAt: time('exportedAt').notNull(),
+		codeCount: int('codeCount').notNull(),
+	},
+	(t) => ({
+		batchTime: index('CouponBatchExportAudit_batch_time').on(
+			t.batchId,
+			t.exportedAt,
+		),
+	}),
+)
 
 export const couponBatchDay = mysqlTable('CouponBatchDay', {
 	day: varchar('day', { length: 10 }).primaryKey(),

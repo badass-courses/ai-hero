@@ -2,7 +2,7 @@ import { performance } from 'node:perf_hooks'
 import { eq, sql } from 'drizzle-orm'
 import { NextRequest } from 'next/server'
 import Stripe from 'stripe'
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { formatPricesForProduct } from '@coursebuilder/commerce/format-prices-for-product'
 import { getCouponForCode } from '@coursebuilder/commerce/props-for-commerce'
@@ -20,10 +20,13 @@ import {
 	propsForCommerce,
 	getCouponForCode as appGetCouponForCode,
 } from './coupon-display'
-import { cohortCouponPresentation } from './coupon-batches/cohort-presentation'
+import { c5CompAvailable } from './coupon-batches/free-selector'
+import { CLAIM_CONTROL_ID } from './coupon-batches/namespace'
+import { COMP_REDEEM_COOKIE } from './coupon-batches/browser-claim'
 import { newSelector, selectorDigest } from './coupon-batches/selector'
 import {
 	coupon,
+	couponBatchControl,
 	merchantAccount,
 	merchantCharge,
 	merchantCoupon,
@@ -39,6 +42,8 @@ import {
 const runId = crypto.randomUUID().slice(0, 8)
 // The test harness supplies this fixture to the app's real webhook route.
 const webhookSecret = 'test_webhook_secret'
+const paymentCalls = vi.hoisted(() => vi.fn())
+afterEach(() => { vi.unstubAllEnvs() })
 const inngestSend = vi.hoisted(() =>
 	vi.fn(async (_event: unknown) => ({ ids: [] })),
 )
@@ -77,7 +82,7 @@ vi.mock('@/coursebuilder/stripe-provider', async () => {
 			baseSuccessUrl: 'https://example.test',
 			cancelUrl: 'https://example.test',
 			errorRedirectUrl: 'https://example.test/error',
-			paymentsAdapter: {
+			paymentsAdapter: new Proxy({
 				stripe,
 				verifyWebhookSignature: async (body: string, signature: string) =>
 					Boolean(
@@ -98,7 +103,13 @@ vi.mock('@/coursebuilder/stripe-provider', async () => {
 					`promo_${coupon}`,
 				createCheckoutSession: stripeSession,
 				expireCheckoutSession: async () => ({ status: 'expired' }),
-			} as never,
+			}, { get(target, key) {
+				const port: unknown = Reflect.get(target, key)
+				return typeof port === 'function' ? (...args: unknown[]) => {
+					paymentCalls(key)
+					return Reflect.apply(port, target, args)
+				} : port
+			} }) as never,
 		}),
 	}
 })
@@ -446,6 +457,10 @@ describe.skipIf(!uri)(
 		})
 
 		it('redeems a C5 bearer through the real POST wrapper and provisions a first claimant', async () => {
+			vi.stubEnv('AIH_COUPON_BATCH_ENABLED', 'true')
+			paymentCalls.mockClear()
+			await runtime.db.insert(couponBatchControl).values({ id: CLAIM_CONTROL_ID, claimsEnabled: 1 })
+				.onDuplicateKeyUpdate({ set: { claimsEnabled: 1 } })
 			const { POST } =
 				await import('@/app/api/coursebuilder/[...nextCourseBuilder]/route')
 			const { rawCourseBuilderAdapter } = runtime
@@ -483,41 +498,11 @@ describe.skipIf(!uri)(
 				enumerable: false,
 			})
 			const previousFlag = process.env.AIH_COUPON_BATCH_ENABLED
-			const presentation = (code: string) =>
-				cohortCouponPresentation(
-					productionAdapter,
-					runtime.db,
-					C5_PRODUCT_ID,
-					code,
-				)
-			let display: typeof productionAdapter
-			try {
-				delete process.env.AIH_COUPON_BATCH_ENABLED
-				expect(await presentation(bearer)).toBe(productionAdapter)
-				process.env.AIH_COUPON_BATCH_ENABLED = 'true'
-				display = await presentation(bearer)
-			} finally {
-				if (previousFlag === undefined)
-					delete process.env.AIH_COUPON_BATCH_ENABLED
-				else process.env.AIH_COUPON_BATCH_ENABLED = previousFlag
-			}
-			const comp = await appGetCouponForCode(bearer, [C5_PRODUCT_ID], display)
-			expect(comp).toMatchObject({ isRedeemable: true })
-			const c5 = await productionAdapter.getProduct(C5_PRODUCT_ID)
-			if (!c5) throw new Error('missing C5 product fixture')
-			const displayProps = async (userId: string) =>
-				propsForCommerce(
-					{
-						query: { code: bearer },
-						userId,
-						products: [c5],
-					},
-					display,
-				)
-			expect(await displayProps(key('no-purchases'))).toMatchObject({
-				couponFromCode: { id: bearer, isRedeemable: true },
-				purchases: [],
-			})
+			vi.stubEnv('AIH_COUPON_BATCH_ENABLED', '')
+			expect(await c5CompAvailable(runtime.db, bearer)).toBe(false)
+			vi.stubEnv('AIH_COUPON_BATCH_ENABLED', 'true')
+			expect(await c5CompAvailable(runtime.db, bearer)).toBe(true)
+			expect(await appGetCouponForCode(bearer, [C5_PRODUCT_ID], productionAdapter)).toBeUndefined()
 			const ordinary = ['off', 'on'].map((flag) =>
 				key(`regular-free-coupon-${flag}`),
 			)
@@ -531,7 +516,7 @@ describe.skipIf(!uri)(
 			const regular = await appGetCouponForCode(
 				ordinary[0]!,
 				[C5_PRODUCT_ID],
-				display,
+				productionAdapter,
 			)
 			expect(regular).toMatchObject({ isRedeemable: true })
 			const { cohortCallsToAction } =
@@ -553,7 +538,7 @@ describe.skipIf(!uri)(
 			expect(
 				cohortCallsToAction({
 					...closed,
-					bypassSoldOut: comp?.fields?.bypassSoldOut === true,
+					bypassSoldOut: await c5CompAvailable(runtime.db, bearer),
 				}).canEnroll,
 			).toBe(true)
 			const claim = (
@@ -564,7 +549,7 @@ describe.skipIf(!uri)(
 				POST(
 					request('/redeem/coupon', {
 						method: 'POST',
-						headers: { 'content-type': mediaType },
+						headers: { 'content-type': mediaType, cookie: `${COMP_REDEEM_COOKIE}=${bearer}` },
 						body: JSON.stringify({
 							couponId,
 							email: `${key(claimant)}@example.test`,
@@ -573,6 +558,18 @@ describe.skipIf(!uri)(
 						}),
 					}),
 				)
+			for (const prefix of ['bátch-coupon-', 'ｂａｔｃｈ-coupon-']) {
+				const lookalike = couponRef.replace('batch-coupon-', prefix)
+				// The raw DB matches these inputs under its default collation.
+				const [matched] = await runtime.db.select({ id: coupon.id }).from(coupon).where(eq(coupon.id, lookalike))
+				expect(matched?.id).toBe(couponRef)
+				expect(await rawCourseBuilderAdapter.getCoupon(lookalike)).toBeNull()
+				expect(await rawCourseBuilderAdapter.getCouponWithBulkPurchases(lookalike)).toBeNull()
+				const refused = await claim(lookalike, 'lookalike-claimant')
+				expect(refused.status).toBe(200)
+				expect(await refused.json()).toMatchObject({ purchase: null, error: { message: 'coupon-is-invalid' } })
+			}
+			expect(await rawCourseBuilderAdapter.getCoupon(couponRef)).toMatchObject({ id: couponRef, code: null, usedCount: 0 })
 			let response: Response
 			try {
 				for (const [index, id] of ordinary.entries()) {
@@ -622,17 +619,21 @@ describe.skipIf(!uri)(
 				status: 1, maxUses: 1, expires: new Date(Date.now() + 300000),
 				fields: { couponBatchTemplate: 'c5-comp-v1', bypassSoldOut: true },
 			})
-			const alreadyOwned = await claim(secondBearer, 'first-claimant')
-			expect(alreadyOwned.status).toBe(200)
-			const refusal = await alreadyOwned.text()
-			expect(JSON.parse(refusal)).toEqual({
-				purchase: null, redeemingForCurrentUser: true,
-				error: { message: 'already-purchased-c5' },
-			})
-			expect(refusal).not.toContain(secondBearer)
-			expect(refusal).not.toContain('@example.test')
+			for (const status of ['Valid', 'Restricted']) {
+				await runtime.db.update(purchases).set({ status }).where(eq(purchases.id, purchase.id))
+				const alreadyOwned = await claim(secondBearer, 'first-claimant')
+				expect(alreadyOwned.status).toBe(200)
+				const refusal = await alreadyOwned.text()
+				expect(JSON.parse(refusal)).toEqual({
+					purchase: null, redeemingForCurrentUser: true,
+					error: { message: 'already-purchased-c5' },
+				})
+				expect(refusal).not.toContain(secondBearer)
+				expect(refusal).not.toContain('@example.test')
+			}
 			expect(await rawCourseBuilderAdapter.getCoupon(secondCouponRef)).toMatchObject({ usedCount: 0 })
 			expect(await rawCourseBuilderAdapter.getPurchasesForUser(purchase.userId)).toHaveLength(1)
+			expect(paymentCalls).not.toHaveBeenCalled()
 		})
 
 		it('uses the real HTTP pricing handlers for Stripe session creation and preserves late fulfillment', async () => {
@@ -1077,20 +1078,24 @@ describe.skipIf(!uri)(
 
 			// A signed legacy session might already carry metadata. Preserve the
 			// paid purchase without ever associating or counting the comp row.
-			const paid = await runtime.rawCourseBuilderAdapter.createMerchantChargeAndPurchase({
-				userId: user,
-				productId,
-				merchantAccountId: account,
-				merchantProductId: product,
-				merchantCustomerId: customer,
-				stripeChargeId: key('charge-reserved-metadata'),
-				checkoutSessionId: key('session-reserved-metadata'),
-				stripeChargeAmount: 29_900,
-				usedCouponId: noPaidRef,
-				upgradedFromPurchaseId: undefined,
-				appliedPPPStripeCouponId: undefined,
-			})
-			expect(paid.couponId).toBeNull()
+			for (const [i, prefix] of ['batch-coupon-', 'bátch-coupon-', 'ｂａｔｃｈ-coupon-'].entries()) {
+				const alias = noPaidRef.replace('batch-coupon-', prefix)
+				expect(await runtime.rawCourseBuilderAdapter.couponForIdOrCode({ couponId: alias })).toBeNull()
+				const paid = await runtime.rawCourseBuilderAdapter.createMerchantChargeAndPurchase({
+					userId: user,
+					productId,
+					merchantAccountId: account,
+					merchantProductId: product,
+					merchantCustomerId: customer,
+					stripeChargeId: key(`charge-reserved-metadata-${i}`),
+					checkoutSessionId: key(`session-reserved-metadata-${i}`),
+					stripeChargeAmount: 29_900,
+					usedCouponId: alias,
+					upgradedFromPurchaseId: undefined,
+					appliedPPPStripeCouponId: undefined,
+				})
+				expect(paid.couponId).toBeNull()
+			}
 			expect(await usedCount(noPaidRef)).toBe(0)
 		})
 

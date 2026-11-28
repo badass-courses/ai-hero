@@ -237,10 +237,10 @@ describe('personal access token API', () => {
 		expect(await revokeResponse.json()).toMatchObject({ docs: '/api' })
 	})
 
-	it('never leaks token hashes when listing the caller tokens', async () => {
+	it('lists desk commerce scopes without exposing token secrets', async () => {
 		mocks.getUserAbilityForRequest.mockResolvedValue(auth(true))
 		mocks.findMany.mockResolvedValue([
-			{ ...tokenRow(), rawToken: 'aih_pat_public_secret' },
+			{ ...tokenRow(), scopes: ['commerce:coupons:mint', 'commerce:coupons:read'], rawToken: 'aih_pat_public_secret' },
 		])
 
 		const response = await GET(new NextRequest(baseUrl))
@@ -252,7 +252,7 @@ describe('personal access token API', () => {
 				id: 'pat_1',
 				name: 'Content reader',
 				tokenPrefix: 'aih_pat_public123456789',
-				scopes: ['content:read'],
+				scopes: ['commerce:coupons:mint', 'commerce:coupons:read'],
 				createdAt: '2026-07-17T12:00:00.000Z',
 				lastUsedAt: null,
 				expiresAt: null,

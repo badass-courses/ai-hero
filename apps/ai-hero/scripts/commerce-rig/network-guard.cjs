@@ -16,9 +16,14 @@ function turbopackIpcPort(argv, nextDir) {
   const script = require('node:path').resolve(argv[1])
   return script.startsWith(nextDir + '/') ? Number(argv[2]) : null
 }
+const compOnlyPort = Number(process.env.RIG_COMP_ONLY_DB_PORT || 0)
+if (compOnlyPort) {
+  if (![3307, 13316].includes(compOnlyPort)) throw new Error('commerce-rig: invalid comp fixture DB port')
+  localPorts.add(compOnlyPort)
+}
 function allowed(host, port) {
   host = String(host || 'localhost').toLowerCase()
-  return ((host === '127.0.0.1' || host === 'localhost' || host === '::1') && localPorts.has(Number(port))) || (host === 'api.stripe.com' && Number(port) === 443)
+  return ((host === '127.0.0.1' || host === 'localhost' || host === '::1') && localPorts.has(Number(port))) || (!compOnlyPort && host === 'api.stripe.com' && Number(port) === 443)
 }
 function check(args) {
   let first = args[0]

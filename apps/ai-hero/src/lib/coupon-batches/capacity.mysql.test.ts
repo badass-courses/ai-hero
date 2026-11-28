@@ -13,7 +13,7 @@ vi.mock('next/cache', async (original) => ({
 	...(await original<typeof import('next/cache')>()),
 	unstable_cache: (fn: unknown) => fn,
 }))
-vi.mock('next/headers', () => ({ headers: async () => new Headers() }))
+vi.mock('next/headers', () => ({ headers: async () => new Headers(), cookies: async () => ({ get: () => undefined }) }))
 vi.mock('@/server/auth', () => ({ getServerAuthSession: async () => ({}) }))
 // The fixture's default coupon drives the OG sale, not the cohort price.
 vi.mock('@/lib/default-coupon', () => ({

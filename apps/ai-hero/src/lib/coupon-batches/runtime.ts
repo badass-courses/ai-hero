@@ -24,19 +24,22 @@ const auth = {
 	},
 }
 
+export function openCouponBatchDatabase(uri: string) {
+	// One UTC connection per issuer process, separate from checkout. The DB
+	// control row serializes the worker globally, including at rollover.
+	const pool = createCouponBatchWorkerPool(uri)
+	return {
+		db: drizzle(pool, { schema, mode: 'planetscale' }) as unknown as typeof db,
+		close: () => pool.end(),
+	}
+}
+
 let database: typeof db | undefined
 function couponBatchDatabase() {
 	if (database) return database
 	const uri = process.env.DATABASE_URL
 	if (!uri) throw new Error('coupon_batch_worker_unavailable')
-	// One UTC connection per issuer process, separate from checkout. The DB
-	// control row serializes the worker globally, including at rollover.
-	const pool = createCouponBatchWorkerPool(uri)
-	database = drizzle(pool, {
-		schema,
-		mode: 'planetscale',
-	}) as unknown as typeof db
-	return database
+	return (database = openCouponBatchDatabase(uri).db)
 }
 
 let service: ReturnType<typeof createCouponBatchService> | undefined

@@ -4,6 +4,7 @@ import {
 	type NextRequest,
 } from 'next/server'
 import { invoiceLinkResponse } from './lib/invoice-link-http'
+import { compDeliveryRedirect, protectCompPageResponse } from './lib/coupon-batches/browser-claim'
 import {
 	EARLY_BIRD_CODE_COOKIE,
 	EARLY_BIRD_CODE_COOKIE_MAX_AGE_SECONDS,
@@ -302,10 +303,12 @@ export function rememberEarlyBirdCode<T extends Response>(
 }
 
 export default async function proxy(req: NextRequest, event: NextFetchEvent) {
+	const delivery = compDeliveryRedirect(req)
+	if (delivery) return delivery
 	const early = respondWithoutSession(req)
 	if (early) return early
 	if (isAnonymousPassThrough(req))
-		return rememberEarlyBirdCode(req, NextResponse.next())
+		return protectCompPageResponse(req, rememberEarlyBirdCode(req, NextResponse.next()))
 	// `auth()` types its context as a route-handler context; middleware passes a
 	// NextFetchEvent, so the casts are required by Next's types. The context
 	// defers an expired Discord token refresh until after the response.
@@ -313,12 +316,13 @@ export default async function proxy(req: NextRequest, event: NextFetchEvent) {
 		authedProxy(req as never, event as never),
 	)
 	return response instanceof Response
-		? rememberEarlyBirdCode(req, response)
+		? protectCompPageResponse(req, rememberEarlyBirdCode(req, response))
 		: response
 }
 
 export const config = {
 	matcher: [
+		{ source: '/:path*', has: [{ type: 'query', key: 'code', value: '[cC]5[cC][oO][mM][pP]_[0-9a-fA-F]{40}' }] },
 		{ source: '/', has: [{ type: 'query', key: 'code' }] },
 		{ source: '/', has: [{ type: 'query', key: 'coupon' }] },
 		'/admin',
