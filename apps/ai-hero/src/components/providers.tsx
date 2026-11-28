@@ -15,7 +15,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
 	const currentUrl = `${process.env.NEXT_PUBLIC_URL}${pathname}`
 
 	return (
-		<SessionProvider>
+		<SessionProvider refetchOnWindowFocus={false}>
 			<MDXProvider>
 				<MuxPlayerProvider>
 					<FeedbackProvider
